@@ -120,6 +120,13 @@ fn test_get_all_projects() {
     assert_eq!(all.get(1).unwrap().0, 2);
 }
 
+#[test]
+#[should_panic(expected = "project 999 not found")]
+fn test_update_impact_score_nonexistent_project_panics() {
+    let (_env, _admin, _whitelister, client) = setup();
+    client.update_impact_score(&999u32, &50u32, &50u32);
+}
+
 // Integration: full Heliobond flow across both contracts
 mod integration {
     use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, String};
