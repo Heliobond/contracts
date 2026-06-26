@@ -7,4 +7,5 @@ pub enum VaultKey {
     TotalInvestments,
     ProjectInvestment(u32),
     Bridge,
+    FlashLoanFee,
 }

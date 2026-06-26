@@ -1,4 +1,4 @@
-use soroban_sdk::{contractevent, Address, BytesN, Env};
+use soroban_sdk::{contractevent, Address, Bytes, BytesN, Env};
 
 /// Emitted when an investor deposits USDC and receives vault shares.
 #[contractevent]
@@ -154,4 +154,41 @@ pub fn bridge_transfer_completed(
         amount,
     }
     .publish(env);
+}
+
+/// Emitted when a flash loan is executed.
+#[contractevent]
+pub struct FlashLoan {
+    #[topic]
+    pub initiator: Address,
+    #[topic]
+    pub borrower: Address,
+    pub amount: i128,
+    pub fee: i128,
+}
+
+/// Emitted when the flash loan fee is updated.
+#[contractevent]
+pub struct FlashLoanFeeSet {
+    pub fee_bps: i128,
+}
+
+pub fn flash_loan(
+    env: &Env,
+    initiator: &Address,
+    borrower: &Address,
+    amount: i128,
+    fee: i128,
+) {
+    FlashLoan {
+        initiator: initiator.clone(),
+        borrower: borrower.clone(),
+        amount,
+        fee,
+    }
+    .publish(env);
+}
+
+pub fn flash_loan_fee_set(env: &Env, fee_bps: i128) {
+    FlashLoanFeeSet { fee_bps }.publish(env);
 }

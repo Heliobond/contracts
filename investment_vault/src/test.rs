@@ -1,15 +1,62 @@
 #![cfg(test)]
 use super::*;
-use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env};
+use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Bytes, Env};
 
 mod registry_contract {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm");
 }
 
+/// Import vault WASM so mock receiver can call it cross-contract.
+mod vault_contract {
+    soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/investment_vault.wasm");
+}
+
+/// Mock flash loan receivers for testing.
+mod mock_receiver {
+    use soroban_sdk::{contract, contractimpl, Address, Bytes, Env};
+
+    /// Receiver that returns true — repayment is handled internally by the vault.
+    #[contract]
+    pub struct OkReceiver;
+
+    #[contractimpl]
+    impl OkReceiver {
+        pub fn flash_loan_callback(
+            _env: Env,
+            _initiator: Address,
+            _vault: Address,
+            _amount: i128,
+            _fee: i128,
+            _data: Bytes,
+        ) -> bool {
+            true
+        }
+    }
+
+    /// Receiver that returns false — should cause the vault to panic.
+    #[contract]
+    pub struct FailingReceiver;
+
+    #[contractimpl]
+    impl FailingReceiver {
+        pub fn flash_loan_callback(
+            _env: Env,
+            _initiator: Address,
+            _vault: Address,
+            _amount: i128,
+            _fee: i128,
+            _data: Bytes,
+        ) -> bool {
+            false
+        }
+    }
+}
+
 struct TestSetup {
     env: Env,
     admin: Address,
-    vault_client: InvestmentVaultClient<'static>,
+    vault_id: Address,
+    vault_client: vault_contract::Client<'static>,
     usdc_sac: Address,
     registry: Address,
 }
@@ -29,13 +76,14 @@ fn setup() -> TestSetup {
         .register_stellar_asset_contract_v2(usdc_admin.clone())
         .address();
 
-    // Register vault using constructor
-    let contract_id = env.register(InvestmentVault, (&admin, &usdc_sac, &registry_id));
-    let vault_client = InvestmentVaultClient::new(&env, &contract_id);
+    // Register vault via WASM (required for cross-contract calls from mock receiver)
+    let vault_id = env.register(vault_contract::WASM, (&admin, &usdc_sac, &registry_id));
+    let vault_client = vault_contract::Client::new(&env, &vault_id);
 
     TestSetup {
         env,
         admin,
+        vault_id,
         vault_client,
         usdc_sac,
         registry: registry_id,
@@ -134,4 +182,55 @@ fn test_convert_to_shares_and_assets_roundtrip() {
         "roundtrip diff should be <= 1 stroop, got {}",
         diff
     );
+}
+
+#[test]
+fn test_flash_loan_default_fee() {
+    let s = setup();
+    assert_eq!(s.vault_client.flash_loan_fee(), 30);
+}
+
+#[test]
+fn test_set_flash_loan_fee() {
+    let s = setup();
+    s.vault_client.set_flash_loan_fee(&50i128);
+    assert_eq!(s.vault_client.flash_loan_fee(), 50);
+}
+
+#[test]
+fn test_execute_flash_loan_repays_and_burns() {
+    let s = setup();
+    let initiator = Address::generate(&s.env);
+
+    let receiver_id = s.env.register(mock_receiver::OkReceiver, ());
+
+    let loan_amount: i128 = 1_000_0000000i128; // 1000 HBS
+    let fee_bps = s.vault_client.flash_loan_fee();
+    let expected_fee = loan_amount * fee_bps / 10000;
+
+    let total_supply_before = s.vault_client.total_supply();
+
+    s.vault_client
+        .execute_flash_loan(&initiator, &receiver_id, &loan_amount, &Bytes::new(&s.env));
+
+    let total_supply_after = s.vault_client.total_supply();
+
+    // Total supply increases by fee (minted amount+fee, burned only amount)
+    assert_eq!(total_supply_after, total_supply_before + expected_fee);
+    // Vault should hold the fee as protocol revenue
+    assert_eq!(s.vault_client.balance(&s.vault_id), expected_fee);
+    // Receiver should have 0 HBS remaining
+    assert_eq!(s.vault_client.balance(&receiver_id), 0);
+}
+
+#[test]
+#[should_panic(expected = "HostError")]
+fn test_flash_loan_fails_when_callback_returns_false() {
+    let s = setup();
+    let initiator = Address::generate(&s.env);
+
+    let receiver_id = s.env.register(mock_receiver::FailingReceiver, ());
+
+    s.vault_client
+        .execute_flash_loan(&initiator, &receiver_id, &1_000_0000000i128, &Bytes::new(&s.env));
 }

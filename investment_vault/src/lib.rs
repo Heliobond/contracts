@@ -25,6 +25,29 @@ pub trait WormholeCore {
     fn publish_message(env: Env, consistency_level: u32, payload: Bytes) -> u64;
 }
 
+/// Interface for flash loan receiver contracts.
+/// Any contract receiving HBS via `execute_flash_loan` must implement this.
+#[soroban_sdk::contractclient(name = "FlashLoanReceiverClient")]
+pub trait FlashLoanReceiver {
+    /// Called by the vault after lending HBS. The receiver must repay
+    /// `amount + fee` HBS to the vault contract before returning.
+    /// Returns `true` on success.
+    ///
+    /// - `initiator` — the address that called `execute_flash_loan`.
+    /// - `vault`    — this vault's address (repay HBS here).
+    /// - `amount`   — principal borrowed.
+    /// - `fee`      — flash loan fee.
+    /// - `data`     — arbitrary forwarder data.
+    fn flash_loan_callback(
+        env: Env,
+        initiator: Address,
+        vault: Address,
+        amount: i128,
+        fee: i128,
+        data: Bytes,
+    ) -> bool;
+}
+
 pub use types::VaultKey;
 pub use wormhole::{BridgeDataKey, BridgeTransferPayload};
 
@@ -228,6 +251,81 @@ impl InvestmentVault {
 
         events::withdraw(&env, &from, shares_amount, usdc_returned);
         usdc_returned
+    }
+
+    // -----------------------------------------------------------------------
+    // Flash loan
+    // -----------------------------------------------------------------------
+
+    const DEFAULT_FLASH_LOAN_FEE: i128 = 30; // 0.3% in basis points
+
+    /// Set the flash loan fee in basis points (1 bp = 0.01%).
+    /// Only callable by the contract owner.
+    #[only_owner]
+    pub fn set_flash_loan_fee(env: Env, fee_bps: i128) {
+        if fee_bps < 0 || fee_bps > 1000 {
+            panic!("fee must be 0–1000 bps (0%–10%)");
+        }
+        env.storage()
+            .instance()
+            .set(&VaultKey::FlashLoanFee, &fee_bps);
+        events::flash_loan_fee_set(&env, fee_bps);
+    }
+
+    /// Return the current flash loan fee in basis points.
+    pub fn flash_loan_fee(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&VaultKey::FlashLoanFee)
+            .unwrap_or(Self::DEFAULT_FLASH_LOAN_FEE)
+    }
+
+    /// Execute a flash loan of HBS tokens.
+    ///
+    /// 1. Mints `amount` HBS to `borrower`.
+    /// 2. Calls `borrower.flash_loan_callback(initiator, vault, amount, fee, data)`.
+    /// 3. After the callback, transfers `amount + fee` back from the borrower
+    ///    via internal bookkeeping (no cross-contract re-entrancy).
+    /// 4. Burns the principal; the fee stays in the vault as protocol revenue.
+    ///
+    /// Panics if the callback fails or the borrower cannot repay.
+    pub fn execute_flash_loan(
+        env: Env,
+        initiator: Address,
+        borrower: Address,
+        amount: i128,
+        data: Bytes,
+    ) {
+        if amount <= 0 {
+            panic!("amount must be positive");
+        }
+
+        initiator.require_auth();
+
+        let fee_bps = Self::flash_loan_fee(env.clone());
+        let fee = amount * fee_bps / 10000;
+
+        let vault = env.current_contract_address();
+
+        // Mint HBS to borrower (amount + fee so they can repay without
+        // needing pre-existing HBS — Soroban re-entrancy prevents acquiring
+        // HBS from external sources during the callback).
+        Base::mint(&env, &borrower, amount + fee);
+
+        // Call borrower's callback
+        let client = FlashLoanReceiverClient::new(&env, &borrower);
+        let ok = client.flash_loan_callback(&initiator, &vault, &amount, &fee, &data);
+        if !ok {
+            panic!("flash loan callback failed");
+        }
+
+        // Reclaim repayment — fails if borrower's balance is insufficient
+        Base::transfer(&env, &borrower, &MuxedAddress::from(&vault), amount + fee);
+
+        // Burn the principal from vault — fee stays as protocol revenue
+        Base::burn(&env, &vault, amount);
+
+        events::flash_loan(&env, &initiator, &borrower, amount, fee);
     }
 
     // -----------------------------------------------------------------------
