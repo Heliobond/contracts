@@ -1,0 +1,144 @@
+name: Benchmarks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: Instruction-count benchmarks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # need history to compare against baseline
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Stellar CLI
+        env:
+          STELLAR_CLI_VERSION: "26.1.0"
+        run: |
+          url="https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -sSL "$url" | tar -xz
+          sudo mv stellar /usr/local/bin/stellar
+
+      - name: Build contracts (PR branch)
+        run: stellar contract build
+
+      # ── Instruction-count benchmarks ──────────────────────────────────────────
+      # Soroban's sandbox tracks CPU instructions consumed per invocation.
+      # We run representative transactions and capture the instruction counts
+      # reported in the test output, then compare them against a stored baseline.
+      - name: Run benchmark tests (PR branch)
+        run: |
+          cargo test --all --quiet -- --nocapture bench 2>&1 | tee /tmp/bench-pr.txt || true
+          echo "--- PR branch benchmark output ---"
+          cat /tmp/bench-pr.txt
+
+      # ── Baseline comparison (PRs only) ────────────────────────────────────────
+      - name: Build baseline contracts (base branch)
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git stash
+          git checkout origin/${{ github.base_ref }}
+          CARGO_TARGET_DIR=/tmp/base-target stellar contract build
+          git checkout -
+          git stash pop || true
+
+      - name: Run benchmark tests (base branch)
+        if: github.event_name == 'pull_request'
+        run: |
+          cargo test \
+            --all --quiet \
+            --target-dir /tmp/base-target \
+            -- --nocapture bench 2>&1 | tee /tmp/bench-base.txt || true
+          echo "--- Base branch benchmark output ---"
+          cat /tmp/bench-base.txt
+
+      - name: Compare benchmark results
+        if: github.event_name == 'pull_request'
+        run: |
+          python3 - <<'PYEOF'
+          import re, sys
+
+          # Extract "bench_<name>: <N> instructions" lines from output files.
+          PATTERN = re.compile(r'bench_(\w+):\s*(\d+)\s*instructions', re.IGNORECASE)
+
+          def parse(path):
+              results = {}
+              try:
+                  with open(path) as f:
+                      for line in f:
+                          m = PATTERN.search(line)
+                          if m:
+                              results[m.group(1)] = int(m.group(2))
+              except FileNotFoundError:
+                  pass
+              return results
+
+          base = parse('/tmp/bench-base.txt')
+          pr   = parse('/tmp/bench-pr.txt')
+
+          if not base and not pr:
+              print("No instruction-count bench lines found in output — skipping comparison.")
+              print("Add tests whose names contain 'bench' and print 'bench_<name>: <N> instructions'.")
+              sys.exit(0)
+
+          REGRESSION_THRESHOLD = 0.10   # 10% increase triggers a failure
+          failed = False
+          rows = []
+
+          all_keys = sorted(set(base) | set(pr))
+          for key in all_keys:
+              b = base.get(key)
+              p = pr.get(key)
+              if b is None:
+                  rows.append(f"  {key:<40} NEW       baseline=—       pr={p:,}")
+              elif p is None:
+                  rows.append(f"  {key:<40} REMOVED   baseline={b:,}")
+              else:
+                  pct = (p - b) / b
+                  flag = ''
+                  if pct > REGRESSION_THRESHOLD:
+                      flag = '  ❌ REGRESSION'
+                      failed = True
+                  elif pct > 0:
+                      flag = '  ⚠️  (+{:.1%})'.format(pct)
+                  else:
+                      flag = '  ✅ ({:.1%})'.format(pct)
+                  rows.append(f"  {key:<40} baseline={b:,}  pr={p:,}{flag}")
+
+          print("Benchmark comparison (instruction counts):")
+          for r in rows:
+              print(r)
+
+          if failed:
+              print("\nOne or more benchmarks regressed by more than 10%. Review the diff.")
+              sys.exit(1)
+          else:
+              print("\nAll benchmarks within acceptable range.")
+          PYEOF
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: /tmp/bench-*.txt
+          retention-days: 30

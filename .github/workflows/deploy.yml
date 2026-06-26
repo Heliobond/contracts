@@ -158,6 +158,55 @@ jobs:
             -- total_assets
           echo "✅ Both contracts responding correctly."
 
+      - name: Verify on-chain WASM hash (#105)
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
+        run: |
+          NETWORK="${{ github.event.inputs.network }}"
+          REGISTRY="${{ steps.deploy_registry.outputs.registry_id }}"
+          VAULT="${{ steps.deploy_vault.outputs.vault_id }}"
+          FAILED=0
+
+          for contract in project_registry investment_vault; do
+            wasm_file="target/wasm32v1-none/release/${contract}.wasm"
+            if [ "$contract" = "project_registry" ]; then
+              CONTRACT_ID="$REGISTRY"
+            else
+              CONTRACT_ID="$VAULT"
+            fi
+
+            # Hash the local optimised wasm
+            LOCAL_HASH=$(sha256sum "$wasm_file" | awk '{print $1}')
+
+            # Fetch the wasm hash stored on-chain for this contract instance.
+            # `stellar contract info` returns the installed wasm hash.
+            ON_CHAIN_HASH=$(stellar contract info \
+              --id "$CONTRACT_ID" \
+              --network "$NETWORK" \
+              --output json 2>/dev/null | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+# Field name may vary by CLI version; try both.
+print(data.get('wasm_hash') or data.get('wasmHash') or '')
+" || echo "")
+
+            if [ -z "$ON_CHAIN_HASH" ]; then
+              echo "⚠️  Could not retrieve on-chain hash for $contract ($CONTRACT_ID) — skipping hash check"
+            elif [ "$LOCAL_HASH" = "$ON_CHAIN_HASH" ]; then
+              echo "✅ $contract: local hash matches on-chain ($LOCAL_HASH)"
+            else
+              echo "❌ $contract: HASH MISMATCH"
+              echo "   Local:    $LOCAL_HASH"
+              echo "   On-chain: $ON_CHAIN_HASH"
+              FAILED=1
+            fi
+          done
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "On-chain WASM does not match the built artifact. Deployment may be corrupted."
+            exit 1
+          fi
+
       - name: Summary
         run: |
           echo "## Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
@@ -166,3 +215,5 @@ jobs:
           echo "|----------|---------|-------------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| ProjectRegistry | ${{ github.event.inputs.network }} | ${{ steps.deploy_registry.outputs.registry_id }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| InvestmentVault | ${{ github.event.inputs.network }} | ${{ steps.deploy_vault.outputs.vault_id }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "WASM hash verification: see job logs above." >> "$GITHUB_STEP_SUMMARY"

@@ -3,6 +3,11 @@ use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 use stellar_access::ownable::{set_owner, Ownable};
 use stellar_macros::only_owner;
 
+/// Maximum URI length in bytes. Prevents excessively large ledger entries (#114).
+const MAX_URI_LEN: u32 = 512;
+/// Minimum URI length — must contain at least a scheme and one character (#117).
+const MIN_URI_LEN: u32 = 8;
+
 mod events;
 mod types;
 
@@ -41,6 +46,14 @@ impl ProjectRegistry {
             .unwrap_or(false);
         if !is_whitelisted {
             panic!("not whitelisted");
+        }
+        // URI validation (#117, #114)
+        let uri_len = uri.len();
+        if uri_len < MIN_URI_LEN {
+            panic!("uri too short");
+        }
+        if uri_len > MAX_URI_LEN {
+            panic!("uri too long");
         }
 
         let counter: u32 = env
