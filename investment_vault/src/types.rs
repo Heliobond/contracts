@@ -6,4 +6,5 @@ pub enum VaultKey {
     Registry,
     TotalInvestments,
     ProjectInvestment(u32),
+    Bridge,
 }

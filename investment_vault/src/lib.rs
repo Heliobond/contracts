@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Env, MuxedAddress, String};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, MuxedAddress, String};
 use stellar_access::ownable::{set_owner, Ownable};
 use stellar_macros::only_owner;
 use stellar_tokens::fungible::burnable::FungibleBurnable;
@@ -7,12 +7,26 @@ use stellar_tokens::fungible::{Base, FungibleToken};
 
 mod events;
 mod types;
+mod wormhole;
 
 mod registry_interface {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm");
 }
 
+/// Wormhole core contract client interface.
+/// In production, replace with `contractimport!` pointing to the
+/// deployed Wormhole core contract WASM.
+#[soroban_sdk::contractclient(name = "WormholeCoreClient")]
+pub trait WormholeCore {
+    /// Verify a VAA and return emitter chain, emitter address, and payload.
+    fn verify_vaa(env: Env, vaa: Bytes) -> wormhole::ParsedVaa;
+
+    /// Publish a message to the guardian network. Returns sequence number.
+    fn publish_message(env: Env, consistency_level: u32, payload: Bytes) -> u64;
+}
+
 pub use types::VaultKey;
+pub use wormhole::{BridgeDataKey, BridgeTransferPayload};
 
 #[contract]
 pub struct InvestmentVault;
@@ -32,6 +46,41 @@ impl InvestmentVault {
             String::from_str(&env, "Heliobond Shares"),
             String::from_str(&env, "HBS"),
         );
+    }
+
+    #[only_owner]
+    pub fn set_bridge(env: Env, bridge: Address) {
+        env.storage().instance().set(&VaultKey::Bridge, &bridge);
+        events::bridge_set(&env, &bridge);
+    }
+
+    pub fn bridge_mint(env: Env, to: Address, amount: i128) {
+        let bridge: Address = env
+            .storage()
+            .instance()
+            .get(&VaultKey::Bridge)
+            .expect("bridge not set");
+        bridge.require_auth();
+
+        if amount <= 0 {
+            panic!("amount must be positive");
+        }
+
+        Base::mint(&env, &to, amount);
+        events::bridge_mint(&env, &to, amount);
+    }
+
+    /// Burn HBS tokens for outbound bridging.
+    /// Requires authentication from `from`.
+    pub fn bridge_burn(env: Env, from: Address, amount: i128) {
+        from.require_auth();
+
+        if amount <= 0 {
+            panic!("amount must be positive");
+        }
+
+        Base::burn(&env, &from, amount);
+        events::bridge_burn(&env, &from, amount);
     }
 
     #[only_owner]
@@ -179,6 +228,132 @@ impl InvestmentVault {
 
         events::withdraw(&env, &from, shares_amount, usdc_returned);
         usdc_returned
+    }
+
+    // -----------------------------------------------------------------------
+    // Wormhole bridge integration
+    // -----------------------------------------------------------------------
+
+    /// Set the Wormhole core contract address.
+    /// This is the canonical Wormhole core bridge deployed on Stellar.
+    /// Only callable by the contract owner.
+    ///
+    /// ## Security
+    ///
+    /// Setting this to a malicious contract would allow arbitrary minting.
+    /// Verify the address against the official Wormhole contract registry.
+    #[only_owner]
+    pub fn set_wormhole_core(env: Env, core: Address) {
+        env.storage().instance().set(&BridgeDataKey::WormholeCore, &core);
+    }
+
+    /// Add or remove a trusted emitter (a bridge contract on another chain
+    /// allowed to mint HBS via Wormhole). Only owner.
+    #[only_owner]
+    pub fn set_trusted_emitter(
+        env: Env,
+        chain_id: u32,
+        emitter_address: BytesN<32>,
+        trusted: bool,
+    ) {
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::TrustedEmitter(chain_id, emitter_address), &trusted);
+    }
+
+    /// Initiate an outbound bridge transfer of HBS to another chain.
+    /// Burns `amount` HBS from `from` and publishes a Wormhole message.
+    pub fn initiate_bridge_transfer(
+        env: Env,
+        from: Address,
+        amount: i128,
+        target_chain: u32,
+        recipient: BytesN<32>,
+        nonce: u64,
+    ) -> u64 {
+        from.require_auth();
+
+        if amount <= 0 {
+            panic!("amount must be positive");
+        }
+
+        Base::burn(&env, &from, amount);
+
+        let token_address = wormhole::address_to_bytes32(&env, &env.current_contract_address());
+        let payload = BridgeTransferPayload {
+            token_address,
+            recipient: recipient.clone(),
+            amount,
+            source_chain: wormhole::chain_id::STELLAR,
+            target_chain,
+            nonce,
+        };
+
+        let payload_bytes = wormhole::serialize_bridge_payload(&env, &payload);
+
+        let core: Address = env
+            .storage()
+            .instance()
+            .get(&BridgeDataKey::WormholeCore)
+            .expect("Wormhole core not set");
+        let client = WormholeCoreClient::new(&env, &core);
+        let sequence = client.publish_message(&0u32, &payload_bytes);
+
+        events::bridge_transfer_initiated(
+            &env, &from, amount, target_chain, &recipient, sequence,
+        );
+
+        sequence
+    }
+
+    /// Complete an inbound bridge transfer.
+    /// Verifies a Wormhole VAA and mints HBS to the recipient.
+    pub fn complete_bridge_transfer(env: Env, vaa: Bytes) {
+        let core: Address = env
+            .storage()
+            .instance()
+            .get(&BridgeDataKey::WormholeCore)
+            .expect("Wormhole core not set");
+        let client = WormholeCoreClient::new(&env, &core);
+
+        let parsed = client.verify_vaa(&vaa);
+
+        let transfer = wormhole::parse_bridge_payload(&env, &parsed.payload);
+
+        let trusted: bool = env
+            .storage()
+            .persistent()
+            .get(&BridgeDataKey::TrustedEmitter(
+                transfer.source_chain,
+                parsed.emitter_address.clone(),
+            ))
+            .unwrap_or(false);
+        if !trusted {
+            panic!("emitter not trusted");
+        }
+
+        let digest: BytesN<32> = env.crypto().sha256(&vaa).into();
+        if env
+            .storage()
+            .persistent()
+            .has(&BridgeDataKey::ConsumedVaa(digest.clone()))
+        {
+            panic!("VAA already consumed");
+        }
+        env.storage()
+            .persistent()
+            .set(&BridgeDataKey::ConsumedVaa(digest), &true);
+
+        let to = wormhole::bytes32_to_address(&env, &transfer.recipient);
+        Base::mint(&env, &to, transfer.amount);
+
+        events::bridge_transfer_completed(
+            &env,
+            transfer.source_chain,
+            &parsed.emitter_address,
+            &to,
+            transfer.amount,
+        );
     }
 }
 

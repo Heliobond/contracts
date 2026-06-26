@@ -114,7 +114,40 @@ Sets the `Ownable` owner to `admin`, stores USDC SAC and Registry addresses, ini
 | `get_expected_returns()` | none | Iterate funded projects; sum `investment * (credit_quality + green_impact) / 200` |
 | `transfer_ownership(new_owner)` | `Admin` | Transfer contract ownership |
 
-The vault also exposes the full SEP-41 `FungibleToken` interface (`balance`, `transfer`, `allowance`, `approve`, etc.) and `FungibleBurnable` (`burn`, `burn_from`) from `stellar-tokens`.
+In addition to HBS management, the vault exposes a **bridge-compatible token interface** and **Wormhole cross-chain integration** for bridging HBS to other networks (see [Bridge Security](BRIDGE_SECURITY.md)).
+
+### Bridge Token Interface (burn/mint pattern)
+
+| Function | Auth required | Description |
+|---|---|---|
+| `set_bridge(bridge)` | `Admin` (`#[only_owner]`) | Designate a bridge contract (e.g., Wormhole) authorised to mint HBS |
+| `bridge_mint(to, amount)` | `bridge` | Mint HBS tokens to a recipient on inbound bridge transfer |
+| `bridge_burn(from, amount)` | `from` | Burn HBS tokens for outbound bridge transfer |
+
+This is a generic bridge interface. The bridge contract address is stored as `VaultKey::Bridge` and can be any bridge implementation (Wormhole, custom, etc.).
+
+### Wormhole Integration
+
+The vault implements a full Wormhole cross-chain bridge using a burn/mint pattern:
+
+| Function | Auth required | Description |
+|---|---|---|
+| `set_wormhole_core(core)` | `Admin` (`#[only_owner]`) | Set the Wormhole core contract address on Stellar |
+| `set_trusted_emitter(chain_id, address, trusted)` | `Admin` (`#[only_owner]`) | Authorise an emitter contract on another chain to mint HBS |
+| `initiate_bridge_transfer(from, amount, target_chain, recipient, nonce)` | `from` | Burn HBS on Stellar, emit a Wormhole message for cross-chain relay |
+| `complete_bridge_transfer(vaa)` | none (VAA auth) | Verify a Wormhole VAA and mint HBS to the recipient |
+
+**Flow:**
+1. User calls `initiate_bridge_transfer` → HBS burned, Wormhole message emitted.
+2. Wormhole guardians observe the message and produce a signed VAA.
+3. Relayer submits the VAA to `complete_bridge_transfer` on the destination chain.
+4. VAA is verified via the Wormhole core contract, emitter is checked against `TrustedEmitter`, replay protection via SHA-256 digest, HBS minted to recipient.
+
+**Architecture notes:**
+- The Wormhole core contract interface is defined as a `#[contractclient]` trait. When the Wormhole core contract is deployed on Stellar, replace with `contractimport!`.
+- Chain IDs use the [Wormhole chain ID registry](https://wormhole.com/docs/products/reference/chain-ids/). Stellar's proposed ID is `38`.
+- VAA replay protection uses SHA-256 digest storage (`BridgeDataKey::ConsumedVaa`).
+- Payload format: `HBS\0` (4-byte prefix) + `token_address` (32B) + `recipient` (32B) + `amount` (16B) + `source_chain` (4B) + `target_chain` (4B) + `nonce` (8B).
 
 ---
 
