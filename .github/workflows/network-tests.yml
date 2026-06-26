@@ -1,0 +1,203 @@
+name: Network tests
+
+# Runs after a successful merge to main (i.e. after unit tests already passed).
+# Also available as a manual trigger so the team can run it on demand.
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: Target network
+        required: true
+        default: testnet
+        type: choice
+        options: [testnet, futurenet]
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
+
+concurrency:
+  group: network-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  STELLAR_CLI_VERSION: "26.1.0"
+
+jobs:
+  # Skip on failed upstream CI runs
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - id: check
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.workflow_run.conclusion }}" = "success" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy-and-test:
+    name: Deploy & smoke-test on ${{ github.event.inputs.network || 'testnet' }}
+    needs: guard
+    if: needs.guard.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    environment: testnet
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Stellar CLI
+        run: |
+          url="https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -sSL "$url" | tar -xz
+          sudo mv stellar /usr/local/bin/stellar
+          stellar --version
+
+      - name: Build contracts
+        run: stellar contract build
+
+      - name: Set network variable
+        id: net
+        run: |
+          NETWORK="${{ github.event.inputs.network || 'testnet' }}"
+          echo "name=$NETWORK" >> "$GITHUB_OUTPUT"
+          if [ "$NETWORK" = "testnet" ]; then
+            echo "rpc=https://soroban-testnet.stellar.org" >> "$GITHUB_OUTPUT"
+            echo "passphrase=Test SDF Network ; September 2015" >> "$GITHUB_OUTPUT"
+            echo "horizon=https://horizon-testnet.stellar.org" >> "$GITHUB_OUTPUT"
+          else
+            echo "rpc=https://rpc-futurenet.stellar.org" >> "$GITHUB_OUTPUT"
+            echo "passphrase=Test SDF Future Network ; October 2022" >> "$GITHUB_OUTPUT"
+            echo "horizon=https://horizon-futurenet.stellar.org" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fund test account via friendbot
+        run: |
+          PUB=$(stellar keys address ci-test 2>/dev/null || (
+            stellar keys generate ci-test --no-fund &&
+            stellar keys address ci-test
+          ))
+          echo "TEST_PUB=$PUB" >> "$GITHUB_ENV"
+          curl -sf "https://friendbot$([[ '${{ steps.net.outputs.name }}' = 'futurenet' ]] && echo '-futurenet' || echo '').stellar.org?addr=$PUB" | \
+            python3 -c "import sys,json; r=json.load(sys.stdin); print('Friendbot:', r.get('hash','funded'))"
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
+
+      - name: Deploy ProjectRegistry
+        id: registry
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
+        run: |
+          ADMIN=$(stellar keys address ci-test)
+          WHITELISTER=$ADMIN
+          ID=$(stellar contract deploy \
+            --wasm target/wasm32v1-none/release/project_registry.wasm \
+            --source ci-test \
+            --network ${{ steps.net.outputs.name }} \
+            -- --admin "$ADMIN" --whitelister "$WHITELISTER")
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "Registry deployed: $ID"
+
+      - name: Deploy InvestmentVault
+        id: vault
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.STELLAR_SECRET_KEY }}
+        run: |
+          ADMIN=$(stellar keys address ci-test)
+          # Use testnet USDC SAC (well-known address)
+          USDC_SAC="CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
+          ID=$(stellar contract deploy \
+            --wasm target/wasm32v1-none/release/investment_vault.wasm \
+            --source ci-test \
+            --network ${{ steps.net.outputs.name }} \
+            -- --admin "$ADMIN" \
+               --usdc_sac "$USDC_SAC" \
+               --registry "${{ steps.registry.outputs.id }}")
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "Vault deployed: $ID"
+
+      # ── Smoke tests ───────────────────────────────────────────────────────────
+
+      - name: Smoke — total_projects returns 0
+        run: |
+          RESULT=$(stellar contract invoke \
+            --id ${{ steps.registry.outputs.id }} \
+            --source ci-test \
+            --network ${{ steps.net.outputs.name }} \
+            -- total_projects)
+          echo "total_projects = $RESULT"
+          [ "$RESULT" = "0" ] || (echo "FAIL: expected 0"; exit 1)
+
+      - name: Smoke — total_assets returns 0
+        run: |
+          RESULT=$(stellar contract invoke \
+            --id ${{ steps.vault.outputs.id }} \
+            --source ci-test \
+            --network ${{ steps.net.outputs.name }} \
+            -- total_assets)
+          echo "total_assets = $RESULT"
+          [ "$RESULT" = "0" ] || (echo "FAIL: expected 0"; exit 1)
+
+      - name: Smoke — whitelist and create project
+        run: |
+          ADMIN=$(stellar keys address ci-test)
+
+          # Whitelist the admin as a project creator
+          stellar contract invoke \
+            --id ${{ steps.registry.outputs.id }} \
+            --source ci-test \
+            --network ${{ steps.net.outputs.name }} \
+            -- set_whitelist --account "$ADMIN" --status true
+
+          # Create a project
+          PROJECT_ID=$(stellar contract invoke \
+            --id ${{ steps.registry.outputs.id }} \
+            --source ci-test \
+            --network ${{ steps.net.outputs.name }} \
+            -- create_project \
+              --creator "$ADMIN" \
+              --uri "ipfs://QmNetworkTestHeliobond" \
+              --maturity_date 0)
+          echo "Project created: $PROJECT_ID"
+          [ "$PROJECT_ID" = "1" ] || (echo "FAIL: expected project_id=1"; exit 1)
+
+      - name: Smoke — accepted_asset matches USDC SAC
+        run: |
+          RESULT=$(stellar contract invoke \
+            --id ${{ steps.vault.outputs.id }} \
+            --source ci-test \
+            --network ${{ steps.net.outputs.name }} \
+            -- accepted_asset)
+          echo "accepted_asset = $RESULT"
+
+      - name: Smoke — insurance_fund_balance returns 0
+        run: |
+          RESULT=$(stellar contract invoke \
+            --id ${{ steps.vault.outputs.id }} \
+            --source ci-test \
+            --network ${{ steps.net.outputs.name }} \
+            -- insurance_fund_balance)
+          echo "insurance_fund_balance = $RESULT"
+          [ "$RESULT" = "0" ] || (echo "FAIL: expected 0"; exit 1)
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Network test summary — ${{ steps.net.outputs.name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Contract | ID |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|----|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| ProjectRegistry | ${{ steps.registry.outputs.id }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| InvestmentVault | ${{ steps.vault.outputs.id }} |" >> "$GITHUB_STEP_SUMMARY"
