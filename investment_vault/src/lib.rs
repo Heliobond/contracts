@@ -63,8 +63,20 @@ impl InvestmentVault {
         let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
             .balance(&env.current_contract_address());
 
-        if amount > liquid {
-            panic!("insufficient liquid USDC");
+        // Reserve the insurance fund — it must never be used for project funding (#113).
+        // Reading and subtracting here means concurrent fund_project calls in different
+        // transactions each see the current on-chain balance, so no double-spend is possible
+        // (Soroban transactions are serialised per ledger). The explicit reserve check
+        // prevents the admin from accidentally draining USDC that belongs to the fund.
+        let insurance_reserve: i128 = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::InsuranceFund)
+            .unwrap_or(0);
+        let available = liquid - insurance_reserve;
+
+        if amount > available {
+            panic!("insufficient deployable USDC (insurance reserve is protected)");
         }
 
         soroban_sdk::token::TokenClient::new(&env, &usdc_sac).transfer(
