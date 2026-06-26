@@ -103,9 +103,20 @@ fn test_initialize() {
     env.mock_all_auths();
     let admin = Address::generate(&env);
     let usdc = Address::generate(&env);
-    let registry = Address::generate(&env);
+    let registry = env.register(registry_contract::WASM, (&admin, &admin));
     let _contract_id = env.register(InvestmentVault, (&admin, &usdc, &registry));
-    // If registration didn't panic, constructor succeeded
+    // If registration didn't panic, constructor succeeded with a valid registry
+}
+
+#[test]
+#[should_panic]
+fn test_constructor_panics_with_invalid_registry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let usdc = Address::generate(&env);
+    let invalid_registry = Address::generate(&env);
+    let _contract_id = env.register(InvestmentVault, (&admin, &usdc, &invalid_registry));
 }
 
 #[test]
