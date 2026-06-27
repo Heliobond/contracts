@@ -1,4 +1,4 @@
-use soroban_sdk::{contractevent, Address, Bytes, BytesN, Env};
+use soroban_sdk::{contractevent, Address, Bytes, BytesN, Env, String};
 
 /// Emitted when an investor deposits USDC and receives vault shares.
 #[contractevent]
@@ -257,4 +257,44 @@ pub fn carbon_credits_transferred(env: &Env, from: &Address, to: &Address, amoun
         amount,
     }
     .publish(env);
+}
+
+// -----------------------------------------------------------------------
+// Compliance / regulatory events
+// -----------------------------------------------------------------------
+
+/// Emitted when a compliance event is recorded.
+#[contractevent]
+pub struct ComplianceEventRecorded {
+    pub seq: u64,
+    #[topic]
+    pub event_type: String,
+}
+
+/// Emitted when a regulatory reporting snapshot is taken.
+#[contractevent]
+pub struct ReportingSnapshotTaken {
+    pub timestamp: u64,
+}
+
+/// Emitted when the maximum transaction amount is updated (compliance limit).
+#[contractevent]
+pub struct MaxTransactionAmountSet {
+    pub amount: i128,
+}
+
+pub fn compliance_event_recorded(env: &Env, seq: u64, event_type: &String) {
+    ComplianceEventRecorded {
+        seq,
+        event_type: event_type.clone(),
+    }
+    .publish(env);
+}
+
+pub fn reporting_snapshot_taken(env: &Env, timestamp: u64) {
+    ReportingSnapshotTaken { timestamp }.publish(env);
+}
+
+pub fn max_transaction_amount_set(env: &Env, amount: i128) {
+    MaxTransactionAmountSet { amount }.publish(env);
 }

@@ -1,6 +1,7 @@
 #![cfg(test)]
 use super::*;
-use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Bytes, Env, String};
+use soroban_sdk::testutils::{Address as _, Ledger as _};
+use soroban_sdk::{token::StellarAssetClient, Address, Bytes, Env, String};
 
 mod registry_contract {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm");
@@ -344,4 +345,94 @@ fn test_carbon_credits_zero_issue_panics() {
     // 1 USDC, green_impact=50 => 0 credits — should panic
     s.vault_client
         .issue_carbon_credits(&recipient, &project_id, &10_000_000i128);
+}
+
+// -----------------------------------------------------------------------
+// Compliance / regulatory reporting tests
+// -----------------------------------------------------------------------
+
+#[test]
+fn test_max_transaction_amount_default_is_zero() {
+    let s = setup();
+    assert_eq!(s.vault_client.max_transaction_amount(), 0);
+}
+
+#[test]
+fn test_set_max_transaction_amount() {
+    let s = setup();
+    s.vault_client.set_max_transaction_amount(&1_000_0000000i128);
+    assert_eq!(
+        s.vault_client.max_transaction_amount(),
+        1_000_0000000i128
+    );
+}
+
+#[test]
+fn test_record_and_get_compliance_event() {
+    let s = setup();
+    s.env.ledger().set_timestamp(1_700_000_000);
+
+    let event_type = String::from_str(&s.env, "investor_onboarding");
+    let event_data = String::from_str(&s.env, "investor=GA…XYZ, tier=accredited");
+
+    s.vault_client
+        .record_compliance_event(&event_type, &event_data);
+
+    let event = s.vault_client.get_compliance_event(&1);
+    assert_eq!(event.seq, 1);
+    assert_eq!(event.event_type, event_type);
+    assert_eq!(event.data, event_data);
+    assert_eq!(event.timestamp, 1_700_000_000);
+}
+
+#[test]
+fn test_get_compliance_events_range() {
+    let s = setup();
+    s.env.ledger().set_timestamp(1_700_000_000);
+
+    let typ = String::from_str(&s.env, "test_event");
+    let dat = String::from_str(&s.env, "data");
+
+    s.vault_client.record_compliance_event(&typ, &dat);
+    s.vault_client.record_compliance_event(&typ, &dat);
+    s.vault_client.record_compliance_event(&typ, &dat);
+
+    let events = s.vault_client.get_compliance_events(&1, &3);
+    assert_eq!(events.len(), 3);
+    assert_eq!(events.get(0).unwrap().seq, 1);
+    assert_eq!(events.get(2).unwrap().seq, 3);
+}
+
+#[test]
+fn test_take_and_get_reporting_snapshot() {
+    let s = setup();
+    s.env.ledger().set_timestamp(1_700_000_000);
+
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    s.vault_client.take_reporting_snapshot();
+
+    let snap = s.vault_client.get_latest_snapshot();
+    assert_eq!(snap.timestamp, 1_700_000_000);
+    assert_eq!(snap.total_assets, 1_000_0000000i128);
+    assert_eq!(snap.total_supply, 1_000_0000000i128);
+}
+
+#[test]
+fn test_export_regulatory_data() {
+    let s = setup();
+    s.env.ledger().set_timestamp(1_700_000_000);
+
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client.take_reporting_snapshot();
+
+    let report = s.vault_client.export_regulatory_data();
+    assert_eq!(report.snapshot.timestamp, 1_700_000_000);
+    assert_eq!(report.snapshot.total_assets, 1_000_0000000i128);
+    assert_eq!(report.max_transaction_amount, 0);
+    assert_eq!(report.carbon_credit_price, 0);
 }

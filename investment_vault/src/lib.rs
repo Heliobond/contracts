@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, MuxedAddress, String};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, MuxedAddress, String, Vec};
 use stellar_access::ownable::{set_owner, Ownable};
 use stellar_macros::only_owner;
 use stellar_tokens::fungible::burnable::FungibleBurnable;
@@ -48,7 +48,9 @@ pub trait FlashLoanReceiver {
     ) -> bool;
 }
 
-pub use types::{CarbonCreditCalculation, VaultKey};
+pub use types::{
+    CarbonCreditCalculation, ComplianceEventData, RegulatoryReport, ReportingSnapshotData, VaultKey,
+};
 pub use wormhole::{BridgeDataKey, BridgeTransferPayload};
 
 #[contract]
@@ -492,6 +494,167 @@ impl InvestmentVault {
             .persistent()
             .get(&VaultKey::CarbonCreditBalance(address))
             .unwrap_or(0)
+    }
+
+    // -----------------------------------------------------------------------
+    // Compliance / regulatory reporting
+    // -----------------------------------------------------------------------
+
+    /// Maximum number of compliance events retained on-chain.
+    const MAX_COMPLIANCE_EVENTS: u64 = 1000;
+
+    /// Set a maximum transaction amount for regulatory compliance.
+    /// Zero (default) means no limit.
+    #[only_owner]
+    pub fn set_max_transaction_amount(env: Env, amount: i128) {
+        if amount < 0 {
+            panic!("amount must be non-negative");
+        }
+        env.storage()
+            .instance()
+            .set(&VaultKey::MaxTransactionAmount, &amount);
+        events::max_transaction_amount_set(&env, amount);
+    }
+
+    /// Return the current max transaction amount (0 = no limit).
+    pub fn max_transaction_amount(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&VaultKey::MaxTransactionAmount)
+            .unwrap_or(0)
+    }
+
+    /// Record a compliance event for audit trail purposes.
+    /// Only callable by the contract owner.
+    #[only_owner]
+    pub fn record_compliance_event(env: Env, event_type: String, data: String) {
+        let counter: u64 = env
+            .storage()
+            .instance()
+            .get(&VaultKey::ComplianceEventCounter)
+            .unwrap_or(0);
+        let seq = counter + 1;
+
+        let event = ComplianceEventData {
+            seq,
+            timestamp: env.ledger().timestamp(),
+            event_type: event_type.clone(),
+            data,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&VaultKey::ComplianceEvent(seq), &event);
+        env.storage()
+            .instance()
+            .set(&VaultKey::ComplianceEventCounter, &seq);
+
+        // Evict oldest events once the limit is exceeded
+        if seq > Self::MAX_COMPLIANCE_EVENTS {
+            let prune = seq - Self::MAX_COMPLIANCE_EVENTS;
+            env.storage()
+                .persistent()
+                .remove(&VaultKey::ComplianceEvent(prune));
+        }
+
+        events::compliance_event_recorded(&env, seq, &event_type);
+    }
+
+    /// Return a specific compliance event by sequence number.
+    /// Panics if the event does not exist.
+    pub fn get_compliance_event(env: Env, seq: u64) -> ComplianceEventData {
+        env.storage()
+            .persistent()
+            .get(&VaultKey::ComplianceEvent(seq))
+            .unwrap_or_else(|| panic!("compliance event not found"))
+    }
+
+    /// Return a range of compliance events `[from, to]` (inclusive).
+    /// Maximum 100 events per call to limit gas.
+    /// If `from > to`, returns an empty vector.
+    pub fn get_compliance_events(env: Env, from: u64, to: u64) -> Vec<ComplianceEventData> {
+        if from > to {
+            return Vec::new(&env);
+        }
+        let max = if to - from > 100 { from + 100 } else { to };
+        let mut events_vec = Vec::new(&env);
+        for seq in from..=max {
+            if let Some(event) = env
+                .storage()
+                .persistent()
+                .get::<VaultKey, ComplianceEventData>(&VaultKey::ComplianceEvent(seq))
+            {
+                events_vec.push_back(event);
+            }
+        }
+        events_vec
+    }
+
+    /// Take a regulatory reporting snapshot of the vault's current state.
+    /// Only callable by the contract owner.
+    #[only_owner]
+    pub fn take_reporting_snapshot(env: Env) {
+        let snapshot = ReportingSnapshotData {
+            timestamp: env.ledger().timestamp(),
+            total_assets: Self::total_assets(env.clone()),
+            total_supply: Base::total_supply(&env),
+            total_investments: env
+                .storage()
+                .persistent()
+                .get(&VaultKey::TotalInvestments)
+                .unwrap_or(0),
+        };
+        env.storage()
+            .instance()
+            .set(&VaultKey::ReportingSnapshot, &snapshot);
+        events::reporting_snapshot_taken(&env, snapshot.timestamp);
+    }
+
+    /// Return the latest reporting snapshot.
+    /// Panics if no snapshot has been taken yet.
+    pub fn get_latest_snapshot(env: Env) -> ReportingSnapshotData {
+        env.storage()
+            .instance()
+            .get(&VaultKey::ReportingSnapshot)
+            .unwrap_or_else(|| panic!("no snapshot taken"))
+    }
+
+    /// Export a comprehensive regulatory data package combining the latest
+    /// snapshot with recent compliance events and key parameters.
+    pub fn export_regulatory_data(env: Env) -> RegulatoryReport {
+        let snapshot = env
+            .storage()
+            .instance()
+            .get(&VaultKey::ReportingSnapshot)
+            .unwrap_or(ReportingSnapshotData {
+                timestamp: 0,
+                total_assets: Self::total_assets(env.clone()),
+                total_supply: Base::total_supply(&env),
+                total_investments: env
+                    .storage()
+                    .persistent()
+                    .get(&VaultKey::TotalInvestments)
+                    .unwrap_or(0),
+            });
+
+        let counter: u64 = env
+            .storage()
+            .instance()
+            .get(&VaultKey::ComplianceEventCounter)
+            .unwrap_or(0);
+
+        let start = if counter > 50 { counter - 50 + 1 } else { 1 };
+        let recent_events = Self::get_compliance_events(env.clone(), start, counter);
+
+        let max_amount = Self::max_transaction_amount(env.clone());
+        let carbon_price = Self::carbon_credit_price(env.clone());
+
+        RegulatoryReport {
+            snapshot,
+            recent_events,
+            max_transaction_amount: max_amount,
+            carbon_credit_price: carbon_price,
+        }
     }
 
     // -----------------------------------------------------------------------
