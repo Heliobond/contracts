@@ -122,6 +122,31 @@ fn test_total_assets_after_deposit() {
 }
 
 #[test]
+fn test_vault_deposit_cost_estimate() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let usdc_admin = Address::generate(&env);
+    let usdc_sac = env
+        .register_stellar_asset_contract_v2(usdc_admin.clone())
+        .address();
+    let registry = env.register(registry_contract::WASM, (&admin, &admin));
+    let contract_id = env.register(InvestmentVault, (&admin, &usdc_sac, &registry));
+    let vault_client = InvestmentVaultClient::new(&env, &contract_id);
+
+    let investor = Address::generate(&env);
+    StellarAssetClient::new(&env, &usdc_sac).mint(&investor, &1_000_0000000i128);
+    let shares = vault_client.deposit(&investor, &1_000_0000000i128);
+
+    assert!(shares > 0);
+    let resources = env.cost_estimate().resources();
+    assert!(resources.instructions > 0);
+    let fee = env.cost_estimate().fee();
+    assert!(fee.total > 0);
+}
+
+#[test]
 fn test_initialize() {
     // With __constructor, registration IS initialization
     let env = Env::default();
@@ -131,6 +156,50 @@ fn test_initialize() {
     let registry = env.register(registry_contract::WASM, (&admin, &admin));
     let _contract_id = env.register(InvestmentVault, (&admin, &usdc, &registry));
     // If registration didn't panic, constructor succeeded with a valid registry
+}
+
+#[test]
+fn test_vault_constructor_and_registry_reference_initial_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let whitelister = Address::generate(&env);
+    let usdc_admin = Address::generate(&env);
+    let project_creator = Address::generate(&env);
+
+    let usdc_sac = env
+        .register_stellar_asset_contract_v2(usdc_admin.clone())
+        .address();
+    let registry_id = env.register(registry_contract::WASM, (&admin, &whitelister));
+    let registry_client = registry_contract::Client::new(&env, &registry_id);
+
+    assert_eq!(registry_client.total_projects(), 0);
+    assert_eq!(registry_client.get_whitelister(), whitelister);
+
+    let vault_id = env.register(InvestmentVault, (&admin, &usdc_sac, &registry_id));
+    let vault_client = InvestmentVaultClient::new(&env, &vault_id);
+
+    assert_eq!(vault_client.accepted_asset(), usdc_sac);
+    assert_eq!(vault_client.get_registry(), registry_id);
+    assert_eq!(vault_client.total_assets(), 0);
+    assert_eq!(vault_client.total_supply(), 0);
+    assert!(!vault_client.is_trading_enabled());
+
+    registry_client.set_whitelist(&project_creator, &true);
+    let project_id = registry_client.create_project(
+        &project_creator,
+        &String::from_str(&env, "ipfs://QmVaultInit"),
+        &0u64,
+    );
+
+    let investor = Address::generate(&env);
+    StellarAssetClient::new(&env, &usdc_sac).mint(&investor, &1_000_0000000i128);
+    let deposit_shares = vault_client.deposit(&investor, &1_000_0000000i128);
+    assert!(deposit_shares > 0);
+
+    vault_client.fund_project(&project_id, &100_0000000i128);
+    assert!(vault_client.total_assets() > 0);
 }
 
 #[test]
