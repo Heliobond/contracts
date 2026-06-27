@@ -1,4 +1,51 @@
-use soroban_sdk::{contracttype, Address, String};
+use soroban_sdk::{contracttype, contracterror, Address, String};
+
+/// Structured error codes for the InvestmentVault contract (#75).
+/// Variant values are stable — never reorder or renumber after deployment,
+/// as on-chain callers may inspect the numeric code.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum VaultError {
+    /// Deposit or transfer amount must be positive.
+    AmountNotPositive       = 1,
+    /// Deposit exceeds the per-deposit maximum (MAX_DEPOSIT).
+    DepositExceedsMaximum   = 2,
+    /// Requested funding exceeds available USDC (liquid minus insurance reserve).
+    InsufficientDeployable  = 3,
+    /// Shares to burn must be positive.
+    SharesNotPositive       = 4,
+    /// Requested withdrawal exceeds the utilization-based limit.
+    WithdrawalExceedsLimit  = 5,
+    /// Insufficient liquid USDC to settle withdrawal immediately.
+    InsufficientLiquid      = 6,
+    /// Yield amount must be positive.
+    YieldAmountNotPositive  = 7,
+    /// Cannot distribute yield when no shares are outstanding.
+    NoSharesOutstanding     = 8,
+    /// Insufficient liquid USDC to pay out yield claim.
+    InsufficientLiquidYield = 9,
+    /// Insurance has already been claimed for this project.
+    InsuranceAlreadyClaimed = 10,
+    /// Insurance fund balance is insufficient for the requested claim.
+    InsufficientInsurance   = 11,
+    /// Management fee exceeds MAX_MANAGEMENT_FEE_BPS.
+    FeeExceedsMaximum       = 12,
+    /// Share transfers to the vault contract address are not allowed.
+    TransferToVaultBlocked  = 13,
+    /// Management fee recipient address has not been set.
+    FeeRecipientNotSet      = 14,
+    /// Expected queue entry is missing from storage.
+    QueueEntryMissing       = 15,
+    /// Insurance claim amount must be positive.
+    ClaimAmountNotPositive  = 16,
+    /// Project credit quality is below the configured minimum threshold.
+    BelowMinCreditQuality   = 17,
+    /// Project green impact is below the configured minimum threshold.
+    BelowMinGreenImpact     = 18,
+    /// Funding threshold value is out of the 0–100 range.
+    ThresholdOutOfRange     = 19,
+}
 
 #[contracttype]
 pub enum VaultKey {
@@ -28,6 +75,10 @@ pub enum VaultKey {
     QueueTail,
     /// A queued redemption claim by index (#3).
     QueueEntry(u64),
+    /// Admin-set minimum credit quality a project must have before funding (#47).
+    MinCreditQuality,
+    /// Admin-set minimum green impact a project must have before funding (#47).
+    MinGreenImpact,
 }
 
 /// Metadata returned for DEX listing and secondary market integration (#126).

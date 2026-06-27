@@ -210,3 +210,18 @@ pub struct ReputationUpdated {
 pub fn reputation_updated(env: &Env, creator: &Address, score: u32) {
     ReputationUpdated { creator: creator.clone(), score }.publish(env);
 }
+
+/// Emitted when the admin replaces the whitelister address (#76).
+#[contractevent]
+pub struct WhitelisterChanged {
+    pub old_whitelister: Address,
+    pub new_whitelister: Address,
+}
+
+pub fn whitelister_changed(env: &Env, old: &Address, new: &Address) {
+    WhitelisterChanged {
+        old_whitelister: old.clone(),
+        new_whitelister: new.clone(),
+    }
+    .publish(env);
+}

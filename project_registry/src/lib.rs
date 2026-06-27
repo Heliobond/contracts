@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, token::Client as TokenClient, Address, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, panic_with_error, token::Client as TokenClient, Address, Env, String, Vec};
 use stellar_access::ownable::{set_owner, Ownable};
 use stellar_macros::only_owner;
 
@@ -16,7 +16,7 @@ const MAX_DISCOUNT_BPS: u32 = 500;
 mod events;
 mod types;
 
-pub use types::{CertificationStatus, DataKey, ProjectData, Proposal};
+pub use types::{CertificationStatus, DataKey, ProjectData, Proposal, RegistryError};
 
 /// Minimum voting period in seconds (~1 day at 5s/ledger, ≈ 17280 ledgers) (#134).
 const MIN_VOTING_PERIOD: u64 = 86_400;
@@ -26,6 +26,10 @@ pub struct ProjectRegistry;
 
 #[contractimpl]
 impl ProjectRegistry {
+    /// Initialise the registry.
+    ///
+    /// - `admin` — contract owner; may update scores, certify, and liquidate collateral.
+    /// - `whitelister` — address authorised to approve creator accounts via `set_whitelist`.
     pub fn __constructor(env: Env, admin: Address, whitelister: Address) {
         set_owner(&env, &admin);
         env.storage()
@@ -39,6 +43,8 @@ impl ProjectRegistry {
             .set(&DataKey::ProposalCounter, &0u32);
     }
 
+    /// Grant or revoke project-creation rights for `account`.
+    /// Only the whitelister address (set at construction) may call this.
     pub fn set_whitelist(env: Env, account: Address, status: bool) {
         let whitelister: Address = env.storage().instance().get(&DataKey::Whitelister).unwrap();
         whitelister.require_auth();
@@ -58,19 +64,19 @@ impl ProjectRegistry {
             .get(&DataKey::Whitelist(creator.clone()))
             .unwrap_or(false);
         if !is_whitelisted {
-            panic!("not whitelisted");
+            panic_with_error!(&env, RegistryError::NotWhitelisted);
         }
         // URI validation (#117, #114)
         let uri_len = uri.len();
         if uri_len < MIN_URI_LEN {
-            panic!("uri too short");
+            panic_with_error!(&env, RegistryError::UriTooShort);
         }
         if uri_len > MAX_URI_LEN {
-            panic!("uri too long");
+            panic_with_error!(&env, RegistryError::UriTooLong);
         }
         // Maturity date must be in the future if provided (#127)
         if maturity_date > 0 && maturity_date <= env.ledger().timestamp() {
-            panic!("maturity date must be in the future");
+            panic_with_error!(&env, RegistryError::MaturityDateInPast);
         }
 
         let counter: u32 = env
@@ -79,14 +85,14 @@ impl ProjectRegistry {
             .get(&DataKey::ProjectCounter)
             .unwrap_or(0);
         if counter == u32::MAX {
-            panic!("project limit reached");
+            panic_with_error!(&env, RegistryError::ProjectLimitReached);
         }
         let project_id = counter + 1;
         // Counter integrity: the target slot must be vacant (#120).
         // Guards against a counter rollback or manipulation that would silently
         // overwrite an existing project entry.
         if env.storage().persistent().has(&DataKey::Project(project_id)) {
-            panic!("counter integrity violation");
+            panic_with_error!(&env, RegistryError::CounterIntegrityViolation);
         }
 
         let project = ProjectData {
@@ -109,13 +115,16 @@ impl ProjectRegistry {
         project_id
     }
 
+    /// Return the `ProjectData` for `id`. Panics with `ProjectNotFound` if the ID is unknown.
     pub fn get_project(env: Env, id: u32) -> ProjectData {
         env.storage()
             .persistent()
             .get(&DataKey::Project(id))
-            .unwrap_or_else(|| panic!("project not found"))
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound))
     }
 
+    /// Return the current project counter (equals the highest assigned project ID).
+    /// Returns 0 when no projects have been created yet.
     pub fn total_projects(env: Env) -> u32 {
         env.storage()
             .instance()
@@ -123,16 +132,19 @@ impl ProjectRegistry {
             .unwrap_or(0)
     }
 
+    /// Update both `credit_quality` and `green_impact` for `project_id`. Admin-only.
+    /// Both values must be in the range 0–100. Emits `ProjectUpdated` and `RateUpdated`.
+    /// No-op if the new scores are identical to the existing ones.
     #[only_owner]
     pub fn update_impact_score(env: Env, project_id: u32, credit_quality: u32, green_impact: u32) {
         if credit_quality > 100 || green_impact > 100 {
-            panic!("scores must be 0-100");
+            panic_with_error!(&env, RegistryError::ScoresOutOfRange);
         }
         let mut project: ProjectData = env
             .storage()
             .persistent()
             .get(&DataKey::Project(project_id))
-            .unwrap_or_else(|| panic!("project {} not found", project_id));
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
 
         // Skip write and event if scores are identical (#124)
         if project.credit_quality == credit_quality && project.green_impact == green_impact {
@@ -154,13 +166,13 @@ impl ProjectRegistry {
         let whitelister: Address = env.storage().instance().get(&DataKey::Whitelister).unwrap();
         let owner: Address = stellar_access::ownable::get_owner(&env).unwrap();
         if caller != whitelister && caller != owner {
-            panic!("not authorized to certify");
+            panic_with_error!(&env, RegistryError::NotAuthorizedToCertify);
         }
         let mut project: ProjectData = env
             .storage()
             .persistent()
             .get(&DataKey::Project(project_id))
-            .unwrap_or_else(|| panic!("project not found"));
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
         project.certification_status = status.clone();
         env.storage()
             .persistent()
@@ -175,13 +187,15 @@ impl ProjectRegistry {
             .storage()
             .persistent()
             .get(&DataKey::Project(project_id))
-            .unwrap_or_else(|| panic!("project not found"));
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
         if project.maturity_date == 0 {
             return false;
         }
         env.ledger().timestamp() >= project.maturity_date
     }
 
+    /// Return all registered projects as `(project_id, ProjectData)` pairs.
+    /// Iterates IDs 1..=`total_projects()` — O(n) in the number of projects.
     pub fn get_all_projects(env: Env) -> Vec<(u32, ProjectData)> {
         let counter: u32 = env
             .storage()
@@ -214,7 +228,7 @@ impl ProjectRegistry {
     ) -> u32 {
         proposer.require_auth();
         if voting_duration_secs < MIN_VOTING_PERIOD {
-            panic!("voting period too short");
+            panic_with_error!(&env, RegistryError::VotingPeriodTooShort);
         }
         let counter: u32 = env
             .storage()
@@ -242,13 +256,17 @@ impl ProjectRegistry {
         proposal_id
     }
 
-    /// Cast a vote on an open proposal. `weight` is the caller's HBS share
-    /// balance — callers must supply this honestly; the vault contract should
-    /// be queried off-chain before invoking. `support = true` = vote for.
+    /// Cast a vote on an open proposal.
+    ///
+    /// `weight` is the caller's HBS share balance, which the caller supplies.
+    /// **There is no on-chain verification of `weight` against the actual balance.**
+    /// Off-chain callers MUST query `vault.balance(voter)` and pass that value;
+    /// supplying an inflated weight enables vote stuffing.
+    /// `support = true` = vote for; `support = false` = vote against.
     pub fn cast_vote(env: Env, voter: Address, proposal_id: u32, support: bool, weight: i128) {
         voter.require_auth();
         if weight <= 0 {
-            panic!("voting weight must be positive");
+            panic_with_error!(&env, RegistryError::VotingWeightNotPositive);
         }
         let already: bool = env
             .storage()
@@ -256,18 +274,18 @@ impl ProjectRegistry {
             .get(&DataKey::HasVoted(proposal_id, voter.clone()))
             .unwrap_or(false);
         if already {
-            panic!("already voted");
+            panic_with_error!(&env, RegistryError::AlreadyVoted);
         }
         let mut proposal: Proposal = env
             .storage()
             .persistent()
             .get(&DataKey::Proposal(proposal_id))
-            .unwrap_or_else(|| panic!("proposal not found"));
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProposalNotFound));
         if env.ledger().timestamp() > proposal.voting_ends_at {
-            panic!("voting period ended");
+            panic_with_error!(&env, RegistryError::VotingPeriodEnded);
         }
         if proposal.executed {
-            panic!("proposal already executed");
+            panic_with_error!(&env, RegistryError::ProposalAlreadyExecuted);
         }
         if support {
             proposal.votes_for += weight;
@@ -290,12 +308,12 @@ impl ProjectRegistry {
             .storage()
             .persistent()
             .get(&DataKey::Proposal(proposal_id))
-            .unwrap_or_else(|| panic!("proposal not found"));
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProposalNotFound));
         if env.ledger().timestamp() <= proposal.voting_ends_at {
-            panic!("voting still open");
+            panic_with_error!(&env, RegistryError::VotingStillOpen);
         }
         if proposal.executed {
-            panic!("proposal already executed");
+            panic_with_error!(&env, RegistryError::ProposalAlreadyExecuted);
         }
         proposal.executed = true;
         let passed = proposal.votes_for > proposal.votes_against;
@@ -312,13 +330,13 @@ impl ProjectRegistry {
     #[only_owner]
     pub fn update_credit_quality_score(env: Env, project_id: u32, credit_quality: u32) {
         if credit_quality > 100 {
-            panic!("credit quality must be 0-100");
+            panic_with_error!(&env, RegistryError::CreditQualityOutOfRange);
         }
         let mut project: ProjectData = env
             .storage()
             .persistent()
             .get(&DataKey::Project(project_id))
-            .unwrap_or_else(|| panic!("project not found"));
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
         project.credit_quality = credit_quality;
         env.storage()
             .persistent()
@@ -326,12 +344,12 @@ impl ProjectRegistry {
         events::credit_quality_updated(&env, project_id, credit_quality);
     }
 
-    /// Return a proposal by ID.
+    /// Return a proposal by ID. Panics with `ProposalNotFound` if unknown.
     pub fn get_proposal(env: Env, proposal_id: u32) -> Proposal {
         env.storage()
             .persistent()
             .get(&DataKey::Proposal(proposal_id))
-            .unwrap_or_else(|| panic!("proposal not found"))
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProposalNotFound))
     }
 
     // ── Collateral management (#128) ───────────────────────────────────────────
@@ -347,15 +365,15 @@ impl ProjectRegistry {
     ) {
         depositor.require_auth();
         if amount <= 0 {
-            panic!("collateral amount must be positive");
+            panic_with_error!(&env, RegistryError::CollateralNotPositive);
         }
         let project: ProjectData = env
             .storage()
             .persistent()
             .get(&DataKey::Project(project_id))
-            .unwrap_or_else(|| panic!("project not found"));
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
         if project.owner != depositor {
-            panic!("only the project owner may deposit collateral");
+            panic_with_error!(&env, RegistryError::NotProjectOwner);
         }
 
         TokenClient::new(&env, &token).transfer(
@@ -387,19 +405,19 @@ impl ProjectRegistry {
             .storage()
             .persistent()
             .get(&DataKey::Project(project_id))
-            .unwrap_or_else(|| panic!("project not found"));
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
         if project.owner != caller {
-            panic!("only the project owner may release collateral");
+            panic_with_error!(&env, RegistryError::NotProjectOwner);
         }
         // Collateral can only be released once the project has matured.
         if project.maturity_date > 0 && env.ledger().timestamp() < project.maturity_date {
-            panic!("project has not matured yet");
+            panic_with_error!(&env, RegistryError::ProjectNotMature);
         }
 
         let key = DataKey::Collateral(project_id, token.clone());
         let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         if balance <= 0 {
-            panic!("no collateral to release");
+            panic_with_error!(&env, RegistryError::NoCollateral);
         }
 
         env.storage().persistent().set(&key, &0i128);
@@ -423,7 +441,7 @@ impl ProjectRegistry {
         let key = DataKey::Collateral(project_id, token.clone());
         let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         if balance <= 0 {
-            panic!("no collateral to liquidate");
+            panic_with_error!(&env, RegistryError::NoCollateral);
         }
 
         env.storage().persistent().set(&key, &0i128);
@@ -447,7 +465,7 @@ impl ProjectRegistry {
             .storage()
             .persistent()
             .get(&DataKey::Project(project_id))
-            .unwrap_or_else(|| panic!("project not found"));
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
         compute_rate(project.credit_quality, project.green_impact)
     }
 
@@ -459,12 +477,12 @@ impl ProjectRegistry {
     pub fn set_creator_reputation(env: Env, caller: Address, creator: Address, score: u32) {
         caller.require_auth();
         if score > 100 {
-            panic!("reputation score must be 0-100");
+            panic_with_error!(&env, RegistryError::ReputationOutOfRange);
         }
         let whitelister: Address = env.storage().instance().get(&DataKey::Whitelister).unwrap();
         let owner: Address = stellar_access::ownable::get_owner(&env).unwrap();
         if caller != whitelister && caller != owner {
-            panic!("not authorized to set reputation");
+            panic_with_error!(&env, RegistryError::NotAuthorizedReputation);
         }
         env.storage()
             .persistent()
@@ -492,6 +510,25 @@ impl ProjectRegistry {
             .get(&DataKey::CreatorReputation(creator))
             .unwrap_or(0);
         score * 50
+    }
+
+    // ── Dependency injection (#76) ─────────────────────────────────────────────
+
+    /// Replace the whitelister address. Admin-only (#76).
+    ///
+    /// The new whitelister takes effect immediately for all subsequent `set_whitelist` calls.
+    /// Emits `WhitelisterChanged`. The admin key is the security boundary — treat it
+    /// with the same care as a multisig threshold key.
+    #[only_owner]
+    pub fn set_whitelister(env: Env, new_whitelister: Address) {
+        let old: Address = env.storage().instance().get(&DataKey::Whitelister).unwrap();
+        env.storage().instance().set(&DataKey::Whitelister, &new_whitelister);
+        events::whitelister_changed(&env, &old, &new_whitelister);
+    }
+
+    /// Return the current whitelister address.
+    pub fn get_whitelister(env: Env) -> Address {
+        env.storage().instance().get(&DataKey::Whitelister).unwrap()
     }
 }
 

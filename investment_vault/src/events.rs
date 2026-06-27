@@ -165,3 +165,29 @@ pub struct UtilizationWarning {
 pub fn utilization_warning(env: &Env, utilization_bps: u32) {
     UtilizationWarning { utilization_bps }.publish(env);
 }
+
+/// Emitted when the admin updates the minimum funding score thresholds (#47).
+#[contractevent]
+pub struct FundingThresholdsSet {
+    pub min_credit_quality: u32,
+    pub min_green_impact: u32,
+}
+
+pub fn funding_thresholds_set(env: &Env, min_credit_quality: u32, min_green_impact: u32) {
+    FundingThresholdsSet { min_credit_quality, min_green_impact }.publish(env);
+}
+
+/// Emitted when the admin replaces the ProjectRegistry dependency (#76).
+#[contractevent]
+pub struct RegistryChanged {
+    pub old_registry: Address,
+    pub new_registry: Address,
+}
+
+pub fn registry_changed(env: &Env, old: &Address, new: &Address) {
+    RegistryChanged {
+        old_registry: old.clone(),
+        new_registry: new.clone(),
+    }
+    .publish(env);
+}

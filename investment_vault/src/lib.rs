@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Env, MuxedAddress, String};
+use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, MuxedAddress, String};
 use stellar_access::ownable::{set_owner, Ownable};
 use stellar_macros::only_owner;
 use stellar_tokens::fungible::burnable::FungibleBurnable;
@@ -24,7 +24,7 @@ mod registry_interface {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm");
 }
 
-pub use types::{HBSTokenInfo, PortfolioInfo, QueuedClaim, VaultKey};
+pub use types::{HBSTokenInfo, PortfolioInfo, QueuedClaim, VaultError, VaultKey};
 
 /// Hard cap on the management fee to protect investors (#7).
 /// 500 bps = 5% maximum.
@@ -49,6 +49,12 @@ pub struct InvestmentVault;
 
 #[contractimpl]
 impl InvestmentVault {
+    /// Initialise the vault.
+    ///
+    /// - `admin` — contract owner; may fund projects, distribute yield, set fees.
+    /// - `usdc_sac` — Stellar Asset Contract address for USDC (the vault's accepted asset).
+    /// - `registry` — deployed `ProjectRegistry` contract; validated immediately by calling
+    ///   `total_projects()`, which panics if the address is not a valid registry.
     pub fn __constructor(env: Env, admin: Address, usdc_sac: Address, registry: Address) {
         set_owner(&env, &admin);
         // Validate that registry is a deployed ProjectRegistry contract by calling it.
@@ -67,15 +73,39 @@ impl InvestmentVault {
         );
     }
 
+    /// Transfer USDC from the vault to a registered project's owner. Admin-only.
+    ///
+    /// Rejects funding if the project's `credit_quality` or `green_impact` is below
+    /// the admin-configured minimum thresholds (see `set_funding_thresholds`; defaults
+    /// are 0 so no restriction applies until explicitly configured).
+    ///
+    /// The insurance reserve is always protected — only `liquid_usdc - insurance_fund`
+    /// is available for deployment.
+    ///
+    /// USDC is transferred directly to the project `owner` address registered in the
+    /// `ProjectRegistry`, not to an arbitrary address.
     #[only_owner]
     pub fn fund_project(env: Env, project_id: u32, amount: i128) {
         if amount <= 0 {
-            panic!("amount must be positive");
+            panic_with_error!(&env, VaultError::AmountNotPositive);
         }
 
         let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
         let registry = registry_interface::Client::new(&env, &registry_addr);
         let project = registry.get_project(&project_id);
+
+        // Enforce minimum quality thresholds before any USDC moves (#47).
+        // Comparison is >= so a threshold of 0 never blocks a project with score 0.
+        let min_credit: u32 = env.storage().instance()
+            .get(&VaultKey::MinCreditQuality).unwrap_or(0);
+        let min_green: u32 = env.storage().instance()
+            .get(&VaultKey::MinGreenImpact).unwrap_or(0);
+        if project.credit_quality < min_credit {
+            panic_with_error!(&env, VaultError::BelowMinCreditQuality);
+        }
+        if project.green_impact < min_green {
+            panic_with_error!(&env, VaultError::BelowMinGreenImpact);
+        }
 
         let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
         let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
@@ -94,7 +124,7 @@ impl InvestmentVault {
         let available = liquid - insurance_reserve;
 
         if amount > available {
-            panic!("insufficient deployable USDC (insurance reserve is protected)");
+            panic_with_error!(&env, VaultError::InsufficientDeployable);
         }
 
         soroban_sdk::token::TokenClient::new(&env, &usdc_sac).transfer(
@@ -124,6 +154,10 @@ impl InvestmentVault {
         events::project_funded(&env, project_id, amount, &project.owner);
     }
 
+    /// Estimate the expected yield from all funded projects based on their impact scores.
+    ///
+    /// Formula per funded project: `investment × (credit_quality + green_impact) / 200`.
+    /// Iterates all registry projects — O(n). Returns 0 when no projects are funded.
     pub fn get_expected_returns(env: Env) -> i128 {
         let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
         let registry = registry_interface::Client::new(&env, &registry_addr);
@@ -146,6 +180,9 @@ impl InvestmentVault {
         expected
     }
 
+    /// Return the vault's net asset value (NAV).
+    /// `NAV = liquid_usdc + total_investments + get_expected_returns()`.
+    /// This is the denominator used for share price calculations (ERC-4626 pattern).
     pub fn total_assets(env: Env) -> i128 {
         let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
         let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
@@ -158,6 +195,8 @@ impl InvestmentVault {
         liquid + investments + Self::get_expected_returns(env.clone())
     }
 
+    /// Convert a USDC amount to vault shares at the current NAV (ERC-4626 formula).
+    /// Returns `usdc_amount` 1:1 when the vault is empty (first deposit).
     pub fn convert_to_shares(env: Env, usdc_amount: i128) -> i128 {
         let total_assets = Self::total_assets(env.clone());
         let total_shares = Base::total_supply(&env);
@@ -169,6 +208,8 @@ impl InvestmentVault {
         }
     }
 
+    /// Convert vault shares to a USDC redemption value at the current NAV.
+    /// Returns 0 when the vault is empty (no shares outstanding).
     pub fn convert_to_assets(env: Env, shares_amount: i128) -> i128 {
         let total_assets = Self::total_assets(env.clone());
         let total_shares = Base::total_supply(&env);
@@ -180,13 +221,20 @@ impl InvestmentVault {
         }
     }
 
+    /// Deposit USDC and mint HBS vault shares. Returns the number of shares minted.
+    ///
+    /// Deductions applied before share calculation:
+    /// 1. Insurance premium: `INSURANCE_PREMIUM_BPS` (50 bps = 0.5%) credited to the insurance fund.
+    /// 2. Management fee: optional `ManagementFeeBps` (0–500 bps) sent to the fee recipient.
+    ///
+    /// The remaining investable amount is converted to shares at the current NAV.
     pub fn deposit(env: Env, from: Address, usdc_amount: i128) -> i128 {
         from.require_auth();
         if usdc_amount <= 0 {
-            panic!("deposit must be positive");
+            panic_with_error!(&env, VaultError::AmountNotPositive);
         }
         if usdc_amount > MAX_DEPOSIT {
-            panic!("deposit exceeds maximum");
+            panic_with_error!(&env, VaultError::DepositExceedsMaximum);
         }
 
         // Deduct insurance premium before share calculation (#135)
@@ -228,7 +276,7 @@ impl InvestmentVault {
                 .storage()
                 .instance()
                 .get(&VaultKey::ManagementFeeRecipient)
-                .unwrap_or_else(|| panic!("fee recipient not set"));
+                .unwrap_or_else(|| panic_with_error!(&env, VaultError::FeeRecipientNotSet));
             token.transfer(&env.current_contract_address(), &recipient, &fee_amount);
         }
 
@@ -267,10 +315,16 @@ impl InvestmentVault {
         (total_investments * 10_000 / total_actual) as u32
     }
 
+    /// Burn `shares_amount` HBS shares and return USDC to `from`.
+    ///
+    /// Withdrawal is subject to graduated liquidity limits based on vault utilization
+    /// (see `get_utilization_bps`). If the vault has insufficient liquid USDC to pay
+    /// the full redemption, shares are burned immediately and the claim is enqueued
+    /// in FIFO order — call `claim()` once liquidity is restored.
     pub fn withdraw(env: Env, from: Address, shares_amount: i128) -> i128 {
         // Note: from.require_auth() is called inside Base::burn
         if shares_amount <= 0 {
-            panic!("shares must be positive");
+            panic_with_error!(&env, VaultError::SharesNotPositive);
         }
 
         let usdc_returned = Self::convert_to_assets(env.clone(), shares_amount);
@@ -295,7 +349,7 @@ impl InvestmentVault {
             events::utilization_warning(&env, utilization_bps);
         }
         if usdc_returned > max_withdraw {
-            panic!("withdrawal exceeds utilization-based limit; reduce withdrawal amount");
+            panic_with_error!(&env, VaultError::WithdrawalExceedsLimit);
         }
 
         if usdc_returned > liquid {
@@ -316,7 +370,6 @@ impl InvestmentVault {
                 .set(&VaultKey::QueueTail, &(tail + 1));
             events::withdraw_queued(&env, &from, shares_amount, usdc_returned);
             return 0;
-            panic!("insufficient liquid USDC: funds may be deployed to projects");
         }
 
         Base::burn(&env, &from, shares_amount);
@@ -364,7 +417,7 @@ impl InvestmentVault {
                 .storage()
                 .persistent()
                 .get(&VaultKey::QueueEntry(idx))
-                .unwrap_or_else(|| panic!("queue entry missing"));
+                .unwrap_or_else(|| panic_with_error!(&env, VaultError::QueueEntryMissing));
 
             if entry.usdc_owed > liquid {
                 break; // can't fully satisfy this entry yet; preserve FIFO order
@@ -397,11 +450,11 @@ impl InvestmentVault {
     #[only_owner]
     pub fn receive_yield(env: Env, from: Address, amount: i128) {
         if amount <= 0 {
-            panic!("yield amount must be positive");
+            panic_with_error!(&env, VaultError::YieldAmountNotPositive);
         }
         let total_shares = Base::total_supply(&env);
         if total_shares == 0 {
-            panic!("no shares outstanding");
+            panic_with_error!(&env, VaultError::NoSharesOutstanding);
         }
 
         let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
@@ -470,7 +523,7 @@ impl InvestmentVault {
         let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
             .balance(&env.current_contract_address());
         if claimable > liquid {
-            panic!("insufficient liquid USDC for yield");
+            panic_with_error!(&env, VaultError::InsufficientLiquidYield);
         }
 
         soroban_sdk::token::TokenClient::new(&env, &usdc_sac).transfer(
@@ -539,7 +592,7 @@ impl InvestmentVault {
     #[only_owner]
     pub fn claim_insurance(env: Env, project_id: u32, recipient: Address, amount: i128) {
         if amount <= 0 {
-            panic!("claim amount must be positive");
+            panic_with_error!(&env, VaultError::ClaimAmountNotPositive);
         }
         let already_claimed: bool = env
             .storage()
@@ -547,7 +600,7 @@ impl InvestmentVault {
             .get(&VaultKey::InsuranceClaimed(project_id))
             .unwrap_or(false);
         if already_claimed {
-            panic!("insurance already claimed for this project");
+            panic_with_error!(&env, VaultError::InsuranceAlreadyClaimed);
         }
         let fund: i128 = env
             .storage()
@@ -555,7 +608,7 @@ impl InvestmentVault {
             .get(&VaultKey::InsuranceFund)
             .unwrap_or(0);
         if amount > fund {
-            panic!("insufficient insurance fund");
+            panic_with_error!(&env, VaultError::InsufficientInsurance);
         }
         // Mark as claimed before transfer (CEI)
         env.storage()
@@ -591,7 +644,7 @@ impl InvestmentVault {
     #[only_owner]
     pub fn set_management_fee(env: Env, fee_bps: u32, recipient: Address) {
         if fee_bps > MAX_MANAGEMENT_FEE_BPS {
-            panic!("fee exceeds maximum of {} bps", MAX_MANAGEMENT_FEE_BPS);
+            panic_with_error!(&env, VaultError::FeeExceedsMaximum);
         }
         env.storage()
             .instance()
@@ -632,6 +685,58 @@ impl InvestmentVault {
             .unwrap_or(false)
     }
 
+    // ── Minimum funding thresholds (#47) ──────────────────────────────────────
+
+    /// Set the minimum score thresholds a project must meet before it can be funded.
+    ///
+    /// Both values must be 0–100. The default is 0 (no restriction), which preserves
+    /// backwards compatibility until the admin explicitly raises the bar.
+    /// Emits `FundingThresholdsSet`. Admin-only.
+    #[only_owner]
+    pub fn set_funding_thresholds(env: Env, min_credit_quality: u32, min_green_impact: u32) {
+        if min_credit_quality > 100 || min_green_impact > 100 {
+            panic_with_error!(&env, VaultError::ThresholdOutOfRange);
+        }
+        env.storage().instance().set(&VaultKey::MinCreditQuality, &min_credit_quality);
+        env.storage().instance().set(&VaultKey::MinGreenImpact, &min_green_impact);
+        events::funding_thresholds_set(&env, min_credit_quality, min_green_impact);
+    }
+
+    /// Return the minimum credit quality threshold (0–100). Default is 0 (no restriction).
+    pub fn get_min_credit_quality(env: Env) -> u32 {
+        env.storage().instance().get(&VaultKey::MinCreditQuality).unwrap_or(0)
+    }
+
+    /// Return the minimum green impact threshold (0–100). Default is 0 (no restriction).
+    pub fn get_min_green_impact(env: Env) -> u32 {
+        env.storage().instance().get(&VaultKey::MinGreenImpact).unwrap_or(0)
+    }
+
+    // ── Dependency injection (#76) ─────────────────────────────────────────────
+
+    /// Replace the ProjectRegistry dependency. Admin-only (#76).
+    ///
+    /// The new address is validated immediately by calling `total_projects()` on it —
+    /// panics if the address is not a deployed ProjectRegistry.
+    ///
+    /// **Security:** This is a high-privilege operation. The admin key is the only
+    /// protection against swapping in a malicious registry. Treat the admin key as a
+    /// security boundary (ideally a multisig account).
+    ///
+    /// Emits `RegistryChanged`.
+    #[only_owner]
+    pub fn set_registry(env: Env, new_registry: Address) {
+        registry_interface::Client::new(&env, &new_registry).total_projects();
+        let old: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
+        env.storage().instance().set(&VaultKey::Registry, &new_registry);
+        events::registry_changed(&env, &old, &new_registry);
+    }
+
+    /// Return the current ProjectRegistry contract address.
+    pub fn get_registry(env: Env) -> Address {
+        env.storage().instance().get(&VaultKey::Registry).unwrap()
+    }
+
     /// Return HBS token metadata for DEX listing and secondary market integration.
     /// The `trading_enabled` field mirrors `is_trading_enabled()`.
     pub fn get_hbs_token_info(env: Env) -> HBSTokenInfo {
@@ -657,7 +762,7 @@ impl FungibleToken for InvestmentVault {
         // Soroban has no zero address; the vault's own address is the closest
         // equivalent — shares sent here can never be recovered (#118).
         if to.address() == e.current_contract_address() {
-            panic!("transfer to vault address not allowed");
+            panic_with_error!(e, VaultError::TransferToVaultBlocked);
         }
         Base::transfer(e, &from, &to, amount);
     }
