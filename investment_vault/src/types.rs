@@ -1,4 +1,59 @@
-use soroban_sdk::{contracttype, Address, String};
+use soroban_sdk::{contracttype, contracterror, Address, BytesN, String, Vec};
+
+/// Structured error codes for the InvestmentVault contract (#75).
+/// Variant values are stable — never reorder or renumber after deployment,
+/// as on-chain callers may inspect the numeric code.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum VaultError {
+    /// Deposit or transfer amount must be positive.
+    AmountNotPositive       = 1,
+    /// Deposit exceeds the per-deposit maximum (MAX_DEPOSIT).
+    DepositExceedsMaximum   = 2,
+    /// Requested funding exceeds available USDC (liquid minus insurance reserve).
+    InsufficientDeployable  = 3,
+    /// Shares to burn must be positive.
+    SharesNotPositive       = 4,
+    /// Requested withdrawal exceeds the utilization-based limit.
+    WithdrawalExceedsLimit  = 5,
+    /// Insufficient liquid USDC to settle withdrawal immediately.
+    InsufficientLiquid      = 6,
+    /// Yield amount must be positive.
+    YieldAmountNotPositive  = 7,
+    /// Cannot distribute yield when no shares are outstanding.
+    NoSharesOutstanding     = 8,
+    /// Insufficient liquid USDC to pay out yield claim.
+    InsufficientLiquidYield = 9,
+    /// Insurance has already been claimed for this project.
+    InsuranceAlreadyClaimed = 10,
+    /// Insurance fund balance is insufficient for the requested claim.
+    InsufficientInsurance   = 11,
+    /// Management fee exceeds MAX_MANAGEMENT_FEE_BPS.
+    FeeExceedsMaximum       = 12,
+    /// Share transfers to the vault contract address are not allowed.
+    TransferToVaultBlocked  = 13,
+    /// Management fee recipient address has not been set.
+    FeeRecipientNotSet      = 14,
+    /// Expected queue entry is missing from storage.
+    QueueEntryMissing       = 15,
+    /// Insurance claim amount must be positive.
+    ClaimAmountNotPositive  = 16,
+    /// Project credit quality is below the configured minimum threshold.
+    BelowMinCreditQuality   = 17,
+    /// Project green impact is below the configured minimum threshold.
+    BelowMinGreenImpact     = 18,
+    /// Funding threshold value is out of the 0–100 range.
+    ThresholdOutOfRange     = 19,
+    /// Bridge contract address is not set.
+    BridgeNotSet            = 20,
+    /// Wormhole core contract address is not set.
+    WormholeCoreNotSet      = 21,
+    /// Emitter is not trusted for cross-chain minting.
+    EmitterNotTrusted       = 22,
+    /// VAA has already been consumed.
+    VaaAlreadyConsumed      = 23,
+}
 
 #[contracttype]
 pub enum VaultKey {
@@ -28,6 +83,72 @@ pub enum VaultKey {
     QueueTail,
     /// A queued redemption claim by index (#3).
     QueueEntry(u64),
+    /// Admin-set minimum credit quality a project must have before funding (#47).
+    MinCreditQuality,
+    /// Admin-set minimum green impact a project must have before funding (#47).
+    MinGreenImpact,
+    /// Bridge contract address for cross-chain bridging.
+    Bridge,
+    /// Flash loan fee in basis points.
+    FlashLoanFee,
+    /// Carbon credit oracle contract address.
+    CarbonOracle,
+    /// Carbon credit price in USD micro-units.
+    CarbonCreditPrice,
+    /// Carbon credit balance per address.
+    CarbonCreditBalance(Address),
+    /// Compliance event sequence counter.
+    ComplianceEventCounter,
+    /// A compliance event by sequence number.
+    ComplianceEvent(u64),
+    /// Latest regulatory reporting snapshot.
+    ReportingSnapshot,
+    /// Maximum transaction amount for compliance (0 = no limit).
+    MaxTransactionAmount,
+}
+
+/// Container for wormhole bridge data keys.
+#[contracttype]
+pub enum BridgeDataKey {
+    WormholeCore,
+    TrustedEmitter(u32, BytesN<32>),
+    ConsumedVaa(BytesN<32>),
+}
+
+/// A carbon credit calculation result.
+#[contracttype]
+pub struct CarbonCreditCalculation {
+    pub project_id: u32,
+    pub amount_invested: i128,
+    pub credits: i128,
+}
+
+/// A recorded compliance event for audit trail purposes.
+#[contracttype]
+pub struct ComplianceEventData {
+    pub seq: u64,
+    pub timestamp: u64,
+    pub event_type: String,
+    pub data: String,
+}
+
+/// A periodic snapshot of the vault's key metrics for regulatory reporting.
+#[contracttype]
+pub struct ReportingSnapshotData {
+    pub timestamp: u64,
+    pub total_assets: i128,
+    pub total_supply: i128,
+    pub total_investments: i128,
+}
+
+/// A comprehensive regulatory data export combining the latest snapshot
+/// with recent compliance events.
+#[contracttype]
+pub struct RegulatoryReport {
+    pub snapshot: ReportingSnapshotData,
+    pub recent_events: Vec<ComplianceEventData>,
+    pub max_transaction_amount: i128,
+    pub carbon_credit_price: i128,
 }
 
 /// Metadata returned for DEX listing and secondary market integration (#126).
