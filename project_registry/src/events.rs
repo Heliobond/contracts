@@ -1,6 +1,44 @@
 use soroban_sdk::{contractevent, Address, Env, String};
 use crate::types::CertificationStatus;
 
+/// Emitted when collateral is deposited for a project (#128).
+#[contractevent]
+pub struct CollateralDeposited {
+    #[topic]
+    pub project_id: u32,
+    pub token: Address,
+    pub depositor: Address,
+    pub amount: i128,
+}
+
+/// Emitted when collateral is released back to the project owner (#128).
+#[contractevent]
+pub struct CollateralReleased {
+    #[topic]
+    pub project_id: u32,
+    pub token: Address,
+    pub recipient: Address,
+    pub amount: i128,
+}
+
+/// Emitted when collateral is liquidated by the admin (#128).
+#[contractevent]
+pub struct CollateralLiquidated {
+    #[topic]
+    pub project_id: u32,
+    pub token: Address,
+    pub recipient: Address,
+    pub amount: i128,
+}
+
+/// Emitted when a project's interest rate is recalculated (#129).
+#[contractevent]
+pub struct RateUpdated {
+    #[topic]
+    pub project_id: u32,
+    pub rate_bps: u32,
+}
+
 /// Emitted when a whitelisted creator registers a new project.
 #[contractevent]
 pub struct ProjectCreated {
@@ -113,4 +151,38 @@ pub fn vote_cast(env: &Env, proposal_id: u32, voter: &Address, support: bool, we
 
 pub fn proposal_executed(env: &Env, proposal_id: u32, passed: bool) {
     ProposalExecuted { proposal_id, passed }.publish(env);
+}
+
+pub fn collateral_deposited(env: &Env, project_id: u32, token: &Address, depositor: &Address, amount: i128) {
+    CollateralDeposited {
+        project_id,
+        token: token.clone(),
+        depositor: depositor.clone(),
+        amount,
+    }
+    .publish(env);
+}
+
+pub fn collateral_released(env: &Env, project_id: u32, token: &Address, recipient: &Address, amount: i128) {
+    CollateralReleased {
+        project_id,
+        token: token.clone(),
+        recipient: recipient.clone(),
+        amount,
+    }
+    .publish(env);
+}
+
+pub fn collateral_liquidated(env: &Env, project_id: u32, token: &Address, recipient: &Address, amount: i128) {
+    CollateralLiquidated {
+        project_id,
+        token: token.clone(),
+        recipient: recipient.clone(),
+        amount,
+    }
+    .publish(env);
+}
+
+pub fn rate_updated(env: &Env, project_id: u32, rate_bps: u32) {
+    RateUpdated { project_id, rate_bps }.publish(env);
 }

@@ -42,6 +42,9 @@
                 },
                 {
                   "string": "ipfs://QmTest"
+                },
+                {
+                  "u64": "0"
                 }
               ]
             }
@@ -105,6 +108,14 @@
                 "map": [
                   {
                     "key": {
+                      "symbol": "certification_status"
+                    },
+                    "val": {
+                      "u32": 0
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "credit_quality"
                     },
                     "val": {
@@ -117,6 +128,14 @@
                     },
                     "val": {
                       "u32": 0
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "maturity_date"
+                    },
+                    "val": {
+                      "u64": "0"
                     }
                   },
                   {
@@ -207,6 +226,18 @@
                       },
                       "val": {
                         "u32": 1
+                      }
+                    },
+                    {
+                      "key": {
+                        "vec": [
+                          {
+                            "symbol": "ProposalCounter"
+                          }
+                        ]
+                      },
+                      "val": {
+                        "u32": 0
                       }
                     },
                     {

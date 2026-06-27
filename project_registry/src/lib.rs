@@ -1,12 +1,17 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, token::Client as TokenClient, Address, Env, String, Vec};
 use stellar_access::ownable::{set_owner, Ownable};
 use stellar_macros::only_owner;
 
-/// Maximum URI length in bytes. Prevents excessively large ledger entries (#114).
+/// Maximum URI length in bytes. Prevents excessively large ledger entries (#119).
 const MAX_URI_LEN: u32 = 512;
 /// Minimum URI length — must contain at least a scheme and one character (#117).
 const MIN_URI_LEN: u32 = 8;
+
+/// Base interest rate in basis points (10 %). High-risk / zero-score projects pay this rate (#129).
+const BASE_RATE_BPS: u32 = 1_000;
+/// Maximum rate discount in basis points earned by a perfect-score project (5 %) (#129).
+const MAX_DISCOUNT_BPS: u32 = 500;
 
 mod events;
 mod types;
@@ -134,6 +139,7 @@ impl ProjectRegistry {
             .persistent()
             .set(&DataKey::Project(project_id), &project);
         events::project_updated(&env, project_id, credit_quality, green_impact);
+        events::rate_updated(&env, project_id, compute_rate(credit_quality, green_impact));
     }
 
     /// Set the certification status of a project (whitelister or owner only) (#130).
@@ -301,6 +307,129 @@ impl ProjectRegistry {
             .get(&DataKey::Proposal(proposal_id))
             .unwrap_or_else(|| panic!("proposal not found"))
     }
+
+    // ── Collateral management (#128) ───────────────────────────────────────────
+
+    /// Deposit `amount` of `token` as collateral for `project_id`.
+    /// Only the project owner may deposit; tokens are held by this contract.
+    pub fn deposit_collateral(
+        env: Env,
+        project_id: u32,
+        depositor: Address,
+        token: Address,
+        amount: i128,
+    ) {
+        depositor.require_auth();
+        if amount <= 0 {
+            panic!("collateral amount must be positive");
+        }
+        let project: ProjectData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Project(project_id))
+            .unwrap_or_else(|| panic!("project not found"));
+        if project.owner != depositor {
+            panic!("only the project owner may deposit collateral");
+        }
+
+        TokenClient::new(&env, &token).transfer(
+            &depositor,
+            &env.current_contract_address(),
+            &amount,
+        );
+
+        let key = DataKey::Collateral(project_id, token.clone());
+        let prev: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        env.storage().persistent().set(&key, &(prev + amount));
+
+        events::collateral_deposited(&env, project_id, &token, &depositor, amount);
+    }
+
+    /// Return the collateral balance for (`project_id`, `token`).
+    pub fn get_collateral(env: Env, project_id: u32, token: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Collateral(project_id, token))
+            .unwrap_or(0)
+    }
+
+    /// Release all collateral of `token` back to the project owner.
+    /// Allowed only after the project has matured or was never funded.
+    pub fn release_collateral(env: Env, project_id: u32, caller: Address, token: Address) {
+        caller.require_auth();
+        let project: ProjectData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Project(project_id))
+            .unwrap_or_else(|| panic!("project not found"));
+        if project.owner != caller {
+            panic!("only the project owner may release collateral");
+        }
+        // Collateral can only be released once the project has matured.
+        if project.maturity_date > 0 && env.ledger().timestamp() < project.maturity_date {
+            panic!("project has not matured yet");
+        }
+
+        let key = DataKey::Collateral(project_id, token.clone());
+        let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        if balance <= 0 {
+            panic!("no collateral to release");
+        }
+
+        env.storage().persistent().set(&key, &0i128);
+        TokenClient::new(&env, &token).transfer(
+            &env.current_contract_address(),
+            &caller,
+            &balance,
+        );
+
+        events::collateral_released(&env, project_id, &token, &caller, balance);
+    }
+
+    /// Liquidate collateral to `recipient` (admin only). Used for defaulted projects.
+    #[only_owner]
+    pub fn liquidate_collateral(
+        env: Env,
+        project_id: u32,
+        token: Address,
+        recipient: Address,
+    ) {
+        let key = DataKey::Collateral(project_id, token.clone());
+        let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        if balance <= 0 {
+            panic!("no collateral to liquidate");
+        }
+
+        env.storage().persistent().set(&key, &0i128);
+        TokenClient::new(&env, &token).transfer(
+            &env.current_contract_address(),
+            &recipient,
+            &balance,
+        );
+
+        events::collateral_liquidated(&env, project_id, &token, &recipient, balance);
+    }
+
+    // ── Interest rate (#129) ───────────────────────────────────────────────────
+
+    /// Return the current annualised interest rate in basis points for `project_id`.
+    /// Formula: `BASE_RATE_BPS − avg_score × (MAX_DISCOUNT_BPS / 100)`
+    /// where `avg_score = (credit_quality + green_impact) / 2` (0–100).
+    /// Rate range: 500 bps (5 %) for perfect scores → 1 000 bps (10 %) for zero scores.
+    pub fn get_interest_rate(env: Env, project_id: u32) -> u32 {
+        let project: ProjectData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Project(project_id))
+            .unwrap_or_else(|| panic!("project not found"));
+        compute_rate(project.credit_quality, project.green_impact)
+    }
+}
+
+fn compute_rate(credit_quality: u32, green_impact: u32) -> u32 {
+    let avg = (credit_quality + green_impact) / 2;
+    let discount = avg * MAX_DISCOUNT_BPS / 100;
+    BASE_RATE_BPS - discount
 }
 
 #[contractimpl(contracttrait)]

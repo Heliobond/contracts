@@ -55,4 +55,6 @@ pub enum DataKey {
     Proposal(u32),
     /// Whether `address` has voted on proposal `id` (#134).
     HasVoted(u32, Address),
+    /// Collateral balance for (project_id, token) held by this contract (#128).
+    Collateral(u32, Address),
 }

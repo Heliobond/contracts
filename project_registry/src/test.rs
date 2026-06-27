@@ -1,7 +1,11 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, String};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger as _},
+    token::StellarAssetClient,
+    Address, Env, IntoVal, String,
+};
 
 fn setup() -> (Env, Address, Address, ProjectRegistryClient<'static>) {
     let env = Env::default();
@@ -175,6 +179,161 @@ fn test_maturity_date_is_mature() {
     // Advance ledger past maturity
     env.ledger().set_timestamp(now + 1001);
     assert!(client.is_mature(&id));
+}
+
+// ── URI length edge cases (#119) ──────────────────────────────────────────────
+
+#[test]
+fn test_uri_exactly_min_length_accepted() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    // 8 chars exactly equals MIN_URI_LEN
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Q"), &0u64);
+    assert_eq!(id, 1);
+}
+
+#[test]
+#[should_panic(expected = "uri too short")]
+fn test_uri_below_min_length_panics() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    // 7 chars — one below MIN_URI_LEN
+    client.create_project(&creator, &String::from_str(&env, "ipfs://"), &0u64);
+}
+
+#[test]
+fn test_uri_exactly_max_length_accepted() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    // 512-byte stack buffer: prefix + 'A' padding — no alloc needed
+    let mut buf = [b'A'; 512];
+    buf[..9].copy_from_slice(b"ipfs://Qm");
+    let uri = String::from_str(&env, core::str::from_utf8(&buf).unwrap());
+    let id = client.create_project(&creator, &uri, &0u64);
+    assert_eq!(id, 1);
+}
+
+#[test]
+#[should_panic(expected = "uri too long")]
+fn test_uri_above_max_length_panics() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    // 513-byte stack buffer — one above MAX_URI_LEN
+    let mut buf = [b'A'; 513];
+    buf[..9].copy_from_slice(b"ipfs://Qm");
+    let uri = String::from_str(&env, core::str::from_utf8(&buf).unwrap());
+    client.create_project(&creator, &uri, &0u64);
+}
+
+// ── Collateral management (#128) ──────────────────────────────────────────────
+
+#[test]
+fn test_deposit_and_get_collateral() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let project_id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+
+    let token_admin = Address::generate(&env);
+    let token_sac = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
+
+    client.deposit_collateral(&project_id, &creator, &token_sac, &500i128);
+
+    assert_eq!(client.get_collateral(&project_id, &token_sac), 500i128);
+}
+
+#[test]
+#[should_panic(expected = "only the project owner may deposit collateral")]
+fn test_non_owner_cannot_deposit_collateral() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let project_id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+
+    let token_admin = Address::generate(&env);
+    let token_sac = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+    let stranger = Address::generate(&env);
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&stranger, &1_000i128);
+
+    client.deposit_collateral(&project_id, &stranger, &token_sac, &500i128);
+}
+
+#[test]
+fn test_liquidate_collateral_by_admin() {
+    let (env, admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let project_id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+
+    let token_sac = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
+    client.deposit_collateral(&project_id, &creator, &token_sac, &800i128);
+
+    let recipient = Address::generate(&env);
+    client.liquidate_collateral(&project_id, &token_sac, &recipient);
+
+    assert_eq!(client.get_collateral(&project_id, &token_sac), 0i128);
+}
+
+#[test]
+fn test_release_collateral_after_maturity() {
+    let (env, admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let now = env.ledger().timestamp();
+    let project_id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &(now + 1000),
+    );
+
+    let token_sac = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
+    client.deposit_collateral(&project_id, &creator, &token_sac, &600i128);
+
+    env.ledger().set_timestamp(now + 1001);
+    client.release_collateral(&project_id, &creator, &token_sac);
+
+    assert_eq!(client.get_collateral(&project_id, &token_sac), 0i128);
+}
+
+// ── Interest rate (#129) ───────────────────────────────────────────────────────
+
+#[test]
+fn test_interest_rate_zero_scores_is_base_rate() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+    // credit_quality = 0, green_impact = 0 → rate = 1000 bps (10 %)
+    assert_eq!(client.get_interest_rate(&id), 1_000u32);
+}
+
+#[test]
+fn test_interest_rate_perfect_scores_is_minimum() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+    client.update_impact_score(&id, &100u32, &100u32);
+    // avg = 100, discount = 100 * 500 / 100 = 500 → rate = 1000 - 500 = 500 bps (5 %)
+    assert_eq!(client.get_interest_rate(&id), 500u32);
+}
+
+#[test]
+fn test_interest_rate_mid_scores() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+    client.update_impact_score(&id, &80u32, &60u32);
+    // avg = (80 + 60) / 2 = 70, discount = 70 * 500 / 100 = 350 → rate = 1000 - 350 = 650 bps
+    assert_eq!(client.get_interest_rate(&id), 650u32);
 }
 
 // Integration: full Heliobond flow across both contracts
