@@ -82,6 +82,12 @@ impl ProjectRegistry {
             panic!("project limit reached");
         }
         let project_id = counter + 1;
+        // Counter integrity: the target slot must be vacant (#120).
+        // Guards against a counter rollback or manipulation that would silently
+        // overwrite an existing project entry.
+        if env.storage().persistent().has(&DataKey::Project(project_id)) {
+            panic!("counter integrity violation");
+        }
 
         let project = ProjectData {
             owner: creator.clone(),

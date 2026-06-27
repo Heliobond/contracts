@@ -1,7 +1,6 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env, IntoVal, String};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     token::StellarAssetClient,
@@ -436,10 +435,11 @@ mod integration {
         );
         assert_eq!(project_id, 1);
 
-        // Investor deposits 2000 USDC → receives 2000 shares (1:1 on first deposit)
+        // Investor deposits 2000 USDC; 0.5% insurance premium (10 USDC) is deducted
+        // before share conversion → investable = 1990 USDC → 1990 shares at 1:1
         let shares = vault.deposit(&investor, &2_000_0000000i128);
-        assert_eq!(shares, 2_000_0000000i128);
-        assert_eq!(vault.balance(&investor), 2_000_0000000i128);
+        assert_eq!(shares, 1_990_0000000i128);
+        assert_eq!(vault.balance(&investor), 1_990_0000000i128);
 
         // Admin updates impact scores (oracle step)
         registry.update_impact_score(&project_id, &80u32, &60u32);
@@ -455,12 +455,14 @@ mod integration {
         let total = vault.total_assets();
         assert_eq!(total, 2_350_0000000i128);
 
-        // Investor withdraws half their shares (1000 out of 2000)
+        // Investor withdraws half their shares (995 out of 1990)
+        // total_assets = 2350, total_supply = 1990
+        // returned = 995 * 2350 / 1990 = 1175 USDC (insurance pool is part of total assets)
         let half_shares = shares / 2;
         let returned = vault.withdraw(&investor, &half_shares);
         assert_eq!(returned, 1_175_0000000i128);
 
-        // Remaining shares and balance
-        assert_eq!(vault.balance(&investor), 1_000_0000000i128);
+        // Remaining shares and balance (1990 / 2 = 995)
+        assert_eq!(vault.balance(&investor), 995_0000000i128);
     }
 }

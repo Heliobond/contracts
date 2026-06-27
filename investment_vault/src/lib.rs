@@ -247,7 +247,7 @@ impl InvestmentVault {
             .balance(&env.current_contract_address());
 
         if usdc_returned > liquid {
-            panic!("insufficient liquid USDC");
+            panic!("insufficient liquid USDC: funds may be deployed to projects");
         }
 
         Base::burn(&env, &from, shares_amount);
@@ -523,6 +523,15 @@ impl InvestmentVault {
 #[contractimpl(contracttrait)]
 impl FungibleToken for InvestmentVault {
     type ContractType = Base;
+
+    fn transfer(e: &Env, from: Address, to: MuxedAddress, amount: i128) {
+        // Soroban has no zero address; the vault's own address is the closest
+        // equivalent — shares sent here can never be recovered (#118).
+        if to.address() == e.current_contract_address() {
+            panic!("transfer to vault address not allowed");
+        }
+        Base::transfer(e, &from, &to, amount);
+    }
 }
 
 #[contractimpl(contracttrait)]

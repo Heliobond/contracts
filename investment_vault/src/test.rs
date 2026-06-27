@@ -10,6 +10,7 @@ struct TestSetup {
     env: Env,
     admin: Address,
     vault_client: InvestmentVaultClient<'static>,
+    vault_address: Address,
     usdc_sac: Address,
     registry: Address,
 }
@@ -37,6 +38,7 @@ fn setup() -> TestSetup {
         env,
         admin,
         vault_client,
+        vault_address: contract_id,
         usdc_sac,
         registry: registry_id,
     }
@@ -55,9 +57,11 @@ fn test_first_deposit_mints_1_to_1_shares() {
 
     let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
 
-    assert_eq!(shares, 1_000_0000000i128);
-    assert_eq!(s.vault_client.balance(&investor), 1_000_0000000i128);
-    assert_eq!(s.vault_client.total_supply(), 1_000_0000000i128);
+    // 0.5% insurance premium is deducted before share conversion:
+    // investable = 1000 - 5 = 995 USDC → 995 shares at 1:1
+    assert_eq!(shares, 995_0000000i128);
+    assert_eq!(s.vault_client.balance(&investor), 995_0000000i128);
+    assert_eq!(s.vault_client.total_supply(), 995_0000000i128);
 }
 
 #[test]
@@ -71,7 +75,9 @@ fn test_deposit_proportional_after_first() {
     s.vault_client.deposit(&investor1, &1_000_0000000i128);
     let shares2 = s.vault_client.deposit(&investor2, &1_000_0000000i128);
 
-    assert_eq!(shares2, 1_000_0000000i128);
+    // After investor1: total_supply=995, total_assets=1000 (USDC).
+    // investor2 investable=995 → shares2 = 995 * 995 / 1000 = 990.025 → 990_0250000
+    assert_eq!(shares2, 9_900_250_000i128);
 }
 
 #[test]
@@ -127,6 +133,86 @@ fn test_fund_project_records_investment() {
     s.vault_client.deposit(&investor, &1_000_0000000i128);
 
     assert_eq!(s.vault_client.total_assets(), 1_000_0000000i128);
+}
+
+// ── Issue #116: descriptive liquidity error ────────────────────────────────
+
+#[test]
+#[should_panic(expected = "insufficient liquid USDC")]
+fn test_withdraw_fails_when_all_usdc_deployed() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &soroban_sdk::String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+    );
+    // Fund with all deployable USDC (liquid − insurance = 995); vault liquid drops to 5
+    s.vault_client.fund_project(&project_id, &995_0000000i128);
+
+    // Full share redemption requires ~1000 USDC but only 5 liquid remain
+    s.vault_client.withdraw(&investor, &shares);
+}
+
+// ── Issue #118: block share transfer to vault address ─────────────────────
+
+#[test]
+#[should_panic(expected = "transfer to vault address not allowed")]
+fn test_transfer_to_vault_address_rejected() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    // Attempt to send HBS shares to the vault contract itself
+    s.vault_client.transfer(&investor, &s.vault_address, &100_0000000i128);
+}
+
+// ── Issue #122: full-withdrawal edge cases ────────────────────────────────
+
+#[test]
+fn test_full_withdrawal_with_no_investments() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    // Full withdrawal with no outstanding investments drains the vault cleanly
+    s.vault_client.withdraw(&investor, &shares);
+
+    assert_eq!(s.vault_client.total_supply(), 0);
+    assert_eq!(s.vault_client.balance(&investor), 0);
+}
+
+#[test]
+#[should_panic(expected = "insufficient liquid USDC")]
+fn test_full_withdrawal_blocked_by_outstanding_investments() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 2_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &2_000_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &soroban_sdk::String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+    );
+    // Fund 1000 USDC; vault liquid = 1000 but total assets = 2000
+    s.vault_client.fund_project(&project_id, &1_000_0000000i128);
+
+    // Full share redemption needs 2000 USDC but only 1000 liquid — must fail
+    s.vault_client.withdraw(&investor, &shares);
 }
 
 #[test]
