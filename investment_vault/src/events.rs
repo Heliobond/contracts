@@ -154,3 +154,14 @@ pub struct TradingEnabled {
 pub fn trading_enabled(env: &Env, enabled: bool) {
     TradingEnabled { enabled }.publish(env);
 }
+
+/// Emitted when vault utilization crosses a high threshold during a withdrawal (#45).
+/// Off-chain monitors should alert operators to consider replenishing liquidity.
+#[contractevent]
+pub struct UtilizationWarning {
+    pub utilization_bps: u32,
+}
+
+pub fn utilization_warning(env: &Env, utilization_bps: u32) {
+    UtilizationWarning { utilization_bps }.publish(env);
+}

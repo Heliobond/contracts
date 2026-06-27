@@ -1,6 +1,6 @@
 #![cfg(test)]
 use super::*;
-use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, token::TokenClient, Address, Env, String};
+use soroban_sdk::{testutils::{Address as _, Events as _}, token::StellarAssetClient, token::TokenClient, Address, Env, String};
 
 mod registry_contract {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm");
@@ -152,6 +152,108 @@ fn test_fund_project_records_investment() {
     s.vault_client.deposit(&investor, &1_000_0000000i128);
 
     assert_eq!(s.vault_client.total_assets(), 1_000_0000000i128);
+}
+
+// ── Issue #61: fund_project with insufficient liquid USDC ────────────────────
+
+#[test]
+#[should_panic(expected = "insufficient deployable USDC")]
+fn test_fund_project_panics_when_fully_depleted() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+    );
+
+    // Fund with all deployable USDC: liquid (1000) - insurance_reserve (5) = 995
+    s.vault_client.fund_project(&project_id, &995_0000000i128);
+
+    // Vault now has only 5 USDC liquid (= insurance_reserve), deployable = 0.
+    // Any further funding must panic.
+    s.vault_client.fund_project(&project_id, &1_0000000i128);
+}
+
+#[test]
+#[should_panic(expected = "insufficient deployable USDC")]
+fn test_fund_project_panics_when_amount_exceeds_available() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+
+    // Deposit 500 USDC; insurance_reserve = 500 * 50 / 10_000 = 2_500_000 stroops (0.25 USDC)
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 500_0000000i128);
+    s.vault_client.deposit(&investor, &500_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+    );
+
+    // Attempt to fund exactly the full liquid balance — exceeds available by the
+    // insurance reserve (0.25 USDC), so must fail.
+    s.vault_client.fund_project(&project_id, &500_0000000i128);
+}
+
+#[test]
+fn test_fund_project_partial_funding_succeeds() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+    );
+
+    // Two partial fundings that together stay within the deployable amount.
+    s.vault_client.fund_project(&project_id, &300_0000000i128);
+    s.vault_client.fund_project(&project_id, &200_0000000i128);
+
+    // total_assets = 500 liquid + 500 invested + 0 expected_returns = 1000 USDC
+    assert_eq!(s.vault_client.total_assets(), 1_000_0000000i128);
+}
+
+#[test]
+#[should_panic(expected = "insufficient deployable USDC")]
+fn test_fund_project_second_call_exhausts_remaining_deployable() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+    );
+
+    // First call: fund 600 USDC — leaves 400 liquid (5 reserved) → 395 deployable.
+    s.vault_client.fund_project(&project_id, &600_0000000i128);
+
+    // Second call: attempt to deploy 400 USDC, which exceeds the 395 deployable.
+    s.vault_client.fund_project(&project_id, &400_0000000i128);
 }
 
 // ── Issue #116: descriptive liquidity error ────────────────────────────────
@@ -462,5 +564,203 @@ fn test_claim_settles_queued_redemption() {
     assert_eq!(
         TokenClient::new(&s.env, &s.usdc_sac).balance(&investor1),
         owed
+    );
+}
+
+// ── Issue #55: event emission verification tests ──────────────────────────────
+
+#[test]
+fn test_deposit_emits_event() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let amount = 1_000_0000000i128;
+    mint_usdc(&s.env, &s.usdc_sac, &investor, amount);
+
+    s.vault_client.deposit(&investor, &amount);
+
+    let events = s.env.events().all();
+    assert_eq!(events.len(), 1, "deposit should emit exactly one event");
+    let (emitting_contract, _topics, _data) = &events[0];
+    assert_eq!(*emitting_contract, s.vault_address);
+}
+
+#[test]
+fn test_withdraw_emits_event() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let count_before = s.env.events().all().len();
+
+    s.vault_client.withdraw(&investor, &shares);
+
+    let events = s.env.events().all();
+    assert_eq!(
+        events.len(),
+        count_before + 1,
+        "withdraw should emit exactly one additional event"
+    );
+    let (emitting_contract, _topics, _data) = &events[events.len() - 1];
+    assert_eq!(*emitting_contract, s.vault_address);
+}
+
+#[test]
+fn test_fund_project_emits_event() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+    );
+    let count_before = s.env.events().all().len();
+
+    s.vault_client.fund_project(&project_id, &100_0000000i128);
+
+    let events = s.env.events().all();
+    assert_eq!(
+        events.len(),
+        count_before + 1,
+        "fund_project should emit exactly one additional event"
+    );
+    let (emitting_contract, _topics, _data) = &events[events.len() - 1];
+    assert_eq!(*emitting_contract, s.vault_address);
+}
+
+#[test]
+fn test_withdraw_queued_emits_event() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+    );
+    s.vault_client.fund_project(&project_id, &500_0000000i128);
+
+    let count_before = s.env.events().all().len();
+
+    // Withdrawal exceeds liquid USDC — should enqueue and emit WithdrawQueued.
+    let returned = s.vault_client.withdraw(&investor, &shares);
+    assert_eq!(returned, 0);
+
+    let events = s.env.events().all();
+    assert_eq!(
+        events.len(),
+        count_before + 1,
+        "queued withdrawal should emit exactly one additional event"
+    );
+    let (emitting_contract, _topics, _data) = &events[events.len() - 1];
+    assert_eq!(*emitting_contract, s.vault_address);
+}
+
+#[test]
+fn test_claim_queued_emits_event() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+    );
+    s.vault_client.fund_project(&project_id, &500_0000000i128);
+    s.vault_client.withdraw(&investor, &shares);
+
+    // Restore liquidity so claim() can settle.
+    let investor2 = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor2, 2_000_0000000i128);
+    s.vault_client.deposit(&investor2, &2_000_0000000i128);
+
+    let count_before = s.env.events().all().len();
+
+    s.vault_client.claim();
+
+    let events = s.env.events().all();
+    assert!(
+        events.len() > count_before,
+        "claim() should emit at least one event when settling a queued redemption"
+    );
+    let (emitting_contract, _topics, _data) = &events[events.len() - 1];
+    assert_eq!(*emitting_contract, s.vault_address);
+}
+
+#[test]
+fn test_management_fee_set_emits_event() {
+    let s = setup();
+    let recipient = Address::generate(&s.env);
+
+    s.vault_client.set_management_fee(&200u32, &recipient);
+
+    let events = s.env.events().all();
+    assert_eq!(events.len(), 1, "set_management_fee should emit exactly one event");
+    let (emitting_contract, _topics, _data) = &events[0];
+    assert_eq!(*emitting_contract, s.vault_address);
+}
+
+#[test]
+fn test_enable_secondary_trading_emits_event() {
+    let s = setup();
+
+    s.vault_client.enable_secondary_trading();
+
+    let events = s.env.events().all();
+    assert_eq!(events.len(), 1, "enable_secondary_trading should emit exactly one event");
+    let (emitting_contract, _topics, _data) = &events[0];
+    assert_eq!(*emitting_contract, s.vault_address);
+}
+
+#[test]
+fn test_high_utilization_withdrawal_emits_warning_event() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+    );
+    // Fund 800 USDC: liquid = 200, investments = 800, utilization = 800/(200+800) = 80%
+    s.vault_client.fund_project(&project_id, &800_0000000i128);
+
+    assert!(s.vault_client.get_utilization_bps() >= 7_000,
+        "utilization should be at or above warning threshold");
+
+    let count_before = s.env.events().all().len();
+
+    // Withdraw a small amount within the utilization limit — warning event should fire.
+    let small_shares = shares / 100; // 1% of total shares
+    s.vault_client.withdraw(&investor, &small_shares);
+
+    let events = s.env.events().all();
+    assert!(
+        events.len() > count_before,
+        "withdrawal at high utilization should emit utilization warning event"
     );
 }

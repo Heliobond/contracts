@@ -30,6 +30,20 @@ pub use types::{HBSTokenInfo, PortfolioInfo, QueuedClaim, VaultKey};
 /// 500 bps = 5% maximum.
 const MAX_MANAGEMENT_FEE_BPS: u32 = 500;
 
+// ── Graduated withdrawal limits (#45) ─────────────────────────────────────────
+/// Utilization tier thresholds (investments / (liquid + investments), in bps).
+const UTIL_HIGH_BPS: u32 = 9_000;  // 90%
+const UTIL_MED_BPS: u32  = 7_000;  // 70%
+const UTIL_LOW_BPS: u32  = 5_000;  // 50%
+
+/// Utilization threshold above which an on-chain warning event is emitted (#45).
+const UTIL_WARN_BPS: u32 = UTIL_MED_BPS;
+
+/// Max single-withdrawal as a fraction of liquid USDC at each utilization tier.
+const HIGH_TIER_PCT: i128 = 10;  // 10% of liquid at ≥ 90% utilization
+const MED_TIER_PCT: i128  = 25;  // 25% of liquid at ≥ 70% utilization
+const LOW_TIER_PCT: i128  = 50;  // 50% of liquid at ≥ 50% utilization
+
 #[contract]
 pub struct InvestmentVault;
 
@@ -234,6 +248,25 @@ impl InvestmentVault {
         shares
     }
 
+    /// Return the vault utilization in basis points:
+    /// `total_investments * 10_000 / (liquid_usdc + total_investments)`.
+    /// Returns 0 when no capital is deployed. Does not call into the registry (#45).
+    pub fn get_utilization_bps(env: Env) -> u32 {
+        let total_investments: i128 = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::TotalInvestments)
+            .unwrap_or(0);
+        let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
+        let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
+            .balance(&env.current_contract_address());
+        let total_actual = liquid + total_investments;
+        if total_actual == 0 {
+            return 0;
+        }
+        (total_investments * 10_000 / total_actual) as u32
+    }
+
     pub fn withdraw(env: Env, from: Address, shares_amount: i128) -> i128 {
         // Note: from.require_auth() is called inside Base::burn
         if shares_amount <= 0 {
@@ -245,6 +278,25 @@ impl InvestmentVault {
         let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
         let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
             .balance(&env.current_contract_address());
+
+        // Graduated withdrawal limit based on vault utilization (#45).
+        // Protects remaining investors from bank-run scenarios when most USDC is deployed.
+        let utilization_bps = Self::get_utilization_bps(env.clone());
+        let max_withdraw: i128 = if utilization_bps >= UTIL_HIGH_BPS {
+            liquid * HIGH_TIER_PCT / 100
+        } else if utilization_bps >= UTIL_MED_BPS {
+            liquid * MED_TIER_PCT / 100
+        } else if utilization_bps >= UTIL_LOW_BPS {
+            liquid * LOW_TIER_PCT / 100
+        } else {
+            i128::MAX
+        };
+        if utilization_bps >= UTIL_WARN_BPS {
+            events::utilization_warning(&env, utilization_bps);
+        }
+        if usdc_returned > max_withdraw {
+            panic!("withdrawal exceeds utilization-based limit; reduce withdrawal amount");
+        }
 
         if usdc_returned > liquid {
             // Insufficient liquidity: burn shares immediately (locking in the current USDC

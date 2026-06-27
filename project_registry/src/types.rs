@@ -57,4 +57,6 @@ pub enum DataKey {
     HasVoted(u32, Address),
     /// Collateral balance for (project_id, token) held by this contract (#128).
     Collateral(u32, Address),
+    /// Reputation score (0-100) for a project creator (#46).
+    CreatorReputation(Address),
 }

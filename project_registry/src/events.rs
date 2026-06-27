@@ -163,6 +163,8 @@ pub struct CreditQualityUpdated {
 
 pub fn credit_quality_updated(env: &Env, project_id: u32, credit_quality: u32) {
     CreditQualityUpdated { project_id, credit_quality }.publish(env);
+}
+
 pub fn collateral_deposited(env: &Env, project_id: u32, token: &Address, depositor: &Address, amount: i128) {
     CollateralDeposited {
         project_id,
@@ -195,4 +197,16 @@ pub fn collateral_liquidated(env: &Env, project_id: u32, token: &Address, recipi
 
 pub fn rate_updated(env: &Env, project_id: u32, rate_bps: u32) {
     RateUpdated { project_id, rate_bps }.publish(env);
+}
+
+/// Emitted when a creator's reputation score is updated (#46).
+#[contractevent]
+pub struct ReputationUpdated {
+    #[topic]
+    pub creator: Address,
+    pub score: u32,
+}
+
+pub fn reputation_updated(env: &Env, creator: &Address, score: u32) {
+    ReputationUpdated { creator: creator.clone(), score }.publish(env);
 }

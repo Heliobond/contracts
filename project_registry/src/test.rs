@@ -2,7 +2,7 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger as _},
+    testutils::{Address as _, Events as _, Ledger as _},
     token::StellarAssetClient,
     Address, Env, IntoVal, String,
 };
@@ -390,6 +390,168 @@ fn test_interest_rate_mid_scores() {
     client.update_impact_score(&id, &80u32, &60u32);
     // avg = (80 + 60) / 2 = 70, discount = 70 * 500 / 100 = 350 → rate = 1000 - 350 = 650 bps
     assert_eq!(client.get_interest_rate(&id), 650u32);
+}
+
+// ── Issue #55: event emission verification tests ──────────────────────────────
+
+#[test]
+fn test_create_project_emits_event() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    // set_whitelist emits 1 event; note count before create_project
+    let count_before = env.events().all().len();
+
+    client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64);
+
+    let events = env.events().all();
+    assert_eq!(
+        events.len(),
+        count_before + 1,
+        "create_project should emit exactly one additional event"
+    );
+    let (contract_id, _topics, _data) = &events[events.len() - 1];
+    assert_eq!(*contract_id, client.address);
+}
+
+#[test]
+fn test_set_whitelist_emits_event() {
+    let (env, _admin, _whitelister, client) = setup();
+    let account = Address::generate(&env);
+
+    client.set_whitelist(&account, &true);
+
+    let events = env.events().all();
+    assert_eq!(events.len(), 1, "set_whitelist should emit exactly one event");
+    let (contract_id, _topics, _data) = &events[0];
+    assert_eq!(*contract_id, client.address);
+}
+
+#[test]
+fn test_update_impact_score_emits_event() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+    let count_before = env.events().all().len();
+
+    client.update_impact_score(&id, &80u32, &60u32);
+
+    let events = env.events().all();
+    // update_impact_score emits ProjectUpdated + RateUpdated = 2 events
+    assert!(
+        events.len() >= count_before + 2,
+        "update_impact_score should emit at least two events"
+    );
+    let (contract_id, _topics, _data) = &events[events.len() - 1];
+    assert_eq!(*contract_id, client.address);
+}
+
+#[test]
+fn test_certify_project_emits_event() {
+    let (env, _admin, whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+    let count_before = env.events().all().len();
+
+    client.certify_project(&whitelister, &id, &CertificationStatus::Certified);
+
+    let events = env.events().all();
+    assert_eq!(
+        events.len(),
+        count_before + 1,
+        "certify_project should emit exactly one additional event"
+    );
+    let (contract_id, _topics, _data) = &events[events.len() - 1];
+    assert_eq!(*contract_id, client.address);
+}
+
+#[test]
+fn test_set_creator_reputation_emits_event() {
+    let (env, _admin, whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let count_before = env.events().all().len();
+
+    client.set_creator_reputation(&whitelister, &creator, &75u32);
+
+    let events = env.events().all();
+    assert_eq!(
+        events.len(),
+        count_before + 1,
+        "set_creator_reputation should emit exactly one additional event"
+    );
+    let (contract_id, _topics, _data) = &events[events.len() - 1];
+    assert_eq!(*contract_id, client.address);
+}
+
+// ── Issue #46: creator reputation tests ──────────────────────────────────────
+
+#[test]
+fn test_reputation_defaults_to_zero() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    assert_eq!(client.get_creator_reputation(&creator), 0u32);
+}
+
+#[test]
+fn test_set_and_get_reputation() {
+    let (env, _admin, whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_creator_reputation(&whitelister, &creator, &80u32);
+    assert_eq!(client.get_creator_reputation(&creator), 80u32);
+}
+
+#[test]
+fn test_reputation_can_be_updated() {
+    let (env, _admin, whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_creator_reputation(&whitelister, &creator, &50u32);
+    client.set_creator_reputation(&whitelister, &creator, &90u32);
+    assert_eq!(client.get_creator_reputation(&creator), 90u32);
+}
+
+#[test]
+#[should_panic(expected = "reputation score must be 0-100")]
+fn test_reputation_above_100_panics() {
+    let (env, _admin, whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_creator_reputation(&whitelister, &creator, &101u32);
+}
+
+#[test]
+#[should_panic(expected = "not authorized to set reputation")]
+fn test_unauthorized_caller_cannot_set_reputation() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    client.set_creator_reputation(&stranger, &creator, &50u32);
+}
+
+#[test]
+fn test_owner_can_set_reputation() {
+    let (env, admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_creator_reputation(&admin, &creator, &60u32);
+    assert_eq!(client.get_creator_reputation(&creator), 60u32);
+}
+
+#[test]
+fn test_funding_limit_bps_scales_with_reputation() {
+    let (env, _admin, whitelister, client) = setup();
+    let creator = Address::generate(&env);
+
+    // 0 rep → 0 bps limit
+    assert_eq!(client.get_creator_funding_limit_bps(&creator), 0u32);
+
+    client.set_creator_reputation(&whitelister, &creator, &100u32);
+    // 100 rep → 5000 bps (50% of vault assets)
+    assert_eq!(client.get_creator_funding_limit_bps(&creator), 5_000u32);
+
+    client.set_creator_reputation(&whitelister, &creator, &50u32);
+    // 50 rep → 2500 bps (25% of vault assets)
+    assert_eq!(client.get_creator_funding_limit_bps(&creator), 2_500u32);
 }
 
 // Integration: full Heliobond flow across both contracts

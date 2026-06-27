@@ -450,6 +450,49 @@ impl ProjectRegistry {
             .unwrap_or_else(|| panic!("project not found"));
         compute_rate(project.credit_quality, project.green_impact)
     }
+
+    // ── Creator reputation (#46) ───────────────────────────────────────────────
+
+    /// Set a creator's reputation score (0–100). Callable by the whitelister or owner.
+    /// Reputation reflects track record: successful funded projects, repayments, scores.
+    /// Emits `ReputationUpdated`.
+    pub fn set_creator_reputation(env: Env, caller: Address, creator: Address, score: u32) {
+        caller.require_auth();
+        if score > 100 {
+            panic!("reputation score must be 0-100");
+        }
+        let whitelister: Address = env.storage().instance().get(&DataKey::Whitelister).unwrap();
+        let owner: Address = stellar_access::ownable::get_owner(&env).unwrap();
+        if caller != whitelister && caller != owner {
+            panic!("not authorized to set reputation");
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::CreatorReputation(creator.clone()), &score);
+        events::reputation_updated(&env, &creator, score);
+    }
+
+    /// Return the reputation score (0–100) for `creator`. Returns 0 if never set.
+    pub fn get_creator_reputation(env: Env, creator: Address) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::CreatorReputation(creator))
+            .unwrap_or(0)
+    }
+
+    /// Return the suggested max funding limit in basis points of vault total assets
+    /// for projects owned by `creator`, derived from their reputation score.
+    ///
+    /// Formula: `reputation * 50` bps (0 rep = 0 bps, 100 rep = 5 000 bps = 50%).
+    /// Vault admins should consult this value when calling `fund_project`.
+    pub fn get_creator_funding_limit_bps(env: Env, creator: Address) -> u32 {
+        let score: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CreatorReputation(creator))
+            .unwrap_or(0);
+        score * 50
+    }
 }
 
 fn compute_rate(credit_quality: u32, green_impact: u32) -> u32 {
