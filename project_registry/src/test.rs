@@ -237,6 +237,43 @@ fn test_update_credit_quality_independent_of_green_impact() {
     assert_eq!(project.green_impact, 80); // unchanged
 }
 
+#[test]
+fn test_credit_quality_score_changes_rate_correctly() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+
+    // Set baseline: credit_quality=60, green_impact=40 → rate = avg(60,40)=50,
+    // discount=50*500/100=250, rate=1000-250=750
+    client.update_impact_score(&id, &60u32, &40u32);
+    assert_eq!(client.get_interest_rate(&id), 750u32);
+
+    // Update only credit_quality: 60 → 85 → new avg(85,40)=62,
+    // discount=62*500/100=310, rate=1000-310=690
+    client.update_credit_quality_score(&id, &85u32);
+    assert_eq!(client.get_interest_rate(&id), 690u32);
+    // green_impact unchanged
+    assert_eq!(client.get_project(&id).green_impact, 40u32);
+}
+
+#[test]
+fn test_update_credit_quality_score_noop_identical_values() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+    client.update_credit_quality_score(&id, &75u32);
+    let project_before = client.get_project(&id);
+
+    // Second call with identical score should be a no-op
+    client.update_credit_quality_score(&id, &75u32);
+
+    let project_after = client.get_project(&id);
+    assert_eq!(project_before.credit_quality, project_after.credit_quality);
+    assert_eq!(project_before.green_impact, project_after.green_impact);
+}
+
 // ── URI length edge cases (#119) ──────────────────────────────────────────────
 
 #[test]
@@ -438,13 +475,50 @@ fn test_update_impact_score_emits_event() {
     client.update_impact_score(&id, &80u32, &60u32);
 
     let events = env.events().all();
-    // update_impact_score emits ProjectUpdated + RateUpdated = 2 events
+    // update_impact_score emits ProjectUpdated + RateUpdated + ScoreChanged = 3 events
     assert!(
-        events.len() >= count_before + 2,
-        "update_impact_score should emit at least two events"
+        events.len() >= count_before + 3,
+        "update_impact_score should emit at least three events"
     );
     let (contract_id, _topics, _data) = &events[events.len() - 1];
     assert_eq!(*contract_id, client.address);
+}
+
+#[test]
+fn test_score_changed_event_contains_old_and_new_values() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+    // Initial scores are 0, 0 → rate = 1000
+
+    client.update_impact_score(&id, &80u32, &60u32);
+
+    let events = env.events().all();
+    // Last event should be ScoreChanged
+    let (_contract_id, topics, data) = &events[events.len() - 1];
+    // Topics: [Symbol("ScoreChanged"), project_id (u32)]
+    assert!(
+        topics.len() >= 2,
+        "ScoreChanged should have at least 2 topics"
+    );
+    // Data: old_cq, new_cq, old_gi, new_gi, old_rate, new_rate
+    // All u32 — decode from ScVal
+    let vals: Vec<u32> = data
+        .clone()
+        .try_into_val::<soroban_sdk::Vec<u32>>(&env)
+        .unwrap()
+        .iter()
+        .collect();
+    assert_eq!(vals.len(), 6, "ScoreChanged data should have 6 fields");
+    // old_cq=0, new_cq=80, old_gi=0, new_gi=60, old_rate=1000, new_rate=650
+    let expected_rate = 650u32; // avg = (80+60)/2 = 70, discount = 70*500/100 = 350, rate = 1000-350 = 650
+    assert_eq!(vals[0], 0, "old_credit_quality should be 0");
+    assert_eq!(vals[1], 80, "new_credit_quality should be 80");
+    assert_eq!(vals[2], 0, "old_green_impact should be 0");
+    assert_eq!(vals[3], 60, "new_green_impact should be 60");
+    assert_eq!(vals[4], 1000, "old_rate_bps should be 1000");
+    assert_eq!(vals[5], expected_rate, "new_rate_bps should match computed rate");
 }
 
 #[test]

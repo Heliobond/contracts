@@ -19,8 +19,8 @@ Constructor args: `admin: Address, whitelister: Address`
 | `get_project(id)` | none | `id: u32` | `ProjectData` | — |
 | `total_projects()` | none | — | `u32` | — |
 | `get_all_projects()` | none | — | `Vec<(u32, ProjectData)>` | — |
-| `update_impact_score(project_id, credit_quality, green_impact)` | admin (owner) | `project_id: u32, credit_quality: u32, green_impact: u32` | `()` | `ProjectUpdated { project_id, credit_quality, green_impact }` |
-| `update_credit_quality_score(project_id, credit_quality)` | admin (owner) | `project_id: u32, credit_quality: u32` (0–100) | `()` | `CreditQualityUpdated { project_id, credit_quality }` |
+| `update_impact_score(project_id, credit_quality, green_impact)` | admin (owner) | `project_id: u32, credit_quality: u32, green_impact: u32` | `()` | `ProjectUpdated`, `RateUpdated`, `ScoreChanged` |
+| `update_credit_quality_score(project_id, credit_quality)` | admin (owner) | `project_id: u32, credit_quality: u32` (0–100) | `()` | `CreditQualityUpdated`, `ScoreChanged` |
 | `certify_project(caller, project_id, status)` | whitelister or admin | `caller: Address, project_id: u32, status: CertificationStatus` | `()` | `ProjectCertified { project_id, status }` |
 | `is_mature(project_id)` | none | `project_id: u32` | `bool` | — |
 | `create_proposal(proposer, description, voting_duration_secs)` | proposer | `proposer: Address, description: String, voting_duration_secs: u64` (≥ 86400) | `u32` (proposal\_id) | `ProposalCreated { proposal_id, proposer, voting_ends_at }` |
@@ -54,10 +54,12 @@ pub struct Proposal {
 
 ### Score Functions Comparison
 
-| Function | Scope | Emitted Event |
+| Function | Scope | Emitted Events |
 |---|---|---|
-| `update_impact_score` | Sets both `credit_quality` AND `green_impact` atomically | `ProjectUpdated` |
-| `update_credit_quality_score` | Sets only `credit_quality`, leaves `green_impact` unchanged | `CreditQualityUpdated` |
+| `update_impact_score` | Sets both `credit_quality` AND `green_impact` atomically | `ProjectUpdated`, `RateUpdated`, `ScoreChanged` |
+| `update_credit_quality_score` | Sets only `credit_quality`, leaves `green_impact` unchanged | `CreditQualityUpdated`, `ScoreChanged` |
+
+The `ScoreChanged` event (#131) includes both old and new score values plus old and new interest rates, enabling off-chain notification services to calculate the exact delta without querying historical state.
 
 ---
 

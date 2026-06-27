@@ -139,13 +139,29 @@ impl ProjectRegistry {
             return;
         }
 
+        let old_cq = project.credit_quality;
+        let old_gi = project.green_impact;
+        let old_rate = compute_rate(old_cq, old_gi);
+
         project.credit_quality = credit_quality;
         project.green_impact = green_impact;
+        let new_rate = compute_rate(credit_quality, green_impact);
+
         env.storage()
             .persistent()
             .set(&DataKey::Project(project_id), &project);
         events::project_updated(&env, project_id, credit_quality, green_impact);
-        events::rate_updated(&env, project_id, compute_rate(credit_quality, green_impact));
+        events::rate_updated(&env, project_id, new_rate);
+        events::score_changed(
+            &env,
+            project_id,
+            old_cq,
+            credit_quality,
+            old_gi,
+            green_impact,
+            old_rate,
+            new_rate,
+        );
     }
 
     /// Set the certification status of a project (whitelister or owner only) (#130).
@@ -319,11 +335,27 @@ impl ProjectRegistry {
             .persistent()
             .get(&DataKey::Project(project_id))
             .unwrap_or_else(|| panic!("project not found"));
+        let old_cq = project.credit_quality;
+        if old_cq == credit_quality {
+            return;
+        }
+        let old_rate = compute_rate(old_cq, project.green_impact);
         project.credit_quality = credit_quality;
+        let new_rate = compute_rate(credit_quality, project.green_impact);
         env.storage()
             .persistent()
             .set(&DataKey::Project(project_id), &project);
         events::credit_quality_updated(&env, project_id, credit_quality);
+        events::score_changed(
+            &env,
+            project_id,
+            old_cq,
+            credit_quality,
+            project.green_impact,
+            project.green_impact,
+            old_rate,
+            new_rate,
+        );
     }
 
     /// Return a proposal by ID.

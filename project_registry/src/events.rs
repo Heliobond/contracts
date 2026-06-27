@@ -210,3 +210,40 @@ pub struct ReputationUpdated {
 pub fn reputation_updated(env: &Env, creator: &Address, score: u32) {
     ReputationUpdated { creator: creator.clone(), score }.publish(env);
 }
+
+/// Emitted when a project's impact score changes (#131).
+/// Includes both old and new values so off-chain notification services
+/// can calculate the precise delta without querying historical state.
+#[contractevent]
+pub struct ScoreChanged {
+    #[topic]
+    pub project_id: u32,
+    pub old_credit_quality: u32,
+    pub new_credit_quality: u32,
+    pub old_green_impact: u32,
+    pub new_green_impact: u32,
+    pub old_rate_bps: u32,
+    pub new_rate_bps: u32,
+}
+
+pub fn score_changed(
+    env: &Env,
+    project_id: u32,
+    old_credit_quality: u32,
+    new_credit_quality: u32,
+    old_green_impact: u32,
+    new_green_impact: u32,
+    old_rate_bps: u32,
+    new_rate_bps: u32,
+) {
+    ScoreChanged {
+        project_id,
+        old_credit_quality,
+        new_credit_quality,
+        old_green_impact,
+        new_green_impact,
+        old_rate_bps,
+        new_rate_bps,
+    }
+    .publish(env);
+}

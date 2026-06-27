@@ -329,6 +329,7 @@ Key event topics by contract:
 | `InvestmentVault` | `insurance_claimed` | Default payout made |
 | `ProjectRegistry` | `project_created` | New project registered |
 | `ProjectRegistry` | `project_updated` | Impact scores updated |
+| `ProjectRegistry` | `score_changed` | Score changed (includes old + new values) |
 | `ProjectRegistry` | `project_certified` | Certification status changed |
 | `ProjectRegistry` | `proposal_created` | Governance proposal opened |
 | `ProjectRegistry` | `vote_cast` | Vote recorded |
