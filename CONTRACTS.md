@@ -3,6 +3,14 @@
 Complete public-interface specification for both Soroban smart contracts.
 All functions live in the `InvestmentVault` or `ProjectRegistry` crates.
 
+## Feature Index
+
+| Issue | Feature | Contract |
+|---|---|---|
+| #6 | `update_credit_quality_score` — dedicated credit-quality setter with `CreditQualityUpdated` event | `ProjectRegistry` |
+| #7 | Optional bounded management fee — `set_management_fee`, hard-capped at 500 bps | `InvestmentVault` |
+| #126 | Secondary market trading — `enable_secondary_trading`, `get_hbs_token_info`, DEX integration | `InvestmentVault` |
+
 ---
 
 ## ProjectRegistry
