@@ -1,6 +1,6 @@
 #![cfg(test)]
 use super::*;
-use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Bytes, Env};
+use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Bytes, Env, String};
 
 mod registry_contract {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm");
@@ -233,4 +233,115 @@ fn test_flash_loan_fails_when_callback_returns_false() {
 
     s.vault_client
         .execute_flash_loan(&initiator, &receiver_id, &1_000_0000000i128, &Bytes::new(&s.env));
+}
+
+// -----------------------------------------------------------------------
+// Carbon credit tests
+// -----------------------------------------------------------------------
+
+fn create_project_with_impact(env: &Env, registry_id: &Address, green_impact: u32) -> u32 {
+    let registry = registry_contract::Client::new(env, registry_id);
+    let creator = Address::generate(env);
+    registry.set_whitelist(&creator, &true);
+    let id = registry.create_project(&creator, &String::from_str(env, "ipfs://QmCarbon"));
+    registry.update_impact_score(&id, &50u32, &green_impact);
+    id
+}
+
+#[test]
+fn test_carbon_credit_default_price_is_zero() {
+    let s = setup();
+    assert_eq!(s.vault_client.carbon_credit_price(), 0);
+}
+
+#[test]
+fn test_set_carbon_oracle_and_price() {
+    let s = setup();
+    let oracle = Address::generate(&s.env);
+
+    s.vault_client.set_carbon_oracle(&oracle);
+    s.vault_client.set_carbon_credit_price(&5_0000000i128);
+
+    assert_eq!(s.vault_client.carbon_credit_price(), 5_0000000i128);
+}
+
+#[test]
+fn test_calculate_carbon_credits_formula() {
+    let s = setup();
+    let project_id = create_project_with_impact(&s.env, &s.registry, 60);
+
+    // 500 USDC, green_impact=60 => 500 * 60 / 10_000_000_000
+    // 500 USDC = 500 * 10^7 = 5_000_000_000
+    // 5_000_000_000 * 60 / 10_000_000_000 = 30
+    let calc = s
+        .vault_client
+        .calculate_carbon_credits(&project_id, &500_0000000i128);
+    assert_eq!(calc.project_id, project_id);
+    assert_eq!(calc.amount_invested, 500_0000000i128);
+    assert_eq!(calc.credits, 30);
+}
+
+#[test]
+fn test_calculate_carbon_credits_zero_for_low_investment() {
+    let s = setup();
+    let project_id = create_project_with_impact(&s.env, &s.registry, 50);
+
+    // 1 USDC, green_impact=50 => 10_000_000 * 50 / 10_000_000_000 = 0 (truncated)
+    let calc = s.vault_client.calculate_carbon_credits(&project_id, &10_000_000i128);
+    assert_eq!(calc.credits, 0);
+}
+
+#[test]
+fn test_issue_carbon_credits() {
+    let s = setup();
+    let project_id = create_project_with_impact(&s.env, &s.registry, 100);
+    let recipient = Address::generate(&s.env);
+
+    // 10 USDC, green_impact=100 => 10 * 10^7 * 100 / 10_000_000_000 = 1 credit
+    let credits = s
+        .vault_client
+        .issue_carbon_credits(&recipient, &project_id, &100_000_000i128);
+    assert_eq!(credits, 1);
+    assert_eq!(s.vault_client.carbon_credit_balance(&recipient), 1);
+}
+
+#[test]
+fn test_transfer_carbon_credits() {
+    let s = setup();
+    let project_id = create_project_with_impact(&s.env, &s.registry, 100);
+    let alice = Address::generate(&s.env);
+    let bob = Address::generate(&s.env);
+
+    // Alice gets 5 credits
+    let credits = s
+        .vault_client
+        .issue_carbon_credits(&alice, &project_id, &500_000_000i128);
+    assert_eq!(credits, 5);
+
+    // Alice transfers 3 to Bob
+    s.vault_client.transfer_carbon_credits(&alice, &bob, &3);
+    assert_eq!(s.vault_client.carbon_credit_balance(&alice), 2);
+    assert_eq!(s.vault_client.carbon_credit_balance(&bob), 3);
+}
+
+#[test]
+#[should_panic(expected = "HostError")]
+fn test_transfer_carbon_credits_insufficient_panics() {
+    let s = setup();
+    let alice = Address::generate(&s.env);
+    let bob = Address::generate(&s.env);
+
+    s.vault_client.transfer_carbon_credits(&alice, &bob, &1);
+}
+
+#[test]
+#[should_panic(expected = "HostError")]
+fn test_carbon_credits_zero_issue_panics() {
+    let s = setup();
+    let project_id = create_project_with_impact(&s.env, &s.registry, 50);
+    let recipient = Address::generate(&s.env);
+
+    // 1 USDC, green_impact=50 => 0 credits — should panic
+    s.vault_client
+        .issue_carbon_credits(&recipient, &project_id, &10_000_000i128);
 }

@@ -48,7 +48,7 @@ pub trait FlashLoanReceiver {
     ) -> bool;
 }
 
-pub use types::VaultKey;
+pub use types::{CarbonCreditCalculation, VaultKey};
 pub use wormhole::{BridgeDataKey, BridgeTransferPayload};
 
 #[contract]
@@ -326,6 +326,172 @@ impl InvestmentVault {
         Base::burn(&env, &vault, amount);
 
         events::flash_loan(&env, &initiator, &borrower, amount, fee);
+    }
+
+    // -----------------------------------------------------------------------
+    // Carbon credit integration
+    // -----------------------------------------------------------------------
+
+    /// The carbon-unit constant used to convert green-impact × investment
+    /// into carbon credits.
+    ///
+    /// ## Formula
+    ///
+    /// ```ignore
+    /// credits = amount_invested × project.green_impact / CARBON_UNIT
+    /// ```
+    ///
+    /// With `CARBON_UNIT = 10_000_000_000`:
+    /// - 1 USDC invested in a 100-green-impact project → 1 carbon credit
+    /// - 10 USDC at 50 green-impact → 0.5 credits (truncated to 0)
+    /// - 500 USDC at 60 green-impact → 30 credits
+    const CARBON_UNIT: i128 = 10_000_000_000;
+
+    /// Set the carbon credit oracle address.
+    /// The oracle is trusted to report accurate carbon credit prices.
+    /// Only callable by the contract owner.
+    #[only_owner]
+    pub fn set_carbon_oracle(env: Env, oracle: Address) {
+        env.storage()
+            .instance()
+            .set(&VaultKey::CarbonOracle, &oracle);
+        events::carbon_oracle_set(&env, &oracle);
+    }
+
+    /// Update the carbon credit price (USD per credit, in micro-units).
+    /// Only the carbon oracle may call this.
+    pub fn set_carbon_credit_price(env: Env, price: i128) {
+        let oracle: Address = env
+            .storage()
+            .instance()
+            .get(&VaultKey::CarbonOracle)
+            .expect("carbon oracle not set");
+        oracle.require_auth();
+
+        if price <= 0 {
+            panic!("price must be positive");
+        }
+        env.storage()
+            .instance()
+            .set(&VaultKey::CarbonCreditPrice, &price);
+        events::carbon_credit_price_set(&env, price);
+    }
+
+    /// Return the current carbon credit price (USD × 10⁷ per credit), or 0 if
+    /// not yet set.
+    pub fn carbon_credit_price(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&VaultKey::CarbonCreditPrice)
+            .unwrap_or(0)
+    }
+
+    /// Calculate the number of carbon credits that a given investment in a
+    /// project would generate.  This is a pure view function — it does not
+    /// modify any state.
+    ///
+    /// ## Calculation
+    ///
+    /// ```ignore
+    /// credits = amount × project.green_impact / CARBON_UNIT
+    /// ```
+    ///
+    /// where `CARBON_UNIT = 10_000_000_000`.
+    /// - `amount` is the investment in micro-USDC (SAC format, 7 decimals).
+    /// - `green_impact` is the project's 0–100 green-impact score.
+    ///
+    /// ## Examples
+    ///
+    /// | USDC invested | green_impact | Credits |
+    /// |---------------|--------------|---------|
+    /// | 1             | 100          | 0       |
+    /// | 10            | 100          | 1       |
+    /// | 500           | 60           | 30      |
+    pub fn calculate_carbon_credits(env: Env, project_id: u32, amount: i128) -> CarbonCreditCalculation {
+        let registry_addr: Address = env
+            .storage()
+            .instance()
+            .get(&VaultKey::Registry)
+            .unwrap();
+        let registry = registry_interface::Client::new(&env, &registry_addr);
+        let project = registry.get_project(&project_id);
+
+        let credits = amount * (project.green_impact as i128) / Self::CARBON_UNIT;
+
+        events::carbon_credits_calculated(&env, project_id, amount, credits);
+
+        CarbonCreditCalculation {
+            project_id,
+            amount_invested: amount,
+            credits,
+        }
+    }
+
+    /// Issue carbon credits to an address.  Credits are calculated from the
+    /// given `amount` of USDC invested in `project_id`.
+    ///
+    /// Anyone may call this (e.g. the vault owner, an investor, or a project
+    /// owner) to record the carbon credits that a project investment generated.
+    /// The credits are minted to the caller's balance.
+    pub fn issue_carbon_credits(env: Env, to: Address, project_id: u32, amount: i128) -> i128 {
+        let calc = Self::calculate_carbon_credits(env.clone(), project_id, amount);
+
+        if calc.credits <= 0 {
+            panic!("no carbon credits to issue");
+        }
+
+        let prev: i128 = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::CarbonCreditBalance(to.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&VaultKey::CarbonCreditBalance(to.clone()), &(prev + calc.credits));
+
+        calc.credits
+    }
+
+    /// Transfer carbon credits from one address to another.
+    /// `from` must have a sufficient balance.
+    pub fn transfer_carbon_credits(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+
+        if amount <= 0 {
+            panic!("amount must be positive");
+        }
+
+        let prev_from: i128 = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::CarbonCreditBalance(from.clone()))
+            .unwrap_or(0);
+        if prev_from < amount {
+            panic!("insufficient carbon credits");
+        }
+
+        let prev_to: i128 = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::CarbonCreditBalance(to.clone()))
+            .unwrap_or(0);
+
+        env.storage()
+            .persistent()
+            .set(&VaultKey::CarbonCreditBalance(from.clone()), &(prev_from - amount));
+        env.storage()
+            .persistent()
+            .set(&VaultKey::CarbonCreditBalance(to.clone()), &(prev_to + amount));
+
+        events::carbon_credits_transferred(&env, &from, &to, amount);
+    }
+
+    /// Return the carbon credit balance of an address.
+    pub fn carbon_credit_balance(env: Env, address: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&VaultKey::CarbonCreditBalance(address))
+            .unwrap_or(0)
     }
 
     // -----------------------------------------------------------------------

@@ -192,3 +192,69 @@ pub fn flash_loan(
 pub fn flash_loan_fee_set(env: &Env, fee_bps: i128) {
     FlashLoanFeeSet { fee_bps }.publish(env);
 }
+
+/// Emitted when the carbon credit oracle address is set or updated.
+#[contractevent]
+pub struct CarbonOracleSet {
+    #[topic]
+    pub oracle: Address,
+}
+
+/// Emitted when the carbon credit oracle updates the per-credit price.
+#[contractevent]
+pub struct CarbonCreditPriceSet {
+    pub price: i128,
+}
+
+/// Emitted when carbon credits are calculated for a project investment.
+#[contractevent]
+pub struct CarbonCreditsCalculated {
+    #[topic]
+    pub project_id: u32,
+    pub amount_invested: i128,
+    pub credits: i128,
+}
+
+/// Emitted when carbon credits are transferred between accounts.
+#[contractevent]
+pub struct CarbonCreditsTransferred {
+    #[topic]
+    pub from: Address,
+    #[topic]
+    pub to: Address,
+    pub amount: i128,
+}
+
+pub fn carbon_oracle_set(env: &Env, oracle: &Address) {
+    CarbonOracleSet {
+        oracle: oracle.clone(),
+    }
+    .publish(env);
+}
+
+pub fn carbon_credit_price_set(env: &Env, price: i128) {
+    CarbonCreditPriceSet { price }.publish(env);
+}
+
+pub fn carbon_credits_calculated(
+    env: &Env,
+    project_id: u32,
+    amount_invested: i128,
+    credits: i128,
+) {
+    CarbonCreditsCalculated {
+        project_id,
+        amount_invested,
+        credits,
+    }
+    .publish(env);
+}
+
+pub fn carbon_credits_transferred(env: &Env, from: &Address, to: &Address, amount: i128) {
+    CarbonCreditsTransferred {
+        from: from.clone(),
+        to: to.clone(),
+        amount,
+    }
+    .publish(env);
+}
