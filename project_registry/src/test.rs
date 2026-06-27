@@ -7,6 +7,12 @@ use soroban_sdk::{
     Address, Env, IntoVal, String,
 };
 
+mod vault_contract {
+    soroban_sdk::contractimport!(
+        file = "../target/wasm32v1-none/release/investment_vault.wasm"
+    );
+}
+
 fn setup() -> (Env, Address, Address, ProjectRegistryClient<'static>) {
     let env = Env::default();
     env.mock_all_auths();
@@ -546,6 +552,49 @@ fn test_funding_limit_bps_scales_with_reputation() {
 fn test_get_whitelister_returns_initial_whitelister() {
     let (_env, _admin, whitelister, client) = setup();
     assert_eq!(client.get_whitelister(), whitelister);
+}
+
+#[test]
+fn test_registry_constructor_deployment_and_initial_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let whitelister = Address::generate(&env);
+    let usdc_admin = Address::generate(&env);
+    let project_creator = Address::generate(&env);
+
+    let usdc_sac = env
+        .register_stellar_asset_contract_v2(usdc_admin.clone())
+        .address();
+
+    let registry_id = env.register(ProjectRegistry, (&admin, &whitelister));
+    let registry = ProjectRegistryClient::new(&env, &registry_id);
+
+    assert_eq!(registry.total_projects(), 0);
+    assert_eq!(registry.get_whitelister(), whitelister);
+
+    let resources = env.cost_estimate().resources();
+    assert!(resources.instructions > 0);
+    let fee = env.cost_estimate().fee();
+    assert!(fee.total > 0);
+
+    let vault_id = env.register(vault_contract::WASM, (&admin, &usdc_sac, &registry_id));
+    let vault = vault_contract::Client::new(&env, &vault_id);
+
+    assert_eq!(vault.accepted_asset(), usdc_sac);
+    assert_eq!(vault.get_registry(), registry_id);
+    assert_eq!(vault.total_assets(), 0);
+    assert_eq!(vault.total_supply(), 0);
+    assert!(!vault.is_trading_enabled());
+
+    registry.set_whitelist(&project_creator, &true);
+    let project_id = registry.create_project(
+        &project_creator,
+        &String::from_str(&env, "ipfs://QmInitTest"),
+        &0u64,
+    );
+    assert_eq!(project_id, 1);
 }
 
 #[test]
