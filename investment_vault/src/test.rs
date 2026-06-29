@@ -1,6 +1,14 @@
 #![cfg(test)]
+#![allow(clippy::inconsistent_digit_grouping)]
+
 use super::*;
-use soroban_sdk::{testutils::{Address as _, Events as _}, token::StellarAssetClient, token::TokenClient, Address, Env, IntoVal, String};
+use soroban_sdk::{
+    testutils::{Address as _, Events as _},
+    token::StellarAssetClient,
+    token::TokenClient,
+    Address, Env, IntoVal, String,
+};
+extern crate std;
 
 mod registry_contract {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm");
@@ -144,6 +152,11 @@ fn test_vault_deposit_cost_estimate() {
     assert!(resources.instructions > 0);
     let fee = env.cost_estimate().fee();
     assert!(fee.total > 0);
+    std::println!(
+        "gas_budget investment_vault.deposit instructions={} fee={}",
+        resources.instructions,
+        fee.total
+    );
 }
 
 #[test]
@@ -154,7 +167,10 @@ fn test_initialize() {
     let admin = Address::generate(&env);
     let usdc = Address::generate(&env);
     let registry = env.register(registry_contract::WASM, (&admin, &admin));
-    let _contract_id = env.register(InvestmentVault, (&admin, &usdc, &registry));
+    let contract_id = env.register(InvestmentVault, (&admin, &usdc, &registry));
+    let client = InvestmentVaultClient::new(&env, &contract_id);
+    assert_eq!(client.state_version(), 1);
+    assert_eq!(client.stored_state_version(), 1);
     // If registration didn't panic, constructor succeeded with a valid registry
 }
 
@@ -237,11 +253,8 @@ fn test_fund_project_panics_when_fully_depleted() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://Qm"),
-        &0u64,
-    );
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64);
 
     // Fund with all deployable USDC: liquid (1000) - insurance_reserve (5) = 995
     s.vault_client.fund_project(&project_id, &995_0000000i128);
@@ -264,11 +277,8 @@ fn test_fund_project_panics_when_amount_exceeds_available() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://Qm"),
-        &0u64,
-    );
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64);
 
     // Attempt to fund exactly the full liquid balance — exceeds available by the
     // insurance reserve (0.25 USDC), so must fail.
@@ -286,11 +296,8 @@ fn test_fund_project_partial_funding_succeeds() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://Qm"),
-        &0u64,
-    );
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64);
 
     // Two partial fundings that together stay within the deployable amount.
     s.vault_client.fund_project(&project_id, &300_0000000i128);
@@ -312,11 +319,8 @@ fn test_fund_project_second_call_exhausts_remaining_deployable() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://Qm"),
-        &0u64,
-    );
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64);
 
     // First call: fund 600 USDC — leaves 400 liquid (5 reserved) → 395 deployable.
     s.vault_client.fund_project(&project_id, &600_0000000i128);
@@ -362,7 +366,8 @@ fn test_transfer_to_vault_address_rejected() {
     s.vault_client.deposit(&investor, &1_000_0000000i128);
 
     // Attempt to send HBS shares to the vault contract itself
-    s.vault_client.transfer(&investor, &s.vault_address, &100_0000000i128);
+    s.vault_client
+        .transfer(&investor, &s.vault_address, &100_0000000i128);
 }
 
 // ── Issue #122: full-withdrawal edge cases ────────────────────────────────
@@ -539,19 +544,29 @@ fn test_conversion_roundtrip_never_favors_withdrawer() {
     mint_usdc(&s.env, &s.usdc_sac, &anchor, 1_000_0000000i128);
     s.vault_client.deposit(&anchor, &1_000_0000000i128);
 
-    let test_amounts = [1i128, 3, 7, 1_0000000, 100_0000000, 999_9999999, 1_000_0000000];
+    let test_amounts = [
+        1i128,
+        3,
+        7,
+        1_0000000,
+        100_0000000,
+        999_9999999,
+        1_000_0000000,
+    ];
     for &amount in test_amounts.iter() {
         let shares = s.vault_client.convert_to_shares(&amount);
         let assets = s.vault_client.convert_to_assets(&shares);
         assert!(
             assets <= amount,
             "rounding favored withdrawer: amount={} assets={}",
-            amount, assets
+            amount,
+            assets
         );
         assert!(
             amount - assets <= 1,
             "roundtrip loss > 1 stroop: amount={} assets={}",
-            amount, assets
+            amount,
+            assets
         );
     }
 }
@@ -579,11 +594,8 @@ fn test_withdraw_enqueues_when_insufficient_liquidity() {
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://test"),
-        &0u64,
-    );
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://test"), &0u64);
     // Fund 490 USDC (49% utilization — below the 50% limit threshold so the full
     // withdrawal is allowed but only ~510 USDC is liquid, causing a queue.
     s.vault_client.fund_project(&project_id, &490_0000000i128);
@@ -591,13 +603,12 @@ fn test_withdraw_enqueues_when_insufficient_liquidity() {
     // Shares are worth ~1000 USDC but only ~510 USDC is liquid — should enqueue.
     let returned = s.vault_client.withdraw(&investor, &shares);
 
-    assert_eq!(returned, 0); // queued, not immediate
-    assert_eq!(s.vault_client.balance(&investor), 0); // shares burned at enqueue
+    // Queued, not immediate.
+    assert_eq!(returned, 0);
+    // Shares burned at enqueue.
+    assert_eq!(s.vault_client.balance(&investor), 0);
     // Investor still has no USDC (claim not settled yet)
-    assert_eq!(
-        TokenClient::new(&s.env, &s.usdc_sac).balance(&investor),
-        0
-    );
+    assert_eq!(TokenClient::new(&s.env, &s.usdc_sac).balance(&investor), 0);
 }
 
 #[test]
@@ -612,11 +623,8 @@ fn test_claim_settles_queued_redemption() {
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://test"),
-        &0u64,
-    );
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://test"), &0u64);
     // Fund 490 USDC (49% util) to stay below the 50% graduated withdrawal limit.
     s.vault_client.fund_project(&project_id, &490_0000000i128);
 
@@ -652,7 +660,11 @@ fn test_deposit_emits_event() {
 
     // Deposit emits a token mint event (Base::mint) + the Deposited application event = 2.
     let events = s.env.events().all().filter_by_contract(&s.vault_address);
-    assert_eq!(events.events().len(), 2, "deposit should emit exactly two events (mint + deposit)");
+    assert_eq!(
+        events.events().len(),
+        2,
+        "deposit should emit exactly two events (mint + deposit)"
+    );
 }
 
 #[test]
@@ -685,11 +697,8 @@ fn test_fund_project_emits_event() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://Qm"),
-        &0u64,
-    );
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64);
     s.vault_client.fund_project(&project_id, &100_0000000i128);
 
     // env.events().all() returns events from the most recent invocation only.
@@ -712,11 +721,8 @@ fn test_withdraw_queued_emits_event() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://Qm"),
-        &0u64,
-    );
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64);
     // Fund 490 USDC (49% util) to stay below the 50% graduated withdrawal limit.
     s.vault_client.fund_project(&project_id, &490_0000000i128);
 
@@ -745,11 +751,8 @@ fn test_claim_queued_emits_event() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://Qm"),
-        &0u64,
-    );
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64);
     // Fund 490 USDC (49% util) to stay below the 50% graduated withdrawal limit.
     s.vault_client.fund_project(&project_id, &490_0000000i128);
     s.vault_client.withdraw(&investor, &shares);
@@ -764,7 +767,7 @@ fn test_claim_queued_emits_event() {
     // env.events().all() returns events from the most recent invocation only.
     let events = s.env.events().all().filter_by_contract(&s.vault_address);
     assert!(
-        events.events().len() >= 1,
+        !events.events().is_empty(),
         "claim() should emit at least one event when settling a queued redemption"
     );
 }
@@ -777,7 +780,11 @@ fn test_management_fee_set_emits_event() {
     s.vault_client.set_management_fee(&200u32, &recipient);
 
     let events = s.env.events().all().filter_by_contract(&s.vault_address);
-    assert_eq!(events.events().len(), 1, "set_management_fee should emit exactly one event");
+    assert_eq!(
+        events.events().len(),
+        1,
+        "set_management_fee should emit exactly one event"
+    );
 }
 
 #[test]
@@ -787,7 +794,11 @@ fn test_enable_secondary_trading_emits_event() {
     s.vault_client.enable_secondary_trading();
 
     let events = s.env.events().all().filter_by_contract(&s.vault_address);
-    assert_eq!(events.events().len(), 1, "enable_secondary_trading should emit exactly one event");
+    assert_eq!(
+        events.events().len(),
+        1,
+        "enable_secondary_trading should emit exactly one event"
+    );
 }
 
 #[test]
@@ -801,16 +812,15 @@ fn test_high_utilization_withdrawal_emits_warning_event() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://Qm"),
-        &0u64,
-    );
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64);
     // Fund 800 USDC: liquid = 200, investments = 800, utilization = 800/(200+800) = 80%
     s.vault_client.fund_project(&project_id, &800_0000000i128);
 
-    assert!(s.vault_client.get_utilization_bps() >= 7_000,
-        "utilization should be at or above warning threshold");
+    assert!(
+        s.vault_client.get_utilization_bps() >= 7_000,
+        "utilization should be at or above warning threshold"
+    );
 
     // Withdraw a small amount within the utilization limit — warning event should fire.
     let small_shares = shares / 100; // 1% of total shares
@@ -854,11 +864,8 @@ fn test_fund_project_blocked_below_credit_threshold() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://Qm"),
-        &0u64,
-    );
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64);
     // Project has credit_quality=0, green_impact=0 (defaults); require credit >= 50.
     s.vault_client.set_funding_thresholds(&50u32, &0u32);
     s.vault_client.fund_project(&project_id, &100_0000000i128);
@@ -876,11 +883,8 @@ fn test_fund_project_blocked_below_green_threshold() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://Qm"),
-        &0u64,
-    );
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64);
     // Project has credit_quality=0, green_impact=0; require green >= 30.
     s.vault_client.set_funding_thresholds(&0u32, &30u32);
     s.vault_client.fund_project(&project_id, &100_0000000i128);
@@ -897,11 +901,8 @@ fn test_fund_project_allowed_when_thresholds_met() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://Qm"),
-        &0u64,
-    );
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64);
     registry_client.update_impact_score(&project_id, &70u32, &80u32);
 
     s.vault_client.set_funding_thresholds(&50u32, &50u32);
@@ -939,7 +940,9 @@ fn test_get_registry_returns_initial_registry() {
 fn test_set_registry_updates_registry() {
     let s = setup();
     // Register a second real registry.
-    let new_registry = s.env.register(registry_contract::WASM, (&s.admin, &s.admin));
+    let new_registry = s
+        .env
+        .register(registry_contract::WASM, (&s.admin, &s.admin));
     s.vault_client.set_registry(&new_registry);
     assert_eq!(s.vault_client.get_registry(), new_registry);
 }
@@ -957,7 +960,9 @@ fn test_set_registry_validates_new_address() {
 #[should_panic]
 fn test_set_registry_is_admin_only() {
     let s = setup();
-    let new_registry = s.env.register(registry_contract::WASM, (&s.admin, &s.admin));
+    let new_registry = s
+        .env
+        .register(registry_contract::WASM, (&s.admin, &s.admin));
     let stranger = Address::generate(&s.env);
     s.env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &stranger,

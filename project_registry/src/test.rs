@@ -1,16 +1,16 @@
 #![cfg(test)]
+#![allow(clippy::inconsistent_digit_grouping)]
 
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
-    token::StellarAssetClient,
-    Address, Env, IntoVal, String,
+    xdr::ContractEventBody,
+    Address, Env, IntoVal, String, TryIntoVal,
 };
+extern crate std;
 
 mod vault_contract {
-    soroban_sdk::contractimport!(
-        file = "../target/wasm32v1-none/release/investment_vault.wasm"
-    );
+    soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/investment_vault.wasm");
 }
 
 fn setup() -> (Env, Address, Address, ProjectRegistryClient<'static>) {
@@ -26,6 +26,8 @@ fn setup() -> (Env, Address, Address, ProjectRegistryClient<'static>) {
 #[test]
 fn test_initialize_sets_admin_and_whitelister() {
     let (_env, _admin, _whitelister, client) = setup();
+    assert_eq!(client.state_version(), 1);
+    assert_eq!(client.stored_state_version(), 1);
     assert_eq!(client.total_projects(), 0);
 }
 
@@ -36,7 +38,8 @@ fn test_create_project_by_whitelisted_address() {
 
     client.set_whitelist(&creator, &true);
 
-    let project_id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64);
+    let project_id =
+        client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64);
 
     assert_eq!(project_id, 1);
     let project = client.get_project(&1);
@@ -338,7 +341,9 @@ fn test_deposit_and_get_collateral() {
     let project_id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
 
     let token_admin = Address::generate(&env);
-    let token_sac = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+    let token_sac = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
 
     client.deposit_collateral(&project_id, &creator, &token_sac, &500i128);
@@ -355,7 +360,9 @@ fn test_non_owner_cannot_deposit_collateral() {
     let project_id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
 
     let token_admin = Address::generate(&env);
-    let token_sac = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+    let token_sac = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
     let stranger = Address::generate(&env);
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&stranger, &1_000i128);
 
@@ -369,7 +376,9 @@ fn test_liquidate_collateral_by_admin() {
     client.set_whitelist(&creator, &true);
     let project_id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
 
-    let token_sac = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token_sac = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
     client.deposit_collateral(&project_id, &creator, &token_sac, &800i128);
 
@@ -391,7 +400,9 @@ fn test_release_collateral_after_maturity() {
         &(now + 1000),
     );
 
-    let token_sac = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token_sac = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
     client.deposit_collateral(&project_id, &creator, &token_sac, &600i128);
 
@@ -462,7 +473,11 @@ fn test_set_whitelist_emits_event() {
     client.set_whitelist(&account, &true);
 
     let events = env.events().all().filter_by_contract(&client.address);
-    assert_eq!(events.events().len(), 1, "set_whitelist should emit exactly one event");
+    assert_eq!(
+        events.events().len(),
+        1,
+        "set_whitelist should emit exactly one event"
+    );
 }
 
 #[test]
@@ -494,7 +509,11 @@ fn test_score_changed_event_contains_old_and_new_values() {
 
     let events = env.events().all();
     // Last event should be ScoreChanged
-    let (_contract_id, topics, data) = &events[events.len() - 1];
+    let event_count = events.events().len();
+    let last_event = events.events().get(event_count - 1).unwrap();
+    let ContractEventBody::V0(event_body) = &last_event.body;
+    let topics = &event_body.topics;
+    let data = &event_body.data;
     // Topics: [Symbol("ScoreChanged"), project_id (u32)]
     assert!(
         topics.len() >= 2,
@@ -502,21 +521,21 @@ fn test_score_changed_event_contains_old_and_new_values() {
     );
     // Data: old_cq, new_cq, old_gi, new_gi, old_rate, new_rate
     // All u32 — decode from ScVal
-    let vals: Vec<u32> = data
-        .clone()
-        .try_into_val::<soroban_sdk::Vec<u32>>(&env)
-        .unwrap()
-        .iter()
-        .collect();
+    let sdk_vals: soroban_sdk::Vec<u32> = data.clone().try_into_val(&env).unwrap();
+    let vals = sdk_vals;
     assert_eq!(vals.len(), 6, "ScoreChanged data should have 6 fields");
     // old_cq=0, new_cq=80, old_gi=0, new_gi=60, old_rate=1000, new_rate=650
     let expected_rate = 650u32; // avg = (80+60)/2 = 70, discount = 70*500/100 = 350, rate = 1000-350 = 650
-    assert_eq!(vals[0], 0, "old_credit_quality should be 0");
-    assert_eq!(vals[1], 80, "new_credit_quality should be 80");
-    assert_eq!(vals[2], 0, "old_green_impact should be 0");
-    assert_eq!(vals[3], 60, "new_green_impact should be 60");
-    assert_eq!(vals[4], 1000, "old_rate_bps should be 1000");
-    assert_eq!(vals[5], expected_rate, "new_rate_bps should match computed rate");
+    assert_eq!(vals.get(0).unwrap(), 0, "old_credit_quality should be 0");
+    assert_eq!(vals.get(1).unwrap(), 80, "new_credit_quality should be 80");
+    assert_eq!(vals.get(2).unwrap(), 0, "old_green_impact should be 0");
+    assert_eq!(vals.get(3).unwrap(), 60, "new_green_impact should be 60");
+    assert_eq!(vals.get(4).unwrap(), 1000, "old_rate_bps should be 1000");
+    assert_eq!(
+        vals.get(5).unwrap(),
+        expected_rate,
+        "new_rate_bps should match computed rate"
+    );
 }
 
 #[test]
@@ -629,7 +648,7 @@ fn test_get_whitelister_returns_initial_whitelister() {
 }
 
 #[test]
-fn test_registry_constructor_deployment_and_initial_state() {
+fn test_registry_constructor_deployment_cost_estimate_and_initial_state() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -652,6 +671,11 @@ fn test_registry_constructor_deployment_and_initial_state() {
     assert!(resources.instructions > 0);
     let fee = env.cost_estimate().fee();
     assert!(fee.total > 0);
+    std::println!(
+        "gas_budget project_registry.constructor instructions={} fee={}",
+        resources.instructions,
+        fee.total
+    );
 
     let vault_id = env.register(vault_contract::WASM, (&admin, &usdc_sac, &registry_id));
     let vault = vault_contract::Client::new(&env, &vault_id);
