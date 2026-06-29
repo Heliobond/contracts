@@ -377,7 +377,27 @@ fn test_uri_exactly_max_length_accepted() {
     buf[..9].copy_from_slice(b"ipfs://Qm");
     let uri = String::from_str(&env, core::str::from_utf8(&buf).unwrap());
     let id = client.create_project(&creator, &uri, &0u64);
+    let project = client.get_project(&id);
+
     assert_eq!(id, 1);
+    assert_eq!(project.uri.len(), 512);
+    assert_eq!(project.uri, uri);
+    assert!(env.cost_estimate().resources().instructions > 0);
+}
+
+#[test]
+fn test_uri_with_special_characters_and_unicode_accepted() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let uri = String::from_str(&env, "ipfs://QmSolar-%E2%98%80-東京?panel=42&region=na");
+
+    let id = client.create_project(&creator, &uri, &0u64);
+    let project = client.get_project(&id);
+
+    assert_eq!(id, 1);
+    assert_eq!(project.uri, uri);
+    assert_eq!(client.total_projects(), 1);
 }
 
 #[test]
@@ -844,3 +864,4 @@ mod integration {
         assert_eq!(vault.balance(&investor), 9_950_000_000i128);
     }
 }
+
