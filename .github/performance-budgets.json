@@ -1,0 +1,5 @@
+{
+  "vault_deposit": 60000000,
+  "vault_batch_deposit_two_accounts": 100000000,
+  "registry_create_and_score_project": 50000000
+}

@@ -1,4 +1,4 @@
-use soroban_sdk::{contractevent, Address, Bytes, BytesN, Env, String};
+use soroban_sdk::{contractevent, Address, BytesN, Env, String};
 
 /// Emitted when an investor deposits USDC and receives vault shares.
 #[contractevent]
@@ -99,11 +99,19 @@ pub fn project_funded(env: &Env, project_id: u32, amount: i128, recipient: &Addr
 }
 
 pub fn yield_received(env: &Env, from: &Address, amount: i128) {
-    YieldReceived { from: from.clone(), amount }.publish(env);
+    YieldReceived {
+        from: from.clone(),
+        amount,
+    }
+    .publish(env);
 }
 
 pub fn yield_claimed(env: &Env, to: &Address, amount: i128) {
-    YieldClaimed { to: to.clone(), amount }.publish(env);
+    YieldClaimed {
+        to: to.clone(),
+        amount,
+    }
+    .publish(env);
 }
 
 pub fn insurance_claimed(env: &Env, project_id: u32, recipient: &Address, amount: i128) {
@@ -142,7 +150,11 @@ pub struct ManagementFeeSet {
 }
 
 pub fn management_fee_set(env: &Env, recipient: &Address, fee_bps: u32) {
-    ManagementFeeSet { recipient: recipient.clone(), fee_bps }.publish(env);
+    ManagementFeeSet {
+        recipient: recipient.clone(),
+        fee_bps,
+    }
+    .publish(env);
 }
 
 /// Emitted when the admin enables secondary market trading for HBS (#126).
@@ -174,7 +186,11 @@ pub struct FundingThresholdsSet {
 }
 
 pub fn funding_thresholds_set(env: &Env, min_credit_quality: u32, min_green_impact: u32) {
-    FundingThresholdsSet { min_credit_quality, min_green_impact }.publish(env);
+    FundingThresholdsSet {
+        min_credit_quality,
+        min_green_impact,
+    }
+    .publish(env);
 }
 
 /// Emitted when the admin replaces the ProjectRegistry dependency (#76).
@@ -235,15 +251,26 @@ pub struct BridgeTransferCompleted {
 }
 
 pub fn bridge_set(env: &Env, bridge: &Address) {
-    BridgeSet { bridge: bridge.clone() }.publish(env);
+    BridgeSet {
+        bridge: bridge.clone(),
+    }
+    .publish(env);
 }
 
 pub fn bridge_mint(env: &Env, to: &Address, amount: i128) {
-    BridgeMint { to: to.clone(), amount }.publish(env);
+    BridgeMint {
+        to: to.clone(),
+        amount,
+    }
+    .publish(env);
 }
 
 pub fn bridge_burn(env: &Env, from: &Address, amount: i128) {
-    BridgeBurn { from: from.clone(), amount }.publish(env);
+    BridgeBurn {
+        from: from.clone(),
+        amount,
+    }
+    .publish(env);
 }
 
 pub fn bridge_transfer_initiated(
@@ -297,13 +324,7 @@ pub struct FlashLoanFeeSet {
     pub fee_bps: i128,
 }
 
-pub fn flash_loan(
-    env: &Env,
-    initiator: &Address,
-    borrower: &Address,
-    amount: i128,
-    fee: i128,
-) {
+pub fn flash_loan(env: &Env, initiator: &Address, borrower: &Address, amount: i128, fee: i128) {
     FlashLoan {
         initiator: initiator.clone(),
         borrower: borrower.clone(),
@@ -358,12 +379,7 @@ pub fn carbon_credit_price_set(env: &Env, price: i128) {
     CarbonCreditPriceSet { price }.publish(env);
 }
 
-pub fn carbon_credits_calculated(
-    env: &Env,
-    project_id: u32,
-    amount_invested: i128,
-    credits: i128,
-) {
+pub fn carbon_credits_calculated(env: &Env, project_id: u32, amount_invested: i128, credits: i128) {
     CarbonCreditsCalculated {
         project_id,
         amount_invested,
