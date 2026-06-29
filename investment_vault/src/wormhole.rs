@@ -8,6 +8,7 @@ use soroban_sdk::xdr::{FromXdr, ToXdr};
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env};
 
 /// Chain identifiers matching the Wormhole chain ID registry.
+#[allow(dead_code)]
 pub mod chain_id {
     #![allow(dead_code)]
 

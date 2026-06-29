@@ -10,6 +10,8 @@ use stellar_macros::only_owner;
 const MAX_URI_LEN: u32 = 512;
 /// Minimum URI length — must contain at least a scheme and one character (#117).
 const MIN_URI_LEN: u32 = 8;
+/// Current schema version for instance and persistent contract state (#66).
+const STATE_VERSION: u32 = 1;
 
 /// Base interest rate in basis points (10 %). High-risk / zero-score projects pay this rate (#129).
 const BASE_RATE_BPS: u32 = 1_000;
@@ -38,6 +40,9 @@ impl ProjectRegistry {
         set_owner(&env, &admin);
         env.storage()
             .instance()
+            .set(&DataKey::StateVersion, &STATE_VERSION);
+        env.storage()
+            .instance()
             .set(&DataKey::Whitelister, &whitelister);
         env.storage()
             .instance()
@@ -47,9 +52,38 @@ impl ProjectRegistry {
             .set(&DataKey::ProposalCounter, &0u32);
     }
 
+    /// Return the state schema version supported by this contract build.
+    pub fn state_version(_env: Env) -> u32 {
+        STATE_VERSION
+    }
+
+    /// Return the version recorded in instance storage. Unversioned deployments report 0.
+    pub fn stored_state_version(env: Env) -> u32 {
+        read_state_version(&env)
+    }
+
+    /// Migrate older state to the current schema version.
+    ///
+    /// Version 0 means a deployment that predates explicit state versioning. The v1
+    /// migration only records the version because existing storage layouts are unchanged.
+    #[only_owner]
+    pub fn migrate_state(env: Env, from_version: u32) -> u32 {
+        let current = read_state_version(&env);
+        if current != from_version || current > STATE_VERSION {
+            panic_with_error!(&env, RegistryError::UnsupportedStateVersion);
+        }
+        if current < STATE_VERSION {
+            env.storage()
+                .instance()
+                .set(&DataKey::StateVersion, &STATE_VERSION);
+        }
+        STATE_VERSION
+    }
+
     /// Grant or revoke project-creation rights for `account`.
     /// Only the whitelister address (set at construction) may call this.
     pub fn set_whitelist(env: Env, account: Address, status: bool) {
+        require_current_state(&env);
         let whitelister: Address = env.storage().instance().get(&DataKey::Whitelister).unwrap();
         whitelister.require_auth();
         env.storage()
@@ -61,6 +95,7 @@ impl ProjectRegistry {
     /// Create a new project. `maturity_date` is a Unix timestamp (seconds);
     /// pass 0 to create an open-ended project (#127).
     pub fn create_project(env: Env, creator: Address, uri: String, maturity_date: u64) -> u32 {
+        require_current_state(&env);
         creator.require_auth();
         let is_whitelisted: bool = env
             .storage()
@@ -118,13 +153,14 @@ impl ProjectRegistry {
         env.storage()
             .instance()
             .set(&DataKey::ProjectCounter, &project_id);
-        events::project_created(&env, project_id, &creator, &uri);
+        events::project_created(&env, project_id, &creator);
 
         project_id
     }
 
     /// Return the `ProjectData` for `id`. Panics with `ProjectNotFound` if the ID is unknown.
     pub fn get_project(env: Env, id: u32) -> ProjectData {
+        require_current_state(&env);
         env.storage()
             .persistent()
             .get(&DataKey::Project(id))
@@ -134,6 +170,7 @@ impl ProjectRegistry {
     /// Return the current project counter (equals the highest assigned project ID).
     /// Returns 0 when no projects have been created yet.
     pub fn total_projects(env: Env) -> u32 {
+        require_current_state(&env);
         env.storage()
             .instance()
             .get(&DataKey::ProjectCounter)
@@ -188,6 +225,7 @@ impl ProjectRegistry {
     /// Mark a project as settled once its maturity date has passed (#127).
     /// Returns true if the project is mature and was settled, false if already past.
     pub fn is_mature(env: Env, project_id: u32) -> bool {
+        require_current_state(&env);
         let project: ProjectData = env
             .storage()
             .persistent()
@@ -202,6 +240,7 @@ impl ProjectRegistry {
     /// Return all registered projects as `(project_id, ProjectData)` pairs.
     /// Iterates IDs 1..=`total_projects()` — O(n) in the number of projects.
     pub fn get_all_projects(env: Env) -> Vec<(u32, ProjectData)> {
+        require_current_state(&env);
         let counter: u32 = env
             .storage()
             .instance()
@@ -231,6 +270,7 @@ impl ProjectRegistry {
         description: String,
         voting_duration_secs: u64,
     ) -> u32 {
+        require_current_state(&env);
         proposer.require_auth();
         if voting_duration_secs < MIN_VOTING_PERIOD {
             panic_with_error!(&env, RegistryError::VotingPeriodTooShort);
@@ -269,6 +309,7 @@ impl ProjectRegistry {
     /// supplying an inflated weight enables vote stuffing.
     /// `support = true` = vote for; `support = false` = vote against.
     pub fn cast_vote(env: Env, voter: Address, proposal_id: u32, support: bool, weight: i128) {
+        require_current_state(&env);
         voter.require_auth();
         if weight <= 0 {
             panic_with_error!(&env, RegistryError::VotingWeightNotPositive);
@@ -309,6 +350,7 @@ impl ProjectRegistry {
     /// Finalise a proposal after voting has ended. Anyone may call this.
     /// Returns true if the proposal passed (votes_for > votes_against).
     pub fn execute_proposal(env: Env, proposal_id: u32) -> bool {
+        require_current_state(&env);
         let mut proposal: Proposal = env
             .storage()
             .persistent()
@@ -330,7 +372,7 @@ impl ProjectRegistry {
     }
 
     /// Set only the credit-quality score for a project. Admin-only, bounded 0–100.
-    /// Emits `CreditQualityUpdated` with the new score. Use `update_impact_score` to
+    /// Emits `ScoreChanged` with the old and new values. Use `update_impact_score` to
     /// update both scores simultaneously (#6).
     #[only_owner]
     pub fn update_credit_quality_score(env: Env, project_id: u32, credit_quality: u32) {
@@ -350,6 +392,7 @@ impl ProjectRegistry {
 
     /// Return a proposal by ID. Panics with `ProposalNotFound` if unknown.
     pub fn get_proposal(env: Env, proposal_id: u32) -> Proposal {
+        require_current_state(&env);
         env.storage()
             .persistent()
             .get(&DataKey::Proposal(proposal_id))
@@ -367,6 +410,7 @@ impl ProjectRegistry {
         token: Address,
         amount: i128,
     ) {
+        require_current_state(&env);
         depositor.require_auth();
         if amount <= 0 {
             panic_with_error!(&env, RegistryError::CollateralNotPositive);
@@ -395,6 +439,7 @@ impl ProjectRegistry {
 
     /// Return the collateral balance for (`project_id`, `token`).
     pub fn get_collateral(env: Env, project_id: u32, token: Address) -> i128 {
+        require_current_state(&env);
         env.storage()
             .persistent()
             .get(&DataKey::Collateral(project_id, token))
@@ -404,6 +449,7 @@ impl ProjectRegistry {
     /// Release all collateral of `token` back to the project owner.
     /// Allowed only after the project has matured or was never funded.
     pub fn release_collateral(env: Env, project_id: u32, caller: Address, token: Address) {
+        require_current_state(&env);
         caller.require_auth();
         let project: ProjectData = env
             .storage()
@@ -490,6 +536,7 @@ impl ProjectRegistry {
     /// where `avg_score = (credit_quality + green_impact) / 2` (0–100).
     /// Rate range: 500 bps (5 %) for perfect scores → 1 000 bps (10 %) for zero scores.
     pub fn get_interest_rate(env: Env, project_id: u32) -> u32 {
+        require_current_state(&env);
         let project: ProjectData = env
             .storage()
             .persistent()
@@ -504,6 +551,7 @@ impl ProjectRegistry {
     /// Reputation reflects track record: successful funded projects, repayments, scores.
     /// Emits `ReputationUpdated`.
     pub fn set_creator_reputation(env: Env, caller: Address, creator: Address, score: u32) {
+        require_current_state(&env);
         caller.require_auth();
         if score > 100 {
             panic_with_error!(&env, RegistryError::ReputationOutOfRange);
@@ -521,6 +569,7 @@ impl ProjectRegistry {
 
     /// Return the reputation score (0–100) for `creator`. Returns 0 if never set.
     pub fn get_creator_reputation(env: Env, creator: Address) -> u32 {
+        require_current_state(&env);
         env.storage()
             .persistent()
             .get(&DataKey::CreatorReputation(creator))
@@ -533,6 +582,7 @@ impl ProjectRegistry {
     /// Formula: `reputation * 50` bps (0 rep = 0 bps, 100 rep = 5 000 bps = 50%).
     /// Vault admins should consult this value when calling `fund_project`.
     pub fn get_creator_funding_limit_bps(env: Env, creator: Address) -> u32 {
+        require_current_state(&env);
         let score: u32 = env
             .storage()
             .persistent()
@@ -550,6 +600,7 @@ impl ProjectRegistry {
     /// with the same care as a multisig threshold key.
     #[only_owner]
     pub fn set_whitelister(env: Env, new_whitelister: Address) {
+        require_current_state(&env);
         let old: Address = env.storage().instance().get(&DataKey::Whitelister).unwrap();
         env.storage()
             .instance()
@@ -559,6 +610,7 @@ impl ProjectRegistry {
 
     /// Return the current whitelister address.
     pub fn get_whitelister(env: Env) -> Address {
+        require_current_state(&env);
         env.storage().instance().get(&DataKey::Whitelister).unwrap()
     }
 }

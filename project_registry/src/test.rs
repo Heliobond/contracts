@@ -7,6 +7,7 @@ use soroban_sdk::{
     xdr::ContractEventBody,
     Address, Env, IntoVal, String, TryIntoVal,
 };
+extern crate std;
 
 mod vault_contract {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/investment_vault.wasm");
@@ -25,6 +26,8 @@ fn setup() -> (Env, Address, Address, ProjectRegistryClient<'static>) {
 #[test]
 fn test_initialize_sets_admin_and_whitelister() {
     let (_env, _admin, _whitelister, client) = setup();
+    assert_eq!(client.state_version(), 1);
+    assert_eq!(client.stored_state_version(), 1);
     assert_eq!(client.total_projects(), 0);
 }
 
@@ -730,7 +733,7 @@ fn test_get_whitelister_returns_initial_whitelister() {
 }
 
 #[test]
-fn test_registry_constructor_deployment_and_initial_state() {
+fn test_registry_constructor_deployment_cost_estimate_and_initial_state() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -753,6 +756,11 @@ fn test_registry_constructor_deployment_and_initial_state() {
     assert!(resources.instructions > 0);
     let fee = env.cost_estimate().fee();
     assert!(fee.total > 0);
+    std::println!(
+        "gas_budget project_registry.constructor instructions={} fee={}",
+        resources.instructions,
+        fee.total
+    );
 
     let vault_id = env.register(vault_contract::WASM, (&admin, &usdc_sac, &registry_id));
     let vault = vault_contract::Client::new(&env, &vault_id);

@@ -110,6 +110,7 @@ pub struct Proposal {
 
 #[contracttype]
 pub enum DataKey {
+    StateVersion,
     Whitelister,
     ProjectCounter,
     Project(u32),

@@ -266,6 +266,11 @@ fn test_vault_deposit_cost_estimate() {
     assert!(resources.instructions > 0);
     let fee = env.cost_estimate().fee();
     assert!(fee.total > 0);
+    std::println!(
+        "gas_budget investment_vault.deposit instructions={} fee={}",
+        resources.instructions,
+        fee.total
+    );
 }
 
 #[test]
@@ -276,7 +281,10 @@ fn test_initialize() {
     let admin = Address::generate(&env);
     let usdc = Address::generate(&env);
     let registry = env.register(registry_contract::WASM, (&admin, &admin));
-    let _contract_id = env.register(InvestmentVault, (&admin, &usdc, &registry));
+    let contract_id = env.register(InvestmentVault, (&admin, &usdc, &registry));
+    let client = InvestmentVaultClient::new(&env, &contract_id);
+    assert_eq!(client.state_version(), 1);
+    assert_eq!(client.stored_state_version(), 1);
     // If registration didn't panic, constructor succeeded with a valid registry
 }
 

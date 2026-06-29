@@ -44,8 +44,8 @@ pub struct RateUpdated {
 pub struct ProjectCreated {
     #[topic]
     pub project_id: u32,
+    #[topic]
     pub owner: Address,
-    pub uri: String,
 }
 
 /// Emitted when the oracle updates a project's credit-quality / green-impact scores.
@@ -100,11 +100,10 @@ pub struct ProposalExecuted {
     pub passed: bool,
 }
 
-pub fn project_created(env: &Env, project_id: u32, owner: &Address, uri: &String) {
+pub fn project_created(env: &Env, project_id: u32, owner: &Address) {
     ProjectCreated {
         project_id,
         owner: owner.clone(),
-        uri: uri.clone(),
     }
     .publish(env);
 }

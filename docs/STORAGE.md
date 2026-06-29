@@ -24,6 +24,7 @@ See [ADR-002](../adr/002-storage-patterns.md) for the rationale behind this part
 
 | Key (`DataKey` variant) | Rust type | Description |
 |-------------------------|-----------|-------------|
+| `StateVersion` | `u32` | Storage schema version recorded at construction and checked before state access |
 | `Whitelister` | `Address` | Address authorised to whitelist project creators and certify projects |
 | `ProjectCounter` | `u32` | Auto-incrementing ID; assigned to the next project created |
 | `ProposalCounter` | `u32` | Auto-incrementing governance proposal ID |
@@ -75,6 +76,7 @@ pub struct Proposal {
 
 | Key (`VaultKey` variant) | Rust type | Description |
 |--------------------------|-----------|-------------|
+| `StateVersion` | `u32` | Storage schema version recorded at construction and checked before state access |
 | `UsdcSac` | `Address` | USDC Stellar Asset Contract address (set at construction) |
 | `Registry` | `Address` | `project_registry` contract address (set at construction) |
 
@@ -114,13 +116,13 @@ Instance storage is billed as a single ledger entry for all instance keys combin
 
 | Operation | Keys read | Keys written |
 |-----------|-----------|--------------|
-| `create_project` | `Whitelist(creator)`, `ProjectCounter` | `Project(id)`, `ProjectCounter` |
+| `create_project` | `StateVersion`, `Whitelist(creator)`, `ProjectCounter` | `Project(id)`, `ProjectCounter` |
 | `update_impact_score` | `Project(id)` | `Project(id)` (skipped if no-op) |
 | `certify_project` | `Whitelister`, owner (via `get_owner`) | `Project(id)` |
 | `create_proposal` | `ProposalCounter` | `Proposal(id)`, `ProposalCounter` |
 | `cast_vote` | `HasVoted(id, addr)`, `Proposal(id)` | `Proposal(id)`, `HasVoted(id, addr)` |
 | `execute_proposal` | `Proposal(id)` | `Proposal(id)` |
-| `deposit` | `UsdcSac`, `InsuranceFund`, `TotalDeposited(from)` | `InsuranceFund`, `TotalDeposited(from)` |
+| `deposit` | `StateVersion`, `UsdcSac`, `InsuranceFund`, `TotalDeposited(from)` | `InsuranceFund`, `TotalDeposited(from)` |
 | `withdraw` | `UsdcSac`, `YieldPerShareAccum`, `YieldDebt(from)` | — |
 | `fund_project` | `Registry`, `UsdcSac`, `InsuranceFund`, `ProjectInvestment(id)`, `TotalInvestments` | `ProjectInvestment(id)`, `TotalInvestments` |
 | `receive_yield` | `YieldPerShareAccum` | `YieldPerShareAccum` |
@@ -132,4 +134,8 @@ Instance storage is billed as a single ledger entry for all instance keys combin
 
 ## Migration notes
 
-There is no on-chain migration mechanism. Storage schema changes require deploying a new contract and migrating state off-chain before switching frontend integrations to the new address. See [ADR-004](../adr/004-security-model.md) for the upgrade and admin model.
+Both contracts store `StateVersion = 1` in instance storage during construction. Public data access functions check this value before reading or writing contract state, so future code can reject unsupported layouts instead of silently decoding stale data.
+
+Deployments that predate explicit versioning report `stored_state_version() == 0`. The owner can call `migrate_state(0)` after upgrading to code that supports v1; the current migration records `StateVersion = 1` without changing any existing persistent entries because the v1 layout matches the previous layout.
+
+Future schema changes should add a new version number, keep old variants stable, and extend `migrate_state` with deterministic per-version upgrade steps. See [ADR-004](../adr/004-security-model.md) for the upgrade and admin model.

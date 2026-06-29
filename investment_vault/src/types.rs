@@ -67,6 +67,7 @@ pub enum VaultError {
 
 #[contracttype]
 pub enum VaultKey {
+    StateVersion,
     UsdcSac,
     Registry,
     TotalInvestments,
