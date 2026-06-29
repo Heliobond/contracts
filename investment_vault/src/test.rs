@@ -79,6 +79,34 @@ fn test_first_deposit_mints_1_to_1_shares() {
 }
 
 #[test]
+fn test_vault_with_zero_supply() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+
+    // convert_to_shares with zero supply
+    let shares = s.vault_client.convert_to_shares(&1_000_0000000i128);
+    assert_eq!(shares, 1_000_0000000i128);
+
+    // convert_to_assets with zero supply
+    let assets = s.vault_client.convert_to_assets(&1_000_0000000i128);
+    assert_eq!(assets, 0);
+
+    // deposit when total_assets is zero
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let minted_shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let expected = 1_000_0000000i128 - (1_000_0000000i128 * 50 / 10_000);
+    assert_eq!(minted_shares, expected);
+}
+
+#[test]
+#[should_panic]
+fn test_withdraw_with_zero_supply_panics() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    s.vault_client.withdraw(&investor, &10_0000000i128);
+}
+
+#[test]
 fn test_deposit_proportional_after_first() {
     let s = setup();
     let investor1 = Address::generate(&s.env);

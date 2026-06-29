@@ -75,6 +75,10 @@ const HIGH_TIER_PCT: i128 = 10; // 10% of liquid at ≥ 90% utilization
 const MED_TIER_PCT: i128 = 25; // 25% of liquid at ≥ 70% utilization
 const LOW_TIER_PCT: i128 = 50; // 50% of liquid at ≥ 50% utilization
 
+pub const CONTRACT_NAME: &str = "Investment Vault";
+pub const CONTRACT_DESCRIPTION: &str = "Heliobond Investment Vault";
+pub const CONTRACT_VERSION: &str = "1.0.0";
+
 #[contract]
 pub struct InvestmentVault;
 
@@ -193,7 +197,7 @@ impl InvestmentVault {
                     / 200;
             }
         }
-        expected
+        env.storage().instance().set(&VaultKey::ExpectedReturns, &expected);
     }
 
     /// Return the vault's net asset value (NAV).

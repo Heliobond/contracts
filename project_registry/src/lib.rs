@@ -27,6 +27,13 @@ pub use types::{CertificationStatus, DataKey, ProjectData, Proposal, RegistryErr
 /// Minimum voting period in seconds (~1 day at 5s/ledger, ≈ 17280 ledgers) (#134).
 const MIN_VOTING_PERIOD: u64 = 86_400;
 
+/// Minimum oracle update interval in seconds (1 hour).
+const MIN_UPDATE_INTERVAL: u64 = 3600;
+
+pub const CONTRACT_NAME: &str = "Project Registry";
+pub const CONTRACT_DESCRIPTION: &str = "Heliobond Project Registry";
+pub const CONTRACT_VERSION: &str = "1.0.0";
+
 #[contract]
 pub struct ProjectRegistry;
 
@@ -145,6 +152,7 @@ impl ProjectRegistry {
             green_impact: 0,
             maturity_date,
             certification_status: CertificationStatus::None,
+            last_update_timestamp: 0,
         };
 
         env.storage()
@@ -376,18 +384,38 @@ impl ProjectRegistry {
     /// update both scores simultaneously (#6).
     #[only_owner]
     pub fn update_credit_quality_score(env: Env, project_id: u32, credit_quality: u32) {
-        require_multisig_disabled(&env);
-        update_credit_quality_score_internal(env, project_id, credit_quality);
-    }
-
-    pub fn update_credit_quality_approved(
-        env: Env,
-        project_id: u32,
-        credit_quality: u32,
-        approvals: Vec<Address>,
-    ) {
-        require_admin_approval(&env, approvals);
-        update_credit_quality_score_internal(env, project_id, credit_quality);
+        if credit_quality > 100 {
+            panic_with_error!(&env, RegistryError::CreditQualityOutOfRange);
+        }
+        let mut project: ProjectData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Project(project_id))
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+        
+        let now = env.ledger().timestamp();
+        if project.last_update_timestamp > 0 && now < project.last_update_timestamp + MIN_UPDATE_INTERVAL {
+            panic_with_error!(&env, RegistryError::UpdateTooFrequent);
+        }
+        
+        let old_cq = project.credit_quality;
+        project.credit_quality = credit_quality;
+        project.last_update_timestamp = now;
+        let new_rate = compute_rate(credit_quality, project.green_impact);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Project(project_id), &project);
+        events::credit_quality_updated(&env, project_id, credit_quality);
+        events::score_changed(
+            &env,
+            project_id,
+            old_cq,
+            credit_quality,
+            project.green_impact,
+            project.green_impact,
+            old_rate,
+            new_rate,
+        );
     }
 
     /// Return a proposal by ID. Panics with `ProposalNotFound` if unknown.

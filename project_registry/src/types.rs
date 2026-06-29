@@ -88,6 +88,8 @@ pub struct ProjectData {
     pub maturity_date: u64,
     /// Third-party certification state (#130).
     pub certification_status: CertificationStatus,
+    /// Timestamp of the last score update (#70).
+    pub last_update_timestamp: u64,
 }
 
 /// A governance proposal that HBS holders vote on (#134).
