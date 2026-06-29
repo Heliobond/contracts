@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, contracterror, Address, BytesN, String, Vec};
+use soroban_sdk::{contracterror, contracttype, Address, BytesN, String, Vec};
 
 /// Structured error codes for the InvestmentVault contract (#75).
 /// Variant values are stable — never reorder or renumber after deployment,
@@ -8,55 +8,66 @@ use soroban_sdk::{contracttype, contracterror, Address, BytesN, String, Vec};
 #[repr(u32)]
 pub enum VaultError {
     /// Deposit or transfer amount must be positive.
-    AmountNotPositive       = 1,
+    AmountNotPositive = 1,
     /// Deposit exceeds the per-deposit maximum (MAX_DEPOSIT).
-    DepositExceedsMaximum   = 2,
+    DepositExceedsMaximum = 2,
     /// Requested funding exceeds available USDC (liquid minus insurance reserve).
-    InsufficientDeployable  = 3,
+    InsufficientDeployable = 3,
     /// Shares to burn must be positive.
-    SharesNotPositive       = 4,
+    SharesNotPositive = 4,
     /// Requested withdrawal exceeds the utilization-based limit.
-    WithdrawalExceedsLimit  = 5,
+    WithdrawalExceedsLimit = 5,
     /// Insufficient liquid USDC to settle withdrawal immediately.
-    InsufficientLiquid      = 6,
+    InsufficientLiquid = 6,
     /// Yield amount must be positive.
-    YieldAmountNotPositive  = 7,
+    YieldAmountNotPositive = 7,
     /// Cannot distribute yield when no shares are outstanding.
-    NoSharesOutstanding     = 8,
+    NoSharesOutstanding = 8,
     /// Insufficient liquid USDC to pay out yield claim.
     InsufficientLiquidYield = 9,
     /// Insurance has already been claimed for this project.
     InsuranceAlreadyClaimed = 10,
     /// Insurance fund balance is insufficient for the requested claim.
-    InsufficientInsurance   = 11,
+    InsufficientInsurance = 11,
     /// Management fee exceeds MAX_MANAGEMENT_FEE_BPS.
-    FeeExceedsMaximum       = 12,
+    FeeExceedsMaximum = 12,
     /// Share transfers to the vault contract address are not allowed.
-    TransferToVaultBlocked  = 13,
+    TransferToVaultBlocked = 13,
     /// Management fee recipient address has not been set.
-    FeeRecipientNotSet      = 14,
+    FeeRecipientNotSet = 14,
     /// Expected queue entry is missing from storage.
-    QueueEntryMissing       = 15,
+    QueueEntryMissing = 15,
     /// Insurance claim amount must be positive.
-    ClaimAmountNotPositive  = 16,
+    ClaimAmountNotPositive = 16,
     /// Project credit quality is below the configured minimum threshold.
-    BelowMinCreditQuality   = 17,
+    BelowMinCreditQuality = 17,
     /// Project green impact is below the configured minimum threshold.
-    BelowMinGreenImpact     = 18,
+    BelowMinGreenImpact = 18,
     /// Funding threshold value is out of the 0–100 range.
-    ThresholdOutOfRange     = 19,
+    ThresholdOutOfRange = 19,
     /// Bridge contract address is not set.
-    BridgeNotSet            = 20,
+    BridgeNotSet = 20,
     /// Wormhole core contract address is not set.
-    WormholeCoreNotSet      = 21,
+    WormholeCoreNotSet = 21,
     /// Emitter is not trusted for cross-chain minting.
-    EmitterNotTrusted       = 22,
+    EmitterNotTrusted = 22,
     /// VAA has already been consumed.
-    VaaAlreadyConsumed      = 23,
+    VaaAlreadyConsumed = 23,
+    /// Multi-sig threshold must be greater than 0 and no larger than signer count.
+    InvalidMultiSigThreshold = 24,
+    /// Multi-sig signer set is larger than the contract limit.
+    TooManyMultiSigSigners = 25,
+    /// Approval address is not configured as a multi-sig signer.
+    NotMultiSigSigner = 26,
+    /// Approval set contains the same signer more than once.
+    DuplicateApproval = 27,
+    /// The operation did not include enough multi-sig approvals.
+    InsufficientApprovals = 28,
 }
 
 #[contracttype]
 pub enum VaultKey {
+    StateVersion,
     UsdcSac,
     Registry,
     TotalInvestments,
@@ -105,15 +116,7 @@ pub enum VaultKey {
     ReportingSnapshot,
     /// Maximum transaction amount for compliance (0 = no limit).
     MaxTransactionAmount,
-    /// Cached expected returns value — avoids O(n) iteration on every read (#81).
-    /// Updated incrementally on `fund_project`; call `refresh_expected_returns`
-    /// to recompute from scratch after impact scores change.
-    CachedExpectedReturns,
-    /// Cached total_assets value — avoids recomputation on every read (#81).
-    /// Updated incrementally on deposit/withdraw/fund/receive_yield/claim.
-    /// Call `refresh_total_assets` to recompute from scratch if the cache
-    /// may be stale (e.g., after a direct USDC transfer to the vault address).
-    CachedTotalAssets,
+
 }
 
 /// Container for wormhole bridge data keys.

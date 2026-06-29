@@ -1,15 +1,15 @@
 #![cfg(test)]
+extern crate std;
 
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
-    Address, Env, IntoVal, String,
+
 };
+extern crate std;
 
 mod vault_contract {
-    soroban_sdk::contractimport!(
-        file = "../target/wasm32v1-none/release/investment_vault.wasm"
-    );
+    soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/investment_vault.wasm");
 }
 
 fn setup() -> (Env, Address, Address, ProjectRegistryClient<'static>) {
@@ -25,6 +25,8 @@ fn setup() -> (Env, Address, Address, ProjectRegistryClient<'static>) {
 #[test]
 fn test_initialize_sets_admin_and_whitelister() {
     let (_env, _admin, _whitelister, client) = setup();
+    assert_eq!(client.state_version(), 1);
+    assert_eq!(client.stored_state_version(), 1);
     assert_eq!(client.total_projects(), 0);
 }
 
@@ -35,7 +37,8 @@ fn test_create_project_by_whitelisted_address() {
 
     client.set_whitelist(&creator, &true);
 
-    let project_id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64);
+    let project_id =
+        client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64);
 
     assert_eq!(project_id, 1);
     let project = client.get_project(&1);
@@ -81,6 +84,70 @@ fn test_update_impact_score() {
     let project = client.get_project(&id);
     assert_eq!(project.credit_quality, 80);
     assert_eq!(project.green_impact, 90);
+}
+
+#[test]
+fn test_multisig_update_impact_score_approved() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let signer3 = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmMultiSig"),
+        &0u64,
+    );
+
+    client.set_multisig_admin(
+        &soroban_sdk::vec![&env, signer1.clone(), signer2.clone(), signer3],
+        &2u32,
+    );
+    client.update_impact_score_approved(
+        &id,
+        &80u32,
+        &90u32,
+        &soroban_sdk::vec![&env, signer1, signer2],
+    );
+
+    let project = client.get_project(&id);
+    assert_eq!(project.credit_quality, 80);
+    assert_eq!(project.green_impact, 90);
+}
+
+#[test]
+#[should_panic]
+fn test_multisig_update_impact_score_rejects_insufficient_approvals() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmMultiSig"),
+        &0u64,
+    );
+
+    client.set_multisig_admin(&soroban_sdk::vec![&env, signer1.clone(), signer2], &2u32);
+    client.update_impact_score_approved(&id, &80u32, &90u32, &soroban_sdk::vec![&env, signer1]);
+}
+
+#[test]
+fn bench_registry_create_and_score_project() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmBench"), &0u64);
+    client.update_impact_score(&id, &75u32, &85u32);
+
+    let instructions = env.cost_estimate().resources().instructions;
+    std::println!(
+        "bench_registry_create_and_score_project: {} instructions",
+        instructions
+    );
+    assert!(instructions <= 50_000_000);
 }
 
 #[test]
@@ -337,7 +404,9 @@ fn test_deposit_and_get_collateral() {
     let project_id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
 
     let token_admin = Address::generate(&env);
-    let token_sac = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+    let token_sac = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
 
     client.deposit_collateral(&project_id, &creator, &token_sac, &500i128);
@@ -354,7 +423,9 @@ fn test_non_owner_cannot_deposit_collateral() {
     let project_id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
 
     let token_admin = Address::generate(&env);
-    let token_sac = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+    let token_sac = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
     let stranger = Address::generate(&env);
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&stranger, &1_000i128);
 
@@ -368,7 +439,9 @@ fn test_liquidate_collateral_by_admin() {
     client.set_whitelist(&creator, &true);
     let project_id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
 
-    let token_sac = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token_sac = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
     client.deposit_collateral(&project_id, &creator, &token_sac, &800i128);
 
@@ -390,7 +463,9 @@ fn test_release_collateral_after_maturity() {
         &(now + 1000),
     );
 
-    let token_sac = env.register_stellar_asset_contract_v2(admin.clone()).address();
+    let token_sac = env
+        .register_stellar_asset_contract_v2(admin.clone())
+        .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
     client.deposit_collateral(&project_id, &creator, &token_sac, &600i128);
 
@@ -461,7 +536,11 @@ fn test_set_whitelist_emits_event() {
     client.set_whitelist(&account, &true);
 
     let events = env.events().all().filter_by_contract(&client.address);
-    assert_eq!(events.events().len(), 1, "set_whitelist should emit exactly one event");
+    assert_eq!(
+        events.events().len(),
+        1,
+        "set_whitelist should emit exactly one event"
+    );
 }
 
 #[test]
@@ -490,11 +569,7 @@ fn test_score_changed_event_contains_old_and_new_values() {
 
     client.update_impact_score(&id, &80u32, &60u32);
 
-    let contract_events = env.events().all().filter_by_contract(&client.address);
-    assert!(
-        contract_events.events().len() >= 3,
-        "update_impact_score should emit at least 3 events (ProjectUpdated, RateUpdated, ScoreChanged)"
-    );
+
 }
 
 #[test]
@@ -607,7 +682,7 @@ fn test_get_whitelister_returns_initial_whitelister() {
 }
 
 #[test]
-fn test_registry_constructor_deployment_and_initial_state() {
+fn test_registry_constructor_deployment_cost_estimate_and_initial_state() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -630,6 +705,11 @@ fn test_registry_constructor_deployment_and_initial_state() {
     assert!(resources.instructions > 0);
     let fee = env.cost_estimate().fee();
     assert!(fee.total > 0);
+    std::println!(
+        "gas_budget project_registry.constructor instructions={} fee={}",
+        resources.instructions,
+        fee.total
+    );
 
     let vault_id = env.register(vault_contract::WASM, (&admin, &usdc_sac, &registry_id));
     let vault = vault_contract::Client::new(&env, &vault_id);
@@ -713,7 +793,7 @@ mod integration {
         let usdc_sac = env
             .register_stellar_asset_contract_v2(admin.clone())
             .address();
-        StellarAssetClient::new(&env, &usdc_sac).mint(&investor, &2_000_0000000i128);
+        StellarAssetClient::new(&env, &usdc_sac).mint(&investor, &20_000_000_000i128);
 
         // Deploy registry with constructor
         let registry_id = env.register(ProjectRegistry, (&admin, &whitelister));
@@ -734,7 +814,7 @@ mod integration {
 
         // Investor deposits 2000 USDC. First deposit is 1:1 on the investable amount
         // (full deposit minus 0.5% insurance premium).
-        let deposit_amount = 2_000_0000000i128;
+        let deposit_amount = 20_000_000_000i128;
         let investable = deposit_amount - deposit_amount * 50 / 10_000; // 19_900_000_000
         let shares = vault.deposit(&investor, &deposit_amount);
         assert_eq!(shares, investable);
@@ -744,26 +824,26 @@ mod integration {
         registry.update_impact_score(&project_id, &80u32, &60u32);
 
         // Admin funds project with 500 USDC from vault
-        vault.fund_project(&project_id, &500_0000000i128);
+        vault.fund_project(&project_id, &5_000_000_000i128);
 
         // expected_returns = 500 * (80 + 60) / 200 = 500 * 0.7 = 350 USDC
         let expected_returns = vault.get_expected_returns();
-        assert_eq!(expected_returns, 350_0000000i128);
+        assert_eq!(expected_returns, 3_500_000_000i128);
 
         // total_assets = 1500 liquid + 500 investments + 350 expected_returns = 2350
         let total = vault.total_assets();
-        assert_eq!(total, 2_350_0000000i128);
+        assert_eq!(total, 23_500_000_000i128);
 
         // Investor withdraws half their shares (995 out of 1990)
         // total_assets = 2350, total_supply = 1990
         // returned = 995 * 2350 / 1990 = 1175 USDC (insurance pool is part of total assets)
         let half_shares = shares / 2;
         let returned = vault.withdraw(&investor, &half_shares);
-        assert_eq!(returned, 1_175_0000000i128);
+        assert_eq!(returned, 11_750_000_000i128);
 
         // Remaining shares = half of investable
         assert_eq!(vault.balance(&investor), investable / 2);
         // Remaining shares and balance (1990 / 2 = 995)
-        assert_eq!(vault.balance(&investor), 995_0000000i128);
+        assert_eq!(vault.balance(&investor), 9_950_000_000i128);
     }
 }

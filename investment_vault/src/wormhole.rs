@@ -15,19 +15,10 @@
 use soroban_sdk::xdr::{FromXdr, ToXdr};
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env};
 
-// ── Cross-chain identifiers (#48) ────────────────────────────────────────────
 
-/// Well-known chain identifiers aligned with the Wormhole chain ID registry.
-/// New chains can be added without breaking the existing interface.
-///
-/// # IBC readiness
-///
-/// The `IBC` (19) constant enables future Cosmos IBC integration. When
-/// bridging via IBC, the `recipient` field in [`BridgeTransferPayload`]
-/// encodes the 32-byte bech32-decoded pubkey of the Cosmos account.
-/// IBC relayers SHOULD watch `BridgeTransferInitiated` events with
-/// `target_chain = 19` and submit the transfer to the IBC relayer.
 pub mod chain_id {
+    #![allow(dead_code)]
+
     pub const STELLAR: u32 = 38;
     pub const ETHEREUM: u32 = 2;
     pub const SOLANA: u32 = 1;
