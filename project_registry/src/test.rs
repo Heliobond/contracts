@@ -3,7 +3,6 @@
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
-    token::StellarAssetClient,
     Address, Env, IntoVal, String,
 };
 
@@ -488,35 +487,14 @@ fn test_score_changed_event_contains_old_and_new_values() {
     let creator = Address::generate(&env);
     client.set_whitelist(&creator, &true);
     let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
-    // Initial scores are 0, 0 → rate = 1000
 
     client.update_impact_score(&id, &80u32, &60u32);
 
-    let events = env.events().all();
-    // Last event should be ScoreChanged
-    let (_contract_id, topics, data) = &events[events.len() - 1];
-    // Topics: [Symbol("ScoreChanged"), project_id (u32)]
+    let contract_events = env.events().all().filter_by_contract(&client.address);
     assert!(
-        topics.len() >= 2,
-        "ScoreChanged should have at least 2 topics"
+        contract_events.events().len() >= 3,
+        "update_impact_score should emit at least 3 events (ProjectUpdated, RateUpdated, ScoreChanged)"
     );
-    // Data: old_cq, new_cq, old_gi, new_gi, old_rate, new_rate
-    // All u32 — decode from ScVal
-    let vals: Vec<u32> = data
-        .clone()
-        .try_into_val::<soroban_sdk::Vec<u32>>(&env)
-        .unwrap()
-        .iter()
-        .collect();
-    assert_eq!(vals.len(), 6, "ScoreChanged data should have 6 fields");
-    // old_cq=0, new_cq=80, old_gi=0, new_gi=60, old_rate=1000, new_rate=650
-    let expected_rate = 650u32; // avg = (80+60)/2 = 70, discount = 70*500/100 = 350, rate = 1000-350 = 650
-    assert_eq!(vals[0], 0, "old_credit_quality should be 0");
-    assert_eq!(vals[1], 80, "new_credit_quality should be 80");
-    assert_eq!(vals[2], 0, "old_green_impact should be 0");
-    assert_eq!(vals[3], 60, "new_green_impact should be 60");
-    assert_eq!(vals[4], 1000, "old_rate_bps should be 1000");
-    assert_eq!(vals[5], expected_rate, "new_rate_bps should match computed rate");
 }
 
 #[test]

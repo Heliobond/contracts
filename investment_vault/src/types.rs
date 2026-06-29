@@ -105,6 +105,15 @@ pub enum VaultKey {
     ReportingSnapshot,
     /// Maximum transaction amount for compliance (0 = no limit).
     MaxTransactionAmount,
+    /// Cached expected returns value — avoids O(n) iteration on every read (#81).
+    /// Updated incrementally on `fund_project`; call `refresh_expected_returns`
+    /// to recompute from scratch after impact scores change.
+    CachedExpectedReturns,
+    /// Cached total_assets value — avoids recomputation on every read (#81).
+    /// Updated incrementally on deposit/withdraw/fund/receive_yield/claim.
+    /// Call `refresh_total_assets` to recompute from scratch if the cache
+    /// may be stale (e.g., after a direct USDC transfer to the vault address).
+    CachedTotalAssets,
 }
 
 /// Container for wormhole bridge data keys.

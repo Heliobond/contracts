@@ -212,6 +212,7 @@ impl ProjectRegistry {
 
     /// Return all registered projects as `(project_id, ProjectData)` pairs.
     /// Iterates IDs 1..=`total_projects()` — O(n) in the number of projects.
+    /// For large registries, prefer `get_projects_page` with offset/limit (#79).
     pub fn get_all_projects(env: Env) -> Vec<(u32, ProjectData)> {
         let counter: u32 = env
             .storage()
@@ -353,6 +354,8 @@ impl ProjectRegistry {
             .persistent()
             .get(&DataKey::Project(project_id))
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+        let old_cq = project.credit_quality;
+        let old_rate = compute_rate(old_cq, project.green_impact);
         project.credit_quality = credit_quality;
         let new_rate = compute_rate(credit_quality, project.green_impact);
         env.storage()

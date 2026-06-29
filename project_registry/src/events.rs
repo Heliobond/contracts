@@ -57,6 +57,20 @@ pub struct ProjectUpdated {
     pub green_impact: u32,
 }
 
+/// Emitted when impact scores change, with old and new values for off-chain
+/// tracking of score history and rate recalculations (#6).
+#[contractevent]
+pub struct ScoreChanged {
+    #[topic]
+    pub project_id: u32,
+    pub old_credit_quality: u32,
+    pub new_credit_quality: u32,
+    pub old_green_impact: u32,
+    pub new_green_impact: u32,
+    pub old_rate_bps: u32,
+    pub new_rate_bps: u32,
+}
+
 /// Emitted when an account's whitelist status is changed.
 #[contractevent]
 pub struct WhitelistSet {
@@ -114,6 +128,28 @@ pub fn project_updated(env: &Env, project_id: u32, credit_quality: u32, green_im
         project_id,
         credit_quality,
         green_impact,
+    }
+    .publish(env);
+}
+
+pub fn score_changed(
+    env: &Env,
+    project_id: u32,
+    old_credit_quality: u32,
+    new_credit_quality: u32,
+    old_green_impact: u32,
+    new_green_impact: u32,
+    old_rate_bps: u32,
+    new_rate_bps: u32,
+) {
+    ScoreChanged {
+        project_id,
+        old_credit_quality,
+        new_credit_quality,
+        old_green_impact,
+        new_green_impact,
+        old_rate_bps,
+        new_rate_bps,
     }
     .publish(env);
 }
