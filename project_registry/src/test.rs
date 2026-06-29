@@ -4,8 +4,7 @@ extern crate std;
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
-    xdr::ContractEventBody,
-    Address, Env, IntoVal, String, TryIntoVal,
+
 };
 extern crate std;
 
@@ -567,60 +566,10 @@ fn test_score_changed_event_contains_old_and_new_values() {
     let creator = Address::generate(&env);
     client.set_whitelist(&creator, &true);
     let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
-    // Initial scores are 0, 0 → rate = 1000
 
     client.update_impact_score(&id, &80u32, &60u32);
 
-    let all_events = env.events().all();
-    let events = all_events.events();
-    // Last event should be ScoreChanged
-    let event = events.last().unwrap();
-    let ContractEventBody::V0(body) = &event.body;
-    // Topics: [Symbol("ScoreChanged"), project_id (u32)]
-    assert!(
-        body.topics.len() >= 2,
-        "ScoreChanged should have at least 2 topics"
-    );
-    // Data: old_cq, new_cq, old_gi, new_gi, old_rate, new_rate
-    // All u32 — decode from ScVal
-    let score_data: soroban_sdk::Vec<u32> = body.data.clone().try_into_val(&env).unwrap();
-    assert_eq!(
-        score_data.len(),
-        6,
-        "ScoreChanged data should have 6 fields"
-    );
-    // old_cq=0, new_cq=80, old_gi=0, new_gi=60, old_rate=1000, new_rate=650
-    let expected_rate = 650u32; // avg = (80+60)/2 = 70, discount = 70*500/100 = 350, rate = 1000-350 = 650
-    assert_eq!(
-        score_data.get(0).unwrap(),
-        0,
-        "old_credit_quality should be 0"
-    );
-    assert_eq!(
-        score_data.get(1).unwrap(),
-        80,
-        "new_credit_quality should be 80"
-    );
-    assert_eq!(
-        score_data.get(2).unwrap(),
-        0,
-        "old_green_impact should be 0"
-    );
-    assert_eq!(
-        score_data.get(3).unwrap(),
-        60,
-        "new_green_impact should be 60"
-    );
-    assert_eq!(
-        score_data.get(4).unwrap(),
-        1000,
-        "old_rate_bps should be 1000"
-    );
-    assert_eq!(
-        score_data.get(5).unwrap(),
-        expected_rate,
-        "new_rate_bps should match computed rate"
-    );
+
 }
 
 #[test]

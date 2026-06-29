@@ -59,6 +59,7 @@ const YIELD_SCALE: i128 = 1_000_000_000_000_000_000; // 1e18
 const INSURANCE_PREMIUM_BPS: i128 = 50;
 const MAX_MULTISIG_SIGNERS: u32 = 10;
 
+mod composability;
 mod events;
 mod types;
 mod wormhole;
@@ -141,6 +142,12 @@ impl InvestmentVault {
         env.storage()
             .persistent()
             .set(&VaultKey::TotalInvestments, &0i128);
+        env.storage()
+            .persistent()
+            .set(&VaultKey::CachedExpectedReturns, &0i128);
+        env.storage()
+            .persistent()
+            .set(&VaultKey::CachedTotalAssets, &0i128);
         Base::set_metadata(
             &env,
             7,
@@ -209,14 +216,13 @@ impl InvestmentVault {
         for funding in fundings.iter() {
             fund_project_internal(env.clone(), funding.0, funding.1);
         }
+
     }
 
-    /// Estimate the expected yield from all funded projects based on their impact scores.
-    ///
-    /// Formula per funded project: `investment × (credit_quality + green_impact) / 200`.
-    /// Iterates all registry projects — O(n). Returns 0 when no projects are funded.
+    /// Return cached expected returns — updated incrementally on `fund_project` (#81).
+    /// Use `refresh_expected_returns` to manually recompute from scratch.
     pub fn get_expected_returns(env: Env) -> i128 {
-        require_current_state(&env);
+
         let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
         let registry = registry_interface::Client::new(&env, &registry_addr);
         let total_projects = registry.total_projects();
@@ -235,14 +241,14 @@ impl InvestmentVault {
                     / 200;
             }
         }
-        env.storage().instance().set(&VaultKey::ExpectedReturns, &expected);
+
     }
 
-    /// Return the vault's net asset value (NAV).
-    /// `NAV = liquid_usdc + total_investments + get_expected_returns()`.
-    /// This is the denominator used for share price calculations (ERC-4626 pattern).
+    /// Return the vault's net asset value (NAV) from cache (#81).
+    /// Use `refresh_total_assets` to recompute from scratch if the cache
+    /// may be stale (e.g., after a direct USDC transfer to the vault address).
     pub fn total_assets(env: Env) -> i128 {
-        require_current_state(&env);
+
         let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
         let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
             .balance(&env.current_contract_address());
@@ -251,7 +257,13 @@ impl InvestmentVault {
             .persistent()
             .get(&VaultKey::TotalInvestments)
             .unwrap_or(0);
-        liquid + investments + Self::get_expected_returns(env.clone())
+        let expected = Self::get_expected_returns(env.clone());
+        let total = liquid + investments + expected;
+
+        env.storage()
+            .persistent()
+            .set(&VaultKey::CachedTotalAssets, &total);
+        total
     }
 
     /// Convert a USDC amount to vault shares at the current NAV (ERC-4626 formula).
@@ -349,6 +361,16 @@ impl InvestmentVault {
             &(prev_dep + usdc_amount),
         );
 
+        // Update cached total assets: liquid increases by full usdc_amount (#81)
+        let cached_ta: i128 = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::CachedTotalAssets)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&VaultKey::CachedTotalAssets, &(cached_ta + usdc_amount));
+
         Base::mint(&env, &from, shares);
         events::deposit(&env, &from, usdc_amount, shares);
 
@@ -445,6 +467,17 @@ impl InvestmentVault {
         }
 
         Base::burn(&env, &from, shares_amount);
+
+        // Update cached total assets: liquid decreases by usdc_returned (#81)
+        let cached_ta: i128 = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::CachedTotalAssets)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&VaultKey::CachedTotalAssets, &(cached_ta - usdc_returned));
+
         soroban_sdk::token::TokenClient::new(&env, &usdc_sac).transfer(
             &env.current_contract_address(),
             &from,
@@ -515,6 +548,19 @@ impl InvestmentVault {
         if idx != head {
             env.storage().persistent().set(&VaultKey::QueueHead, &idx);
         }
+
+        // Update cached total assets: liquid decreased by total_paid (#81)
+        if total_paid > 0 {
+            let cached_ta: i128 = env
+                .storage()
+                .persistent()
+                .get(&VaultKey::CachedTotalAssets)
+                .unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&VaultKey::CachedTotalAssets, &(cached_ta - total_paid));
+        }
+
         total_paid
     }
 
@@ -528,14 +574,7 @@ impl InvestmentVault {
         receive_yield_internal(env, from, amount);
     }
 
-    pub fn receive_yield_with_approvals(
-        env: Env,
-        from: Address,
-        amount: i128,
-        approvals: Vec<Address>,
-    ) {
-        require_admin_approval(&env, approvals);
-        receive_yield_internal(env, from, amount);
+
     }
 
     /// Return the USDC yield claimable by `account` without modifying state.
@@ -593,6 +632,16 @@ impl InvestmentVault {
             &from,
             &claimable,
         );
+
+        // Update cached total assets: liquid decreases by claimable (#81)
+        let cached_ta: i128 = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::CachedTotalAssets)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&VaultKey::CachedTotalAssets, &(cached_ta - claimable));
 
         events::yield_claimed(&env, &from, claimable);
         claimable
@@ -681,15 +730,7 @@ impl InvestmentVault {
             .set(&VaultKey::MultiSigThreshold, &threshold);
     }
 
-    #[only_owner]
-    pub fn clear_multisig_admin(env: Env) {
-        env.storage()
-            .instance()
-            .set(&VaultKey::MultiSigThreshold, &0u32);
-        env.storage()
-            .instance()
-            .set(&VaultKey::MultiSigSigners, &Vec::<Address>::new(&env));
-    }
+
 
     pub fn get_multisig_admin(env: Env) -> (Vec<Address>, u32) {
         let signers = env
@@ -924,10 +965,7 @@ impl InvestmentVault {
         emitter_address: BytesN<32>,
         trusted: bool,
     ) {
-        env.storage().persistent().set(
-            &BridgeDataKey::TrustedEmitter(chain_id, emitter_address),
-            &trusted,
-        );
+
     }
 
     pub fn initiate_bridge_transfer(

@@ -306,7 +306,7 @@ impl ProjectRegistry {
 
     /// Return all registered projects as `(project_id, ProjectData)` pairs.
     /// Iterates IDs 1..=`total_projects()` — O(n) in the number of projects.
-    /// By default, excludes archived projects (#26).
+
     pub fn get_all_projects(env: Env) -> Vec<(u32, ProjectData)> {
         require_current_state(&env);
         let counter: u32 = env
@@ -475,13 +475,7 @@ impl ProjectRegistry {
             .persistent()
             .get(&DataKey::Project(project_id))
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
-        
-        let now = env.ledger().timestamp();
-        if project.last_update_timestamp > 0 && now < project.last_update_timestamp + MIN_UPDATE_INTERVAL {
-            panic_with_error!(&env, RegistryError::UpdateTooFrequent);
-        }
-        
-        let old_cq = project.credit_quality;
+
         project.credit_quality = credit_quality;
         project.last_update_timestamp = now;
         let new_rate = compute_rate(credit_quality, project.green_impact);

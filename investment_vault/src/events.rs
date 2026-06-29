@@ -250,6 +250,15 @@ pub struct BridgeTransferCompleted {
     pub amount: i128,
 }
 
+/// Emitted when a cross-chain emitter is registered or unregistered (#48).
+#[contractevent]
+pub struct TrustedEmitterSet {
+    pub chain_id: u32,
+    #[topic]
+    pub emitter: BytesN<32>,
+    pub trusted: bool,
+}
+
 pub fn bridge_set(env: &Env, bridge: &Address) {
     BridgeSet {
         bridge: bridge.clone(),
@@ -287,6 +296,15 @@ pub fn bridge_transfer_initiated(
         target_chain,
         recipient: recipient.clone(),
         sequence,
+    }
+    .publish(env);
+}
+
+pub fn trusted_emitter_set(env: &Env, chain_id: u32, emitter: &BytesN<32>, trusted: bool) {
+    TrustedEmitterSet {
+        chain_id,
+        emitter: emitter.clone(),
+        trusted,
     }
     .publish(env);
 }

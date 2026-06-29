@@ -116,10 +116,7 @@ pub enum VaultKey {
     ReportingSnapshot,
     /// Maximum transaction amount for compliance (0 = no limit).
     MaxTransactionAmount,
-    /// Configured multi-sig signer set for critical admin operations (#69).
-    MultiSigSigners,
-    /// Number of approvals required from MultiSigSigners. 0 disables multi-sig.
-    MultiSigThreshold,
+
 }
 
 /// Container for wormhole bridge data keys.
