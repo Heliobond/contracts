@@ -38,15 +38,29 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
-      - name: Lint (clippy)
-        run: cargo clippy --all-targets -- -D warnings
-
       - name: Build contracts (wasm)
         # The integration tests `contractimport!` the built wasm, so build first.
         run: stellar contract build
 
+      - name: Lint (clippy)
+        run: cargo clippy --all-targets -- -D warnings
+
       - name: Test
         run: cargo test --all --quiet
+
+      - name: Gas profile and budgets (#86)
+        run: |
+          cargo test --all --quiet cost_estimate -- --nocapture 2>&1 | tee gas-profile.txt
+          python3 scripts/check_gas_budgets.py gas-budgets.json gas-profile.txt gas-report.md
+
+      - name: Upload gas report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gas-report-${{ github.sha }}
+          path: |
+            gas-profile.txt
+            gas-report.md
 
       - name: Check WASM sizes (#100)
         run: |

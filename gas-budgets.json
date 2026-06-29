@@ -1,0 +1,10 @@
+{
+  "project_registry.constructor": {
+    "instructions": 100000,
+    "fee": 1000
+  },
+  "investment_vault.deposit": {
+    "instructions": 1500000,
+    "fee": 3000000
+  }
+}

@@ -226,10 +226,9 @@ Every state-changing function emits a structured event. Topics are indexed by th
 
 | Event | Topics | Data | Emitted by |
 |---|---|---|---|
-| `ProjectCreated` | `project_id` (u32) | `owner` (Address), `uri` (String) | `create_project()` |
+| `ProjectCreated` | `project_id` (u32), `owner` (Address) | — | `create_project()` |
 | `ProjectUpdated` | `project_id` (u32) | `credit_quality`, `green_impact` (u32) | `update_impact_score()` (only when values change) |
 | `ScoreChanged` | `project_id` (u32) | `old_credit_quality`, `new_credit_quality`, `old_green_impact`, `new_green_impact`, `old_rate_bps`, `new_rate_bps` (u32) | `update_impact_score()`, `update_credit_quality_score()` (#131) |
-| `CreditQualityUpdated` | `project_id` (u32) | `credit_quality` (u32) | `update_credit_quality_score()` (#6) |
 | `WhitelistSet` | `account` (Address) | `status` (bool) | `set_whitelist()` |
 | `ProjectCertified` | `project_id` (u32) | `status` (CertificationStatus) | `certify_project()` |
 | `ProposalCreated` | `proposal_id` (u32) | `proposer` (Address), `voting_ends_at` (u64) | `create_proposal()` |

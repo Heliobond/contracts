@@ -75,7 +75,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           python3 - <<'PYEOF'
-          import re, sys
+          import json, re, sys
 
           # Extract "bench_<name>: <N> instructions" lines from output files.
           PATTERN = re.compile(r'bench_(\w+):\s*(\d+)\s*instructions', re.IGNORECASE)
@@ -94,11 +94,13 @@ jobs:
 
           base = parse('/tmp/bench-base.txt')
           pr   = parse('/tmp/bench-pr.txt')
+          with open('.github/performance-budgets.json') as f:
+              budgets = json.load(f)
 
           if not base and not pr:
-              print("No instruction-count bench lines found in output — skipping comparison.")
+              print("No instruction-count bench lines found in output.")
               print("Add tests whose names contain 'bench' and print 'bench_<name>: <N> instructions'.")
-              sys.exit(0)
+              sys.exit(1)
 
           REGRESSION_THRESHOLD = 0.10   # 10% increase triggers a failure
           failed = False
@@ -116,23 +118,60 @@ jobs:
                   pct = (p - b) / b
                   flag = ''
                   if pct > REGRESSION_THRESHOLD:
-                      flag = '  ❌ REGRESSION'
+                      flag = '  REGRESSION'
                       failed = True
                   elif pct > 0:
-                      flag = '  ⚠️  (+{:.1%})'.format(pct)
+                      flag = '  (+{:.1%})'.format(pct)
                   else:
-                      flag = '  ✅ ({:.1%})'.format(pct)
+                      flag = '  ({:.1%})'.format(pct)
                   rows.append(f"  {key:<40} baseline={b:,}  pr={p:,}{flag}")
+
+          for key, budget in sorted(budgets.items()):
+              actual = pr.get(key)
+              if actual is None:
+                  rows.append(f"  {key:<40} MISSING   budget={budget:,}")
+                  failed = True
+              elif actual > budget:
+                  rows.append(f"  {key:<40} OVER      budget={budget:,}  pr={actual:,}")
+                  failed = True
 
           print("Benchmark comparison (instruction counts):")
           for r in rows:
               print(r)
 
           if failed:
-              print("\nOne or more benchmarks regressed by more than 10%. Review the diff.")
+              print("\nOne or more benchmarks regressed or exceeded its fixed budget.")
               sys.exit(1)
           else:
               print("\nAll benchmarks within acceptable range.")
+          PYEOF
+
+      - name: Write benchmark history snapshot
+        if: always()
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, re
+
+          pattern = re.compile(r'bench_(\w+):\s*(\d+)\s*instructions', re.IGNORECASE)
+          results = {}
+          for path in ('/tmp/bench-pr.txt', '/tmp/bench-base.txt'):
+              if not os.path.exists(path):
+                  continue
+              with open(path) as f:
+                  for line in f:
+                      match = pattern.search(line)
+                      if match:
+                          results[match.group(1)] = int(match.group(2))
+
+          snapshot = {
+              "sha": os.environ.get("GITHUB_SHA"),
+              "ref": os.environ.get("GITHUB_REF"),
+              "run_id": os.environ.get("GITHUB_RUN_ID"),
+              "benchmarks": results,
+          }
+          with open('/tmp/benchmark-history.json', 'w') as f:
+              json.dump(snapshot, f, indent=2, sort_keys=True)
+              f.write('\n')
           PYEOF
 
       - name: Upload benchmark results
@@ -140,5 +179,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-results-${{ github.sha }}
-          path: /tmp/bench-*.txt
+          path: |
+            /tmp/bench-*.txt
+            /tmp/benchmark-history.json
           retention-days: 30

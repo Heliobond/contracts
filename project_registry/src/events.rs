@@ -1,5 +1,5 @@
-use soroban_sdk::{contractevent, Address, Env, String};
 use crate::types::CertificationStatus;
+use soroban_sdk::{contractevent, vec, Address, Env, String, Symbol};
 
 /// Emitted when collateral is deposited for a project (#128).
 #[contractevent]
@@ -44,8 +44,8 @@ pub struct RateUpdated {
 pub struct ProjectCreated {
     #[topic]
     pub project_id: u32,
+    #[topic]
     pub owner: Address,
-    pub uri: String,
 }
 
 /// Emitted when the oracle updates a project's credit-quality / green-impact scores.
@@ -100,11 +100,10 @@ pub struct ProposalExecuted {
     pub passed: bool,
 }
 
-pub fn project_created(env: &Env, project_id: u32, owner: &Address, uri: &String) {
+pub fn project_created(env: &Env, project_id: u32, owner: &Address) {
     ProjectCreated {
         project_id,
         owner: owner.clone(),
-        uri: uri.clone(),
     }
     .publish(env);
 }
@@ -150,7 +149,11 @@ pub fn vote_cast(env: &Env, proposal_id: u32, voter: &Address, support: bool, we
 }
 
 pub fn proposal_executed(env: &Env, proposal_id: u32, passed: bool) {
-    ProposalExecuted { proposal_id, passed }.publish(env);
+    ProposalExecuted {
+        proposal_id,
+        passed,
+    }
+    .publish(env);
 }
 
 /// Emitted when the admin updates a project's credit-quality score independently (#6).
@@ -162,10 +165,20 @@ pub struct CreditQualityUpdated {
 }
 
 pub fn credit_quality_updated(env: &Env, project_id: u32, credit_quality: u32) {
-    CreditQualityUpdated { project_id, credit_quality }.publish(env);
+    CreditQualityUpdated {
+        project_id,
+        credit_quality,
+    }
+    .publish(env);
 }
 
-pub fn collateral_deposited(env: &Env, project_id: u32, token: &Address, depositor: &Address, amount: i128) {
+pub fn collateral_deposited(
+    env: &Env,
+    project_id: u32,
+    token: &Address,
+    depositor: &Address,
+    amount: i128,
+) {
     CollateralDeposited {
         project_id,
         token: token.clone(),
@@ -175,7 +188,13 @@ pub fn collateral_deposited(env: &Env, project_id: u32, token: &Address, deposit
     .publish(env);
 }
 
-pub fn collateral_released(env: &Env, project_id: u32, token: &Address, recipient: &Address, amount: i128) {
+pub fn collateral_released(
+    env: &Env,
+    project_id: u32,
+    token: &Address,
+    recipient: &Address,
+    amount: i128,
+) {
     CollateralReleased {
         project_id,
         token: token.clone(),
@@ -185,7 +204,13 @@ pub fn collateral_released(env: &Env, project_id: u32, token: &Address, recipien
     .publish(env);
 }
 
-pub fn collateral_liquidated(env: &Env, project_id: u32, token: &Address, recipient: &Address, amount: i128) {
+pub fn collateral_liquidated(
+    env: &Env,
+    project_id: u32,
+    token: &Address,
+    recipient: &Address,
+    amount: i128,
+) {
     CollateralLiquidated {
         project_id,
         token: token.clone(),
@@ -196,7 +221,36 @@ pub fn collateral_liquidated(env: &Env, project_id: u32, token: &Address, recipi
 }
 
 pub fn rate_updated(env: &Env, project_id: u32, rate_bps: u32) {
-    RateUpdated { project_id, rate_bps }.publish(env);
+    RateUpdated {
+        project_id,
+        rate_bps,
+    }
+    .publish(env);
+}
+
+#[allow(clippy::too_many_arguments, deprecated)]
+pub fn score_changed(
+    env: &Env,
+    project_id: u32,
+    old_credit_quality: u32,
+    new_credit_quality: u32,
+    old_green_impact: u32,
+    new_green_impact: u32,
+    old_rate_bps: u32,
+    new_rate_bps: u32,
+) {
+    env.events().publish(
+        (Symbol::new(env, "ScoreChanged"), project_id),
+        vec![
+            env,
+            old_credit_quality,
+            new_credit_quality,
+            old_green_impact,
+            new_green_impact,
+            old_rate_bps,
+            new_rate_bps,
+        ],
+    );
 }
 
 /// Emitted when a creator's reputation score is updated (#46).
@@ -208,7 +262,11 @@ pub struct ReputationUpdated {
 }
 
 pub fn reputation_updated(env: &Env, creator: &Address, score: u32) {
-    ReputationUpdated { creator: creator.clone(), score }.publish(env);
+    ReputationUpdated {
+        creator: creator.clone(),
+        score,
+    }
+    .publish(env);
 }
 
 /// Emitted when the admin replaces the whitelister address (#76).

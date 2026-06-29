@@ -8,7 +8,10 @@ use soroban_sdk::xdr::{FromXdr, ToXdr};
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env};
 
 /// Chain identifiers matching the Wormhole chain ID registry.
+#[allow(dead_code)]
 pub mod chain_id {
+    #![allow(dead_code)]
+
     pub const STELLAR: u32 = 38;
     pub const ETHEREUM: u32 = 2;
     pub const SOLANA: u32 = 1;
