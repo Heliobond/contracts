@@ -278,31 +278,6 @@ pub fn rate_updated(env: &Env, project_id: u32, rate_bps: u32) {
     .publish(env);
 }
 
-#[allow(clippy::too_many_arguments, deprecated)]
-pub fn score_changed(
-    env: &Env,
-    project_id: u32,
-    old_credit_quality: u32,
-    new_credit_quality: u32,
-    old_green_impact: u32,
-    new_green_impact: u32,
-    old_rate_bps: u32,
-    new_rate_bps: u32,
-) {
-    env.events().publish(
-        (Symbol::new(env, "ScoreChanged"), project_id),
-        vec![
-            env,
-            old_credit_quality,
-            new_credit_quality,
-            old_green_impact,
-            new_green_impact,
-            old_rate_bps,
-            new_rate_bps,
-        ],
-    );
-}
-
 /// Emitted when a creator's reputation score is updated (#46).
 #[contractevent]
 pub struct ReputationUpdated {
