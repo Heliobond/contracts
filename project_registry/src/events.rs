@@ -125,6 +125,20 @@ pub fn whitelist_set(env: &Env, account: &Address, status: bool) {
     .publish(env);
 }
 
+pub fn project_archived(env: &Env, project_id: u32) {
+    env.events().publish(
+        (Symbol::new(env, "project_archived"),),
+        project_id,
+    );
+}
+
+pub fn project_deleted(env: &Env, project_id: u32) {
+    env.events().publish(
+        (Symbol::new(env, "project_deleted"),),
+        project_id,
+    );
+}
+
 pub fn project_certified(env: &Env, project_id: u32, status: CertificationStatus) {
     ProjectCertified { project_id, status }.publish(env);
 }

@@ -1,4 +1,42 @@
 #![no_std]
+//! # InvestmentVault Contract
+//!
+//! ## Cross-Contract Trust Boundaries (#22)
+//!
+//! This contract makes cross-contract calls to the ProjectRegistry via the imported WASM interface.
+//! 
+//! ### Trust Assumptions:
+//! - The vault trusts the registry to return valid ProjectData with legitimate owner addresses
+//! - The vault trusts the registry's total_projects() return value for iteration
+//! - A compromised or malicious registry could return manipulated data
+//!
+//! ### Mitigations:
+//! - Registry address is validated at construction via total_projects() call
+//! - Registry can only be changed by admin via set_registry() which re-validates
+//! - Tests include scenarios for unexpected registry responses (e.g., zero address owner)
+//! - Consider using a registry interface trait with known-good implementations
+//!
+//! ## i128 Arithmetic and Overflow Protection (#25)
+//!
+//! All financial calculations use i128. Soroban runtime includes overflow checks enabled
+//! via `overflow-checks = true` in Cargo.toml profile.release.
+//!
+//! ### Overflow Behavior:
+//! - Arithmetic overflow triggers a panic and transaction revert
+//! - Maximum safe deposit: 1 billion USDC (MAX_DEPOSIT constant)
+//! - Share calculations use proportional ratios: shares = usdc * total_shares / total_assets
+//! - Yield accumulator scaled by 1e18 (YIELD_SCALE) for precision
+//!
+//! ### Maximum Safe Values:
+//! - Single deposit: 1,000,000,000 USDC (1 billion, 7 decimals = 1e16)
+//! - Total vault assets: Theoretically up to i128::MAX / 1e18 for yield calculations
+//! - In practice, economic limits constrain values well below overflow thresholds
+//!
+//! ### Critical Path Arithmetic:
+//! - deposit(): usdc_amount * total_shares / total_assets (checked)
+//! - withdraw(): shares_amount * total_assets / total_shares (checked)
+//! - receive_yield(): amount * YIELD_SCALE / total_shares (checked)
+//!
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, Address, Bytes, BytesN, Env, MuxedAddress, String,
     Vec,
@@ -74,6 +112,10 @@ const UTIL_WARN_BPS: u32 = UTIL_MED_BPS;
 const HIGH_TIER_PCT: i128 = 10; // 10% of liquid at ≥ 90% utilization
 const MED_TIER_PCT: i128 = 25; // 25% of liquid at ≥ 70% utilization
 const LOW_TIER_PCT: i128 = 50; // 50% of liquid at ≥ 50% utilization
+
+pub const CONTRACT_NAME: &str = "Investment Vault";
+pub const CONTRACT_DESCRIPTION: &str = "Heliobond Investment Vault";
+pub const CONTRACT_VERSION: &str = "1.0.0";
 
 #[contract]
 pub struct InvestmentVault;
@@ -193,7 +235,7 @@ impl InvestmentVault {
                     / 200;
             }
         }
-        expected
+        env.storage().instance().set(&VaultKey::ExpectedReturns, &expected);
     }
 
     /// Return the vault's net asset value (NAV).

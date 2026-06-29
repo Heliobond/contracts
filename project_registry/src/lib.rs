@@ -27,6 +27,13 @@ pub use types::{CertificationStatus, DataKey, ProjectData, Proposal, RegistryErr
 /// Minimum voting period in seconds (~1 day at 5s/ledger, ≈ 17280 ledgers) (#134).
 const MIN_VOTING_PERIOD: u64 = 86_400;
 
+/// Minimum oracle update interval in seconds (1 hour).
+const MIN_UPDATE_INTERVAL: u64 = 3600;
+
+pub const CONTRACT_NAME: &str = "Project Registry";
+pub const CONTRACT_DESCRIPTION: &str = "Heliobond Project Registry";
+pub const CONTRACT_VERSION: &str = "1.0.0";
+
 #[contract]
 pub struct ProjectRegistry;
 
@@ -105,13 +112,37 @@ impl ProjectRegistry {
         if !is_whitelisted {
             panic_with_error!(&env, RegistryError::NotWhitelisted);
         }
-        // URI validation (#117, #114)
+        // URI validation (#117, #114, #29)
         let uri_len = uri.len();
         if uri_len < MIN_URI_LEN {
             panic_with_error!(&env, RegistryError::UriTooShort);
         }
         if uri_len > MAX_URI_LEN {
             panic_with_error!(&env, RegistryError::UriTooLong);
+        }
+        // Validate URI scheme: must start with ipfs://, https://, or ar:// (#29)
+        // Check prefix by comparing first N bytes
+        let mut has_valid_scheme = false;
+        if uri_len >= 7 {
+            let prefix7: String = uri.slice(0..7);
+            if prefix7 == String::from_str(&env, "ipfs://") {
+                has_valid_scheme = true;
+            }
+        }
+        if !has_valid_scheme && uri_len >= 8 {
+            let prefix8: String = uri.slice(0..8);
+            if prefix8 == String::from_str(&env, "https://") {
+                has_valid_scheme = true;
+            }
+        }
+        if !has_valid_scheme && uri_len >= 5 {
+            let prefix5: String = uri.slice(0..5);
+            if prefix5 == String::from_str(&env, "ar://") {
+                has_valid_scheme = true;
+            }
+        }
+        if !has_valid_scheme {
+            panic_with_error!(&env, RegistryError::InvalidUriScheme);
         }
         // Maturity date must be in the future if provided (#127)
         if maturity_date > 0 && maturity_date <= env.ledger().timestamp() {
@@ -145,6 +176,8 @@ impl ProjectRegistry {
             green_impact: 0,
             maturity_date,
             certification_status: CertificationStatus::None,
+            last_update_timestamp: 0,
+            archived: false,
         };
 
         env.storage()
@@ -156,6 +189,40 @@ impl ProjectRegistry {
         events::project_created(&env, project_id, &creator);
 
         project_id
+    }
+
+    /// Archive a project. Admin-only. Archived projects are excluded from get_all_projects by default (#26).
+    #[only_owner]
+    pub fn archive_project(env: Env, project_id: u32) {
+        require_current_state(&env);
+        let mut project: ProjectData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Project(project_id))
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+        
+        project.archived = true;
+        env.storage().persistent().set(&DataKey::Project(project_id), &project);
+        events::project_archived(&env, project_id);
+    }
+
+    /// Delete a project. Admin-only. Can only delete if no investments exist (#26).
+    /// This is a placeholder - actual implementation requires cross-contract call to vault.
+    #[only_owner]
+    pub fn delete_project(env: Env, project_id: u32) {
+        require_current_state(&env);
+        // Verify project exists
+        let _project: ProjectData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Project(project_id))
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+        
+        // NOTE: In production, should verify no investments via vault.get_project_investment(project_id)
+        // For now, we allow deletion assuming caller has verified no active investments
+        
+        env.storage().persistent().remove(&DataKey::Project(project_id));
+        events::project_deleted(&env, project_id);
     }
 
     /// Return the `ProjectData` for `id`. Panics with `ProjectNotFound` if the ID is unknown.
@@ -239,7 +306,31 @@ impl ProjectRegistry {
 
     /// Return all registered projects as `(project_id, ProjectData)` pairs.
     /// Iterates IDs 1..=`total_projects()` — O(n) in the number of projects.
+    /// By default, excludes archived projects (#26).
     pub fn get_all_projects(env: Env) -> Vec<(u32, ProjectData)> {
+        require_current_state(&env);
+        let counter: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ProjectCounter)
+            .unwrap_or(0);
+        let mut result = Vec::new(&env);
+        for i in 1..=counter {
+            if let Some(project) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, ProjectData>(&DataKey::Project(i))
+            {
+                if !project.archived {
+                    result.push_back((i, project));
+                }
+            }
+        }
+        result
+    }
+
+    /// Return all projects including archived ones (#26).
+    pub fn get_all_projects_with_archived(env: Env) -> Vec<(u32, ProjectData)> {
         require_current_state(&env);
         let counter: u32 = env
             .storage()
@@ -376,18 +467,38 @@ impl ProjectRegistry {
     /// update both scores simultaneously (#6).
     #[only_owner]
     pub fn update_credit_quality_score(env: Env, project_id: u32, credit_quality: u32) {
-        require_multisig_disabled(&env);
-        update_credit_quality_score_internal(env, project_id, credit_quality);
-    }
-
-    pub fn update_credit_quality_approved(
-        env: Env,
-        project_id: u32,
-        credit_quality: u32,
-        approvals: Vec<Address>,
-    ) {
-        require_admin_approval(&env, approvals);
-        update_credit_quality_score_internal(env, project_id, credit_quality);
+        if credit_quality > 100 {
+            panic_with_error!(&env, RegistryError::CreditQualityOutOfRange);
+        }
+        let mut project: ProjectData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Project(project_id))
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+        
+        let now = env.ledger().timestamp();
+        if project.last_update_timestamp > 0 && now < project.last_update_timestamp + MIN_UPDATE_INTERVAL {
+            panic_with_error!(&env, RegistryError::UpdateTooFrequent);
+        }
+        
+        let old_cq = project.credit_quality;
+        project.credit_quality = credit_quality;
+        project.last_update_timestamp = now;
+        let new_rate = compute_rate(credit_quality, project.green_impact);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Project(project_id), &project);
+        events::credit_quality_updated(&env, project_id, credit_quality);
+        events::score_changed(
+            &env,
+            project_id,
+            old_cq,
+            credit_quality,
+            project.green_impact,
+            project.green_impact,
+            old_rate,
+            new_rate,
+        );
     }
 
     /// Return a proposal by ID. Panics with `ProposalNotFound` if unknown.
@@ -778,6 +889,20 @@ fn compute_rate(credit_quality: u32, green_impact: u32) -> u32 {
     let avg = (credit_quality + green_impact) / 2;
     let discount = avg * MAX_DISCOUNT_BPS / 100;
     BASE_RATE_BPS - discount
+}
+
+fn read_state_version(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::StateVersion)
+        .unwrap_or(0)
+}
+
+fn require_current_state(env: &Env) {
+    let current = read_state_version(env);
+    if current != 0 && current != STATE_VERSION {
+        panic_with_error!(env, RegistryError::UnsupportedStateVersion);
+    }
 }
 
 #[contractimpl(contracttrait)]

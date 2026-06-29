@@ -63,6 +63,16 @@ pub enum RegistryError {
     DuplicateApproval = 27,
     /// The operation did not include enough multi-sig approvals.
     InsufficientApprovals = 28,
+    /// Project URI must start with a valid scheme (ipfs://, https://, ar://).
+    InvalidUriScheme = 29,
+    /// Project cannot be deleted because it has active investments.
+    ProjectHasInvestments = 30,
+    /// Project is already archived.
+    ProjectArchived = 31,
+    /// State version mismatch during migration.
+    UnsupportedStateVersion = 32,
+    /// Score update requested too soon after previous update.
+    UpdateTooFrequent = 33,
 }
 
 /// Certification state for a green project (#130).
@@ -88,6 +98,10 @@ pub struct ProjectData {
     pub maturity_date: u64,
     /// Third-party certification state (#130).
     pub certification_status: CertificationStatus,
+    /// Timestamp of the last score update (#70).
+    pub last_update_timestamp: u64,
+    /// Whether the project has been archived (#26).
+    pub archived: bool,
 }
 
 /// A governance proposal that HBS holders vote on (#134).
