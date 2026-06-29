@@ -947,24 +947,24 @@ fn test_high_utilization_withdrawal_emits_warning_event() {
     let investor = Address::generate(&s.env);
     let creator = Address::generate(&s.env);
 
-    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 10_000_0000000i128);
+    s.vault_client.deposit(&investor, &10_000_0000000i128);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
     let project_id =
         registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64);
-    // Fund 800 USDC: liquid = 200, investments = 800, utilization = 800/(200+800) = 80%
-    s.vault_client.fund_project(&project_id, &800_0000000i128);
+    // Fund 8000 USDC: liquid = 2000, investments = 8000, utilization = 80%
+    // max_withdraw at 80% = 2000 * 25% = 500 USDC — must be > MIN_WITHDRAW (100 USDC)
+    s.vault_client.fund_project(&project_id, &8_000_0000000i128);
 
     assert!(
         s.vault_client.get_utilization_bps() >= 7_000,
         "utilization should be at or above warning threshold"
     );
 
-    // Withdraw a small amount within the utilization limit — warning event should fire.
-    let small_shares = shares / 100; // 1% of total shares
-    s.vault_client.withdraw(&investor, &small_shares);
+    // Withdraw 200 USDC worth of shares — above MIN_WITHDRAW and within utilization limit.
+    s.vault_client.withdraw(&investor, &200_0000000i128);
 
     // env.events().all() returns events from the most recent invocation only.
     // High-util withdraw emits: burn + utilization_warning + withdraw = 3 vault events.
@@ -1114,4 +1114,89 @@ fn test_set_registry_is_admin_only() {
         },
     }]);
     s.vault_client.set_registry(&new_registry);
+}
+
+// ── Issue #12: explicit project_id validation in fund_project ─────────────────
+
+#[test]
+#[should_panic]
+fn test_fund_project_panics_with_zero_project_id() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    // project_id 0 is always invalid (projects are 1-indexed)
+    s.vault_client.fund_project(&0u32, &100_0000000i128);
+}
+
+#[test]
+#[should_panic]
+fn test_fund_project_panics_with_out_of_range_project_id() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    // registry has no projects, so any project_id > 0 is out of range
+    s.vault_client.fund_project(&999u32, &100_0000000i128);
+}
+
+#[test]
+fn test_fund_project_succeeds_with_valid_project_id() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id =
+        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm12"), &0u64);
+
+    s.vault_client.fund_project(&project_id, &100_0000000i128);
+    assert!(s.vault_client.total_assets() > 0);
+}
+
+// ── Issue #13: minimum deposit and withdraw amounts ───────────────────────────
+
+#[test]
+#[should_panic]
+fn test_deposit_below_minimum_panics() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    // 10 USDC is below MIN_DEPOSIT (100 USDC)
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 10_0000000i128);
+    s.vault_client.deposit(&investor, &10_0000000i128);
+}
+
+#[test]
+fn test_deposit_at_minimum_succeeds() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    // exactly MIN_DEPOSIT (100 USDC) must succeed
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 100_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &100_0000000i128);
+    assert!(shares > 0);
+}
+
+#[test]
+#[should_panic]
+fn test_withdraw_below_minimum_panics() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    // 10 shares is below MIN_WITHDRAW (100 shares)
+    s.vault_client.withdraw(&investor, &10_0000000i128);
+}
+
+#[test]
+fn test_withdraw_at_minimum_succeeds() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    // withdraw exactly MIN_WITHDRAW shares
+    let returned = s.vault_client.withdraw(&investor, &100_0000000i128);
+    assert!(returned > 0);
 }

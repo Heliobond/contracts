@@ -50,6 +50,14 @@ use stellar_tokens::fungible::{Base, FungibleToken};
 /// in share calculations and caps single-user concentration risk (#112).
 const MAX_DEPOSIT: i128 = 1_000_000_000 * 10_000_000;
 
+/// Minimum deposit amount: 100 USDC (7 decimals) — prevents dust attacks that
+/// could manipulate share price via rounding or inflate storage costs (#13).
+const MIN_DEPOSIT: i128 = 100_0000000;
+
+/// Minimum withdraw shares amount: 100 shares — prevents dust redemptions that
+/// could be used for griefing or disproportionate gas costs (#13).
+const MIN_WITHDRAW: i128 = 100_0000000;
+
 /// Scaling factor for the yield-per-share accumulator (#125).
 /// Large enough to preserve precision when total_shares >> yield amount.
 const YIELD_SCALE: i128 = 1_000_000_000_000_000_000; // 1e18
@@ -117,6 +125,9 @@ const LOW_TIER_PCT: i128 = 50; // 50% of liquid at ≥ 50% utilization
 pub const CONTRACT_NAME: &str = "Investment Vault";
 pub const CONTRACT_DESCRIPTION: &str = "Heliobond Investment Vault";
 pub const CONTRACT_VERSION: &str = "1.0.0";
+
+/// State schema version for this contract build. Increment when a migration is required.
+const STATE_VERSION: u32 = 1;
 
 #[contract]
 pub struct InvestmentVault;
@@ -242,6 +253,7 @@ impl InvestmentVault {
             }
         }
 
+        expected
     }
 
     /// Return the vault's net asset value (NAV) from cache (#81).
@@ -306,6 +318,9 @@ impl InvestmentVault {
         from.require_auth();
         if usdc_amount <= 0 {
             panic_with_error!(&env, VaultError::AmountNotPositive);
+        }
+        if usdc_amount < MIN_DEPOSIT {
+            panic_with_error!(&env, VaultError::DepositBelowMinimum);
         }
         if usdc_amount > MAX_DEPOSIT {
             panic_with_error!(&env, VaultError::DepositExceedsMaximum);
@@ -416,6 +431,9 @@ impl InvestmentVault {
         // Note: from.require_auth() is called inside Base::burn
         if shares_amount <= 0 {
             panic_with_error!(&env, VaultError::SharesNotPositive);
+        }
+        if shares_amount < MIN_WITHDRAW {
+            panic_with_error!(&env, VaultError::WithdrawBelowMinimum);
         }
 
         let usdc_returned = Self::convert_to_assets(env.clone(), shares_amount);
@@ -572,9 +590,6 @@ impl InvestmentVault {
     pub fn receive_yield(env: Env, from: Address, amount: i128) {
         require_multisig_disabled(&env);
         receive_yield_internal(env, from, amount);
-    }
-
-
     }
 
     /// Return the USDC yield claimable by `account` without modifying state.
@@ -881,6 +896,9 @@ impl InvestmentVault {
     #[only_owner]
     pub fn set_registry(env: Env, new_registry: Address) {
         require_current_state(&env);
+        // Validate that the new address is a deployed ProjectRegistry by calling it.
+        // Panics at call time if the address is not a valid registry contract.
+        registry_interface::Client::new(&env, &new_registry).total_projects();
         let old: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
         env.storage()
             .instance()
@@ -1397,6 +1415,12 @@ fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
 
     let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
     let registry = registry_interface::Client::new(&env, &registry_addr);
+
+    let total_projects = registry.total_projects();
+    if project_id == 0 || project_id > total_projects {
+        panic_with_error!(&env, VaultError::ProjectNotFound);
+    }
+
     let project = registry.get_project(&project_id);
 
     let min_credit: u32 = env
@@ -1600,6 +1624,19 @@ fn require_multisig_disabled(env: &Env) {
         .unwrap_or(0);
     if threshold > 0 {
         panic_with_error!(env, VaultError::InsufficientApprovals);
+    }
+}
+
+fn read_state_version(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&VaultKey::StateVersion)
+        .unwrap_or(0)
+}
+
+fn require_current_state(env: &Env) {
+    if read_state_version(env) != STATE_VERSION {
+        panic_with_error!(env, VaultError::UnsupportedStateVersion);
     }
 }
 

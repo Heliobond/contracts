@@ -63,6 +63,14 @@ pub enum VaultError {
     DuplicateApproval = 27,
     /// The operation did not include enough multi-sig approvals.
     InsufficientApprovals = 28,
+    /// Contract state version does not match the expected version; migration required.
+    UnsupportedStateVersion = 29,
+    /// The project_id does not correspond to an existing project in the registry.
+    ProjectNotFound = 30,
+    /// Deposit amount is below the minimum allowed (MIN_DEPOSIT).
+    DepositBelowMinimum = 31,
+    /// Withdraw shares amount is below the minimum allowed (MIN_WITHDRAW).
+    WithdrawBelowMinimum = 32,
 }
 
 #[contracttype]
@@ -116,7 +124,14 @@ pub enum VaultKey {
     ReportingSnapshot,
     /// Maximum transaction amount for compliance (0 = no limit).
     MaxTransactionAmount,
-
+    /// Cached expected returns (updated incrementally on fund_project).
+    CachedExpectedReturns,
+    /// Cached total vault assets (liquid + investments + expected returns).
+    CachedTotalAssets,
+    /// Multi-sig signer address list.
+    MultiSigSigners,
+    /// Multi-sig approval threshold.
+    MultiSigThreshold,
 }
 
 /// Container for wormhole bridge data keys.
