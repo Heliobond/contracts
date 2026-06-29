@@ -129,6 +129,7 @@ pub const CONTRACT_VERSION: &str = "1.0.0";
 
 /// State schema version for this contract build. Increment when a migration is required.
 
+
 #[contract]
 pub struct InvestmentVault;
 
@@ -254,6 +255,7 @@ impl InvestmentVault {
                     / 200;
             }
         }
+
         expected
     }
 
@@ -1673,7 +1675,6 @@ impl InvestmentVault {
         // events::upgraded(&env) could be called here if needed
     }
 }
-
 #[contractimpl(contracttrait)]
 impl FungibleToken for InvestmentVault {
     type ContractType = Base;

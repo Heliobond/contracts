@@ -69,11 +69,12 @@ pub enum VaultError {
     ProjectNotFound = 30,
     /// Deposit amount is below the minimum allowed (MIN_DEPOSIT).
     DepositBelowMinimum = 31,
-    WithdrawBelowMinimum = 34,
+    /// Withdraw shares amount is below the minimum allowed (MIN_WITHDRAW).
+    WithdrawBelowMinimum = 32,
     /// Slippage limit was exceeded during withdrawal.
-    SlippageLimitExceeded = 32,
+    SlippageLimitExceeded = 33,
     /// The vault is currently paused.
-    Paused = 33,
+    Paused = 34,
 }
 
 #[contracttype]
