@@ -323,3 +323,9 @@ pub fn whitelister_changed(env: &Env, old: &Address, new: &Address) {
     }
     .publish(env);
 }
+
+#[allow(deprecated)]
+pub fn project_compacted(env: &Env, project_id: u32) {
+    env.events()
+        .publish((Symbol::new(env, "project_compacted"),), project_id);
+}

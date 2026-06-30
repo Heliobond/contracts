@@ -82,8 +82,8 @@ pub enum RegistryError {
     UnsupportedStateVersion = 32,
     /// Score update requested too soon after previous update.
     UpdateTooFrequent = 33,
-    /// Contract is paused; state-mutating operations are not allowed (#72).
-    Paused = 34,
+    /// Project must be archived before it can be compacted.
+    ProjectNotArchived = 34,
 }
 
 /// Certification state for a green project (#130).
@@ -113,6 +113,21 @@ pub struct ProjectData {
     pub last_update_timestamp: u64,
     /// Whether the project has been archived (#26).
     pub archived: bool,
+}
+
+/// Compact archive record stored when a project's full data is compacted (#73).
+///
+/// Replaces `ProjectData` (~580 bytes) with a minimal summary (~52 bytes),
+/// reducing persistent storage rent for old projects that no longer need full data.
+/// Use `compact_archive` to transition an archived project to this form.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArchiveSummary {
+    pub owner: Address,
+    pub final_credit_quality: u32,
+    pub final_green_impact: u32,
+    pub maturity_date: u64,
+    pub certification_status: CertificationStatus,
 }
 
 /// A governance proposal that HBS holders vote on (#134).
@@ -146,6 +161,9 @@ pub enum DataKey {
     Proposal(u32),
     /// Whether `address` has voted on proposal `id` (#134).
     HasVoted(u32, Address),
+    /// Compact archive summary for a fully compacted project (#73).
+    /// Short key name reduces per-entry storage cost.
+    Arch(u32),
     /// Collateral balance for (project_id, token) held by this contract (#128).
     Collateral(u32, Address),
     /// Reputation score (0-100) for a project creator (#46).

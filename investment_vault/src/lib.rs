@@ -159,11 +159,10 @@ impl InvestmentVault {
         env.storage()
             .persistent()
             .set(&VaultKey::TotalInvestments, &0i128);
+        // CachedTotalAssets lives in instance storage: read on almost every call,
+        // auto-bumped with the instance TTL, no separate rent needed (#85).
         env.storage()
-            .persistent()
-            .set(&VaultKey::CachedExpectedReturns, &0i128);
-        env.storage()
-            .persistent()
+            .instance()
             .set(&VaultKey::CachedTotalAssets, &0i128);
         Base::set_metadata(
             &env,
@@ -277,7 +276,7 @@ impl InvestmentVault {
         let total = liquid + investments + expected;
 
         env.storage()
-            .persistent()
+            .instance()
             .set(&VaultKey::CachedTotalAssets, &total);
         total
     }
@@ -381,14 +380,14 @@ impl InvestmentVault {
             &(prev_dep + usdc_amount),
         );
 
-        // Update cached total assets: liquid increases by full usdc_amount (#81)
+        // Update cached total assets: liquid increases by full usdc_amount (#81, #85)
         let cached_ta: i128 = env
             .storage()
-            .persistent()
+            .instance()
             .get(&VaultKey::CachedTotalAssets)
             .unwrap_or(0);
         env.storage()
-            .persistent()
+            .instance()
             .set(&VaultKey::CachedTotalAssets, &(cached_ta + usdc_amount));
 
         Base::mint(&env, &from, shares);
@@ -495,14 +494,14 @@ impl InvestmentVault {
 
         Base::burn(&env, &from, shares_amount);
 
-        // Update cached total assets: liquid decreases by usdc_returned (#81)
+        // Update cached total assets: liquid decreases by usdc_returned (#81, #85)
         let cached_ta: i128 = env
             .storage()
-            .persistent()
+            .instance()
             .get(&VaultKey::CachedTotalAssets)
             .unwrap_or(0);
         env.storage()
-            .persistent()
+            .instance()
             .set(&VaultKey::CachedTotalAssets, &(cached_ta - usdc_returned));
 
         soroban_sdk::token::TokenClient::new(&env, &usdc_sac).transfer(
@@ -576,15 +575,15 @@ impl InvestmentVault {
             env.storage().persistent().set(&VaultKey::QueueHead, &idx);
         }
 
-        // Update cached total assets: liquid decreased by total_paid (#81)
+        // Update cached total assets: liquid decreased by total_paid (#81, #85)
         if total_paid > 0 {
             let cached_ta: i128 = env
                 .storage()
-                .persistent()
+                .instance()
                 .get(&VaultKey::CachedTotalAssets)
                 .unwrap_or(0);
             env.storage()
-                .persistent()
+                .instance()
                 .set(&VaultKey::CachedTotalAssets, &(cached_ta - total_paid));
         }
 
@@ -657,14 +656,14 @@ impl InvestmentVault {
             &claimable,
         );
 
-        // Update cached total assets: liquid decreases by claimable (#81)
+        // Update cached total assets: liquid decreases by claimable (#81, #85)
         let cached_ta: i128 = env
             .storage()
-            .persistent()
+            .instance()
             .get(&VaultKey::CachedTotalAssets)
             .unwrap_or(0);
         env.storage()
-            .persistent()
+            .instance()
             .set(&VaultKey::CachedTotalAssets, &(cached_ta - claimable));
 
         events::yield_claimed(&env, &from, claimable);
@@ -1427,20 +1426,17 @@ fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
     if amount <= 0 {
         panic_with_error!(&env, VaultError::AmountNotPositive);
     }
+    // IDs start at 1; reject 0 before the cross-contract call (#87).
+    if project_id == 0 {
+        panic_with_error!(&env, VaultError::ProjectNotFound);
+    }
 
     let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
     let registry = registry_interface::Client::new(&env, &registry_addr);
 
-    // Block new investments when the registry is paused (#72).
-    if registry.is_paused() {
-        panic_with_error!(&env, VaultError::RegistryPaused);
-    }
-
-    let total_projects = registry.total_projects();
-    if project_id == 0 || project_id > total_projects {
-        panic_with_error!(&env, VaultError::ProjectNotFound);
-    }
-
+    // Removed total_projects() call — get_project() panics with ProjectNotFound
+    // if the ID is unknown, so a separate bounds-check cross-contract call is
+    // redundant and adds significant gas overhead (#87).
     let project = registry.get_project(&project_id);
 
     let min_credit: u32 = env

@@ -24,10 +24,7 @@ mod types;
 mod storage;
 mod logic;
 
-pub use types::{CertificationStatus, DataKey, ProjectData, Proposal, RegistryError, ScoreHistoryEntry};
-
-/// Maximum number of score history entries retained per project (ring buffer) (#123).
-const MAX_SCORE_HISTORY: u32 = 50;
+pub use types::{ArchiveSummary, CertificationStatus, DataKey, ProjectData, Proposal, RegistryError};
 
 /// Minimum voting period in seconds (~1 day at 5s/ledger, ≈ 17280 ledgers) (#134).
 const MIN_VOTING_PERIOD: u64 = 86_400;
@@ -235,6 +232,50 @@ impl ProjectRegistry {
             .persistent()
             .remove(&DataKey::Project(project_id));
         events::project_deleted(&env, project_id);
+    }
+
+    /// Compact an archived project's storage to a minimal `ArchiveSummary` (#73).
+    ///
+    /// The full `ProjectData` (up to ~580 bytes) is removed and replaced with an
+    /// `ArchiveSummary` (~52 bytes), significantly reducing ongoing rent costs.
+    /// The project must already be archived via `archive_project`.
+    /// After compaction, `get_project(id)` returns `ProjectNotFound`; use
+    /// `get_archive_summary(id)` to retrieve the compact historical record.
+    #[only_owner]
+    pub fn compact_archive(env: Env, project_id: u32) {
+        require_current_state(&env);
+        let project: ProjectData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Project(project_id))
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+        if !project.archived {
+            panic_with_error!(&env, RegistryError::ProjectNotArchived);
+        }
+        let summary = ArchiveSummary {
+            owner: project.owner,
+            final_credit_quality: project.credit_quality,
+            final_green_impact: project.green_impact,
+            maturity_date: project.maturity_date,
+            certification_status: project.certification_status,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Arch(project_id), &summary);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Project(project_id));
+        events::project_compacted(&env, project_id);
+    }
+
+    /// Return the compact archive summary for a compacted project (#73).
+    /// Panics with `ProjectNotFound` if no compact record exists for `id`.
+    pub fn get_archive_summary(env: Env, project_id: u32) -> ArchiveSummary {
+        require_current_state(&env);
+        env.storage()
+            .persistent()
+            .get(&DataKey::Arch(project_id))
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound))
     }
 
     /// Return the `ProjectData` for `id`. Panics with `ProjectNotFound` if the ID is unknown.
