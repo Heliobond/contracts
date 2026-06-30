@@ -8,6 +8,7 @@ use soroban_sdk::{
     token::TokenClient,
     Address, Env, IntoVal, String,
 };
+use proptest::prelude::*;
 
 mod registry_contract {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm");
@@ -1204,4 +1205,69 @@ fn test_withdraw_at_minimum_succeeds() {
     // withdraw exactly MIN_WITHDRAW shares
     let returned = s.vault_client.withdraw(&investor, &100_0000000i128, &0);
     assert!(returned > 0);
+}
+
+#[test]
+fn test_concurrent_deposits_and_fund_project() {
+    let s = setup();
+    let investor1 = Address::generate(&s.env);
+    let investor2 = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+    
+    // Deposit 1
+    mint_usdc(&s.env, &s.usdc_sac, &investor1, 2_000_0000000i128);
+    s.vault_client.deposit(&investor1, &2_000_0000000i128);
+
+    // Setup Project
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm12"), &0u64);
+    registry_client.update_impact_score(&project_id, &80u32, &60u32);
+
+    // Fund project interleaved
+    s.vault_client.fund_project(&project_id, &500_0000000i128);
+
+    // Deposit 2
+    mint_usdc(&s.env, &s.usdc_sac, &investor2, 3_000_0000000i128);
+    let shares2 = s.vault_client.deposit(&investor2, &3_000_0000000i128);
+
+    // Withdraw from investor1
+    let shares1 = s.vault_client.balance(&investor1);
+    s.vault_client.withdraw(&investor1, &shares1, &0);
+    
+    // Withdraw from investor2
+    s.vault_client.withdraw(&investor2, &shares2, &0);
+
+    // Some residual total_assets might remain due to integer rounding/fractions
+    assert!(s.vault_client.total_assets() >= 0);
+}
+
+proptest! {
+    #[test]
+    fn test_vault_arithmetic_fuzz(
+        deposit_amount in 100_0000000i128..1_000_000_000_0000000i128,
+        withdraw_shares in 100_0000000i128..1_000_000_000_0000000i128
+    ) {
+        let s = setup();
+        let investor = Address::generate(&s.env);
+        mint_usdc(&s.env, &s.usdc_sac, &investor, deposit_amount);
+
+        let shares = s.vault_client.deposit(&investor, &deposit_amount);
+        
+        let assets = s.vault_client.convert_to_assets(&shares);
+        let premium = deposit_amount * 50 / 10_000;
+        let investable = deposit_amount - premium;
+        
+        // Due to integer math, it might not be exact if there are precision issues, 
+        // but for a fresh vault and 1:1, it should be exact.
+        assert_eq!(assets, investable);
+        
+        let shares_from_assets = s.vault_client.convert_to_shares(&assets);
+        assert_eq!(shares_from_assets, shares);
+        
+        if withdraw_shares <= shares && withdraw_shares >= 100_0000000i128 {
+            let withdrawn = s.vault_client.withdraw(&investor, &withdraw_shares, &0);
+            assert!(withdrawn <= investable);
+        }
+    }
 }

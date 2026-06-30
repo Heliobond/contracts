@@ -784,6 +784,98 @@ fn test_set_whitelister_is_admin_only() {
     client.set_whitelister(&new_wl);
 }
 
+#[test]
+fn test_update_impact_score_boundary_values() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+
+    // Score of exactly 0
+    client.update_impact_score(&id, &0u32, &0u32);
+    let mut project = client.get_project(&id);
+    assert_eq!(project.credit_quality, 0);
+    assert_eq!(project.green_impact, 0);
+
+    // Score of exactly 100
+    client.update_impact_score(&id, &100u32, &100u32);
+    project = client.get_project(&id);
+    assert_eq!(project.credit_quality, 100);
+    assert_eq!(project.green_impact, 100);
+}
+
+#[test]
+#[should_panic(expected = "Scores must be between 0 and 100")]
+fn test_update_impact_score_exceeds_100_panics_credit_quality() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+
+    client.update_impact_score(&id, &101u32, &50u32);
+}
+
+#[test]
+#[should_panic(expected = "Scores must be between 0 and 100")]
+fn test_update_impact_score_exceeds_100_panics_green_impact() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+
+    client.update_impact_score(&id, &50u32, &101u32);
+}
+
+#[test]
+#[should_panic(expected = "Scores must be between 0 and 100")]
+fn test_update_impact_score_max_value_panics() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64);
+
+    client.update_impact_score(&id, &u32::MAX, &50u32);
+}
+
+#[test]
+fn test_multiple_creators_sequential_ids() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator1 = Address::generate(&env);
+    let creator2 = Address::generate(&env);
+    let creator3 = Address::generate(&env);
+    
+    client.set_whitelist(&creator1, &true);
+    client.set_whitelist(&creator2, &true);
+    client.set_whitelist(&creator3, &true);
+
+    let id1 = client.create_project(&creator1, &String::from_str(&env, "ipfs://Qm1"), &0u64);
+    let id2 = client.create_project(&creator2, &String::from_str(&env, "ipfs://Qm2"), &0u64);
+    let id3 = client.create_project(&creator1, &String::from_str(&env, "ipfs://Qm3"), &0u64);
+    
+    // Revoke whitelist for creator2, shouldn't affect existing projects
+    client.set_whitelist(&creator2, &false);
+    let id4 = client.create_project(&creator3, &String::from_str(&env, "ipfs://Qm4"), &0u64);
+
+    assert_eq!(id1, 1);
+    assert_eq!(id2, 2);
+    assert_eq!(id3, 3);
+    assert_eq!(id4, 4);
+
+    let p1 = client.get_project(&id1);
+    assert_eq!(p1.owner, creator1);
+
+    let p2 = client.get_project(&id2);
+    assert_eq!(p2.owner, creator2);
+    
+    let p3 = client.get_project(&id3);
+    assert_eq!(p3.owner, creator1);
+
+    let p4 = client.get_project(&id4);
+    assert_eq!(p4.owner, creator3);
+
+    assert_eq!(client.total_projects(), 4);
+}
+
 // Integration: full Heliobond flow across both contracts
 mod integration {
     use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, String};
