@@ -1,5 +1,14 @@
 use soroban_sdk::{contracterror, contracttype, Address, String};
 
+/// A timestamped snapshot of a project's scores, for on-chain history tracking (#123).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScoreHistoryEntry {
+    pub timestamp: u64,
+    pub credit_quality: u32,
+    pub green_impact: u32,
+}
+
 /// Structured error codes for the ProjectRegistry contract (#75).
 /// Variant values are stable — never reorder or renumber after deployment,
 /// as on-chain callers may inspect the numeric code.
@@ -73,6 +82,8 @@ pub enum RegistryError {
     UnsupportedStateVersion = 32,
     /// Score update requested too soon after previous update.
     UpdateTooFrequent = 33,
+    /// Contract is paused; state-mutating operations are not allowed (#72).
+    Paused = 34,
 }
 
 /// Certification state for a green project (#130).
@@ -143,4 +154,10 @@ pub enum DataKey {
     MultiSigSigners,
     /// Number of approvals required from MultiSigSigners. 0 disables multi-sig.
     MultiSigThreshold,
+    /// Score history ring-buffer slot for (project_id, slot_index) (#123).
+    ScoreHistorySlot(u32, u32),
+    /// Total score updates ever written for a project (ring-buffer counter) (#123).
+    ScoreHistoryTotal(u32),
+    /// Circuit breaker pause state (#72).
+    Paused,
 }

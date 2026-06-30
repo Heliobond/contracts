@@ -293,6 +293,22 @@ pub fn reputation_updated(env: &Env, creator: &Address, score: u32) {
     .publish(env);
 }
 
+/// Emitted when the registry is paused (#72).
+#[contractevent]
+pub struct RegistryPaused {}
+
+/// Emitted when the registry is unpaused (#72).
+#[contractevent]
+pub struct RegistryUnpaused {}
+
+pub fn registry_paused(env: &Env) {
+    RegistryPaused {}.publish(env);
+}
+
+pub fn registry_unpaused(env: &Env) {
+    RegistryUnpaused {}.publish(env);
+}
+
 /// Emitted when the admin replaces the whitelister address (#76).
 #[contractevent]
 pub struct WhitelisterChanged {

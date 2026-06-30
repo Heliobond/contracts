@@ -1,3 +1,5 @@
+extern crate std;
+
 #[test]
 fn test_wasm_snapshot() {
     use sha2::{Sha256, Digest};
@@ -5,7 +7,7 @@ fn test_wasm_snapshot() {
     if !wasm.is_empty() {
         let mut hasher = Sha256::new();
         hasher.update(&wasm);
-        let hash = format!("{:x}", hasher.finalize());
+        let hash = std::format!("{:x}", hasher.finalize());
         std::println!("WASM Hash: {}", hash);
         std::fs::write("test_snapshots/wasm_hash.txt", hash).unwrap();
     }

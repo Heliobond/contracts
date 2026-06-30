@@ -1242,6 +1242,84 @@ fn test_concurrent_deposits_and_fund_project() {
     assert!(s.vault_client.total_assets() >= 0);
 }
 
+// ── Circuit breaker tests (#72) ────────────────────────────────────────────────
+
+#[test]
+fn test_vault_is_paused_getter_default_false() {
+    let s = setup();
+    assert!(!s.vault_client.is_paused());
+}
+
+#[test]
+fn test_vault_pause_and_unpause() {
+    let s = setup();
+    s.vault_client.pause();
+    assert!(s.vault_client.is_paused());
+    s.vault_client.unpause();
+    assert!(!s.vault_client.is_paused());
+}
+
+#[test]
+#[should_panic]
+fn test_deposit_blocked_when_vault_paused() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.pause();
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+}
+
+// ── Storage compaction tests (#88) ────────────────────────────────────────────
+
+#[test]
+fn test_compact_storage_removes_zero_project_investment() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let deposit = 1_000_0000000i128;
+    mint_usdc(&s.env, &s.usdc_sac, &investor, deposit);
+    s.vault_client.deposit(&investor, &deposit);
+
+    // Create a project in the registry and fund it.
+    // Available for deployment = liquid(1000) - insurance_reserve(5) = 995 USDC.
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&s.admin, &true);
+    let pid = registry_client.create_project(
+        &s.admin,
+        &soroban_sdk::String::from_str(&s.env, "ipfs://QmCompact"),
+        &0u64,
+    );
+    let fund_amount = 500_0000000i128; // 500 USDC, within available limit
+    s.vault_client.fund_project(&pid, &fund_amount);
+    assert_eq!(s.vault_client.get_project_investment(&pid), fund_amount);
+
+    // compact_storage should find 0 removals (entry has a non-zero value)
+    let removed = s.vault_client.compact_storage();
+    assert_eq!(removed, 0u32);
+}
+
+#[test]
+fn test_get_project_investment_zero_for_unfunded() {
+    let s = setup();
+    assert_eq!(s.vault_client.get_project_investment(&1u32), 0i128);
+    assert_eq!(s.vault_client.get_project_investment(&999u32), 0i128);
+}
+
+// ── Migration tests (#64) ──────────────────────────────────────────────────────
+
+#[test]
+fn test_vault_state_version() {
+    let s = setup();
+    assert_eq!(s.vault_client.state_version(), 1u32);
+    assert_eq!(s.vault_client.stored_state_version(), 1u32);
+}
+
+#[test]
+#[should_panic]
+fn test_vault_migrate_state_rejects_wrong_version() {
+    let s = setup();
+    s.vault_client.migrate_state(&0u32);
+}
+
 proptest! {
     #[test]
     fn test_vault_arithmetic_fuzz(
@@ -1253,21 +1331,20 @@ proptest! {
         mint_usdc(&s.env, &s.usdc_sac, &investor, deposit_amount);
 
         let shares = s.vault_client.deposit(&investor, &deposit_amount);
-        
+
+        // Insurance premium stays in vault USDC balance; total_assets includes it.
+        // shares = investable (1:1 first deposit), total_assets = deposit_amount,
+        // so convert_to_assets(shares) = shares * deposit_amount / shares = deposit_amount.
         let assets = s.vault_client.convert_to_assets(&shares);
-        let premium = deposit_amount * 50 / 10_000;
-        let investable = deposit_amount - premium;
-        
-        // Due to integer math, it might not be exact if there are precision issues, 
-        // but for a fresh vault and 1:1, it should be exact.
-        assert_eq!(assets, investable);
-        
+        assert_eq!(assets, deposit_amount);
+
+        // Round-tripping through convert_to_shares must recover the original shares.
         let shares_from_assets = s.vault_client.convert_to_shares(&assets);
         assert_eq!(shares_from_assets, shares);
-        
+
         if withdraw_shares <= shares && withdraw_shares >= 100_0000000i128 {
             let withdrawn = s.vault_client.withdraw(&investor, &withdraw_shares, &0);
-            assert!(withdrawn <= investable);
+            assert!(withdrawn <= deposit_amount);
         }
     }
 }

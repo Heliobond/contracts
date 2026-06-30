@@ -24,7 +24,10 @@ mod types;
 mod storage;
 mod logic;
 
-pub use types::{CertificationStatus, DataKey, ProjectData, Proposal, RegistryError};
+pub use types::{CertificationStatus, DataKey, ProjectData, Proposal, RegistryError, ScoreHistoryEntry};
+
+/// Maximum number of score history entries retained per project (ring buffer) (#123).
+const MAX_SCORE_HISTORY: u32 = 50;
 
 /// Minimum voting period in seconds (~1 day at 5s/ledger, ≈ 17280 ledgers) (#134).
 const MIN_VOTING_PERIOD: u64 = 86_400;
@@ -93,6 +96,7 @@ impl ProjectRegistry {
     /// Grant or revoke project-creation rights for `account`.
     /// Only the whitelister address (set at construction) may call this.
     pub fn set_whitelist(env: Env, account: Address, status: bool) {
+        require_not_paused(&env);
         require_current_state(&env);
         let whitelister: Address = env.storage().instance().get(&DataKey::Whitelister).unwrap();
         whitelister.require_auth();
@@ -105,6 +109,7 @@ impl ProjectRegistry {
     /// Create a new project. `maturity_date` is a Unix timestamp (seconds);
     /// pass 0 to create an open-ended project (#127).
     pub fn create_project(env: Env, creator: Address, uri: String, maturity_date: u64) -> u32 {
+        require_not_paused(&env);
         require_current_state(&env);
         creator.require_auth();
         let is_whitelisted: bool = env
@@ -256,6 +261,7 @@ impl ProjectRegistry {
     /// No-op if the new scores are identical to the existing ones.
     #[only_owner]
     pub fn update_impact_score(env: Env, project_id: u32, credit_quality: u32, green_impact: u32) {
+        require_not_paused(&env);
         require_multisig_disabled(&env);
         update_impact_score_internal(env, project_id, credit_quality, green_impact);
     }
@@ -267,6 +273,7 @@ impl ProjectRegistry {
         green_impact: u32,
         approvals: Vec<Address>,
     ) {
+        require_not_paused(&env);
         require_admin_approval(&env, approvals);
         update_impact_score_internal(env, project_id, credit_quality, green_impact);
     }
@@ -278,6 +285,7 @@ impl ProjectRegistry {
         project_id: u32,
         status: CertificationStatus,
     ) {
+        require_not_paused(&env);
         caller.require_auth();
         let whitelister: Address = env.storage().instance().get(&DataKey::Whitelister).unwrap();
         let owner: Address = stellar_access::ownable::get_owner(&env).unwrap();
@@ -367,6 +375,7 @@ impl ProjectRegistry {
         description: String,
         voting_duration_secs: u64,
     ) -> u32 {
+        require_not_paused(&env);
         require_current_state(&env);
         proposer.require_auth();
         if voting_duration_secs < MIN_VOTING_PERIOD {
@@ -406,6 +415,7 @@ impl ProjectRegistry {
     /// supplying an inflated weight enables vote stuffing.
     /// `support = true` = vote for; `support = false` = vote against.
     pub fn cast_vote(env: Env, voter: Address, proposal_id: u32, support: bool, weight: i128) {
+        require_not_paused(&env);
         require_current_state(&env);
         voter.require_auth();
         if weight <= 0 {
@@ -473,6 +483,7 @@ impl ProjectRegistry {
     /// update both scores simultaneously (#6).
     #[only_owner]
     pub fn update_credit_quality_score(env: Env, project_id: u32, credit_quality: u32) {
+        require_not_paused(&env);
         if credit_quality > 100 {
             panic_with_error!(&env, RegistryError::CreditQualityOutOfRange);
         }
@@ -483,6 +494,9 @@ impl ProjectRegistry {
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
 
         let old_cq = project.credit_quality;
+        if old_cq == credit_quality {
+            return;
+        }
         let old_rate = compute_rate(project.credit_quality, project.green_impact);
         project.credit_quality = credit_quality;
         project.last_update_timestamp = env.ledger().timestamp();
@@ -501,6 +515,7 @@ impl ProjectRegistry {
             old_rate,
             new_rate,
         );
+        append_score_history(&env, project_id, credit_quality, project.green_impact);
     }
 
     /// Return a proposal by ID. Panics with `ProposalNotFound` if unknown.
@@ -523,6 +538,7 @@ impl ProjectRegistry {
         token: Address,
         amount: i128,
     ) {
+        require_not_paused(&env);
         require_current_state(&env);
         depositor.require_auth();
         if amount <= 0 {
@@ -583,7 +599,7 @@ impl ProjectRegistry {
             panic_with_error!(&env, RegistryError::NoCollateral);
         }
 
-        env.storage().persistent().set(&key, &0i128);
+        env.storage().persistent().remove(&key);
         TokenClient::new(&env, &token).transfer(&env.current_contract_address(), &caller, &balance);
 
         events::collateral_released(&env, project_id, &token, &caller, balance);
@@ -664,6 +680,7 @@ impl ProjectRegistry {
     /// Reputation reflects track record: successful funded projects, repayments, scores.
     /// Emits `ReputationUpdated`.
     pub fn set_creator_reputation(env: Env, caller: Address, creator: Address, score: u32) {
+        require_not_paused(&env);
         require_current_state(&env);
         caller.require_auth();
         if score > 100 {
@@ -731,6 +748,94 @@ impl ProjectRegistry {
     pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
+
+    // ── Circuit breaker (#72) ──────────────────────────────────────────────────
+
+    /// Pause the registry. Admin-only. Blocks all state-mutating user operations.
+    /// Getters and admin management functions (upgrade, migrate_state) remain available.
+    #[only_owner]
+    pub fn pause(env: Env) {
+        env.storage().instance().set(&DataKey::Paused, &true);
+        events::registry_paused(&env);
+    }
+
+    /// Unpause the registry. Admin-only.
+    #[only_owner]
+    pub fn unpause(env: Env) {
+        env.storage().instance().set(&DataKey::Paused, &false);
+        events::registry_unpaused(&env);
+    }
+
+    /// Return whether the registry is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    // ── Score history (#123) ───────────────────────────────────────────────────
+
+    /// Return the score history for `project_id` in chronological order (oldest first).
+    /// Retains at most MAX_SCORE_HISTORY (50) entries via a ring buffer; older entries are
+    /// overwritten. Returns an empty vec if no scores have been recorded yet.
+    pub fn get_score_history(env: Env, project_id: u32) -> Vec<ScoreHistoryEntry> {
+        require_current_state(&env);
+        let _: ProjectData = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Project(project_id))
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+
+        let total: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ScoreHistoryTotal(project_id))
+            .unwrap_or(0);
+
+        let count = if total < MAX_SCORE_HISTORY { total } else { MAX_SCORE_HISTORY };
+        // Oldest slot: when buffer is full it's total%MAX, otherwise it's 0.
+        let start_slot = if total >= MAX_SCORE_HISTORY { total % MAX_SCORE_HISTORY } else { 0 };
+
+        let mut result = Vec::new(&env);
+        for i in 0..count {
+            let slot = (start_slot + i) % MAX_SCORE_HISTORY;
+            if let Some(entry) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, ScoreHistoryEntry>(&DataKey::ScoreHistorySlot(project_id, slot))
+            {
+                result.push_back(entry);
+            }
+        }
+        result
+    }
+
+    // ── Storage compaction (#88) ───────────────────────────────────────────────
+
+    /// Remove accumulated zero-value persistent storage entries. Admin-only.
+    /// Currently removes collateral keys that were set to zero before the lazy-cleanup
+    /// fix (release_collateral and liquidate_collateral now call remove instead of
+    /// set-to-zero). Pass the `project_ids` to inspect and a `tokens` list for each.
+    /// Returns the number of entries removed.
+    #[only_owner]
+    pub fn compact_storage(env: Env, project_ids: Vec<u32>, tokens: Vec<Address>) -> u32 {
+        require_current_state(&env);
+        let mut removed: u32 = 0;
+        for pid in project_ids.iter() {
+            for token in tokens.iter() {
+                let key = DataKey::Collateral(pid, token.clone());
+                if env.storage().persistent().has(&key) {
+                    let val: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+                    if val == 0 {
+                        env.storage().persistent().remove(&key);
+                        removed += 1;
+                    }
+                }
+            }
+        }
+        removed
+    }
 }
 
 fn update_impact_score_internal(env: Env, project_id: u32, credit_quality: u32, green_impact: u32) {
@@ -770,6 +875,7 @@ fn update_impact_score_internal(env: Env, project_id: u32, credit_quality: u32, 
         old_rate,
         new_rate,
     );
+    append_score_history(&env, project_id, credit_quality, green_impact);
 }
 
 #[allow(dead_code)]
@@ -783,6 +889,9 @@ fn update_credit_quality_score_internal(env: Env, project_id: u32, credit_qualit
         .get(&DataKey::Project(project_id))
         .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
     let old_cq = project.credit_quality;
+    if old_cq == credit_quality {
+        return;
+    }
     let old_rate = compute_rate(project.credit_quality, project.green_impact);
     project.credit_quality = credit_quality;
     let new_rate = compute_rate(credit_quality, project.green_impact);
@@ -809,7 +918,7 @@ fn liquidate_collateral_internal(env: Env, project_id: u32, token: Address, reci
         panic_with_error!(&env, RegistryError::NoCollateral);
     }
 
-    env.storage().persistent().set(&key, &0i128);
+    env.storage().persistent().remove(&key);
     TokenClient::new(&env, &token).transfer(&env.current_contract_address(), &recipient, &balance);
 
     events::collateral_liquidated(&env, project_id, &token, &recipient, balance);
@@ -911,6 +1020,38 @@ fn require_current_state(env: &Env) {
     if current != 0 && current != STATE_VERSION {
         panic_with_error!(env, RegistryError::UnsupportedStateVersion);
     }
+}
+
+fn require_not_paused(env: &Env) {
+    let paused: bool = env
+        .storage()
+        .instance()
+        .get(&DataKey::Paused)
+        .unwrap_or(false);
+    if paused {
+        panic_with_error!(env, RegistryError::Paused);
+    }
+}
+
+/// Append a score snapshot to the per-project ring buffer (#123).
+fn append_score_history(env: &Env, project_id: u32, credit_quality: u32, green_impact: u32) {
+    let total: u32 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::ScoreHistoryTotal(project_id))
+        .unwrap_or(0);
+    let slot = total % MAX_SCORE_HISTORY;
+    env.storage().persistent().set(
+        &DataKey::ScoreHistorySlot(project_id, slot),
+        &ScoreHistoryEntry {
+            timestamp: env.ledger().timestamp(),
+            credit_quality,
+            green_impact,
+        },
+    );
+    env.storage()
+        .persistent()
+        .set(&DataKey::ScoreHistoryTotal(project_id), &(total + 1));
 }
 
 #[contractimpl(contracttrait)]
