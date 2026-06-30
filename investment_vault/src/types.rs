@@ -75,6 +75,8 @@ pub enum VaultError {
     SlippageLimitExceeded = 33,
     /// The vault is currently paused.
     Paused = 34,
+    /// The linked ProjectRegistry is paused; new investments are not allowed (#72).
+    RegistryPaused = 35,
 }
 
 #[contracttype]

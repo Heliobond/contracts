@@ -935,6 +935,15 @@ impl InvestmentVault {
         }
     }
 
+    /// Return the total USDC amount currently invested in `project_id` from this vault.
+    pub fn get_project_investment(env: Env, project_id: u32) -> i128 {
+        require_current_state(&env);
+        env.storage()
+            .persistent()
+            .get(&VaultKey::ProjectInvestment(project_id))
+            .unwrap_or(0)
+    }
+
     // ── Bridge ────────────────────────────────────────────────────────────────
 
     #[only_owner]
@@ -1670,6 +1679,43 @@ impl InvestmentVault {
     pub fn unpause(env: Env) {
         env.storage().instance().set(&VaultKey::Paused, &false);
         events::unpaused(&env);
+    }
+
+    /// Return whether the vault is currently paused (#72).
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&VaultKey::Paused)
+            .unwrap_or(false)
+    }
+
+    // ── Storage compaction (#88) ───────────────────────────────────────────────
+
+    /// Remove zero-value `ProjectInvestment` persistent storage entries. Admin-only.
+    ///
+    /// After a project fully repays, its investment counter drops to 0 but the storage
+    /// slot remains. This function iterates projects 1..=`total_projects` and removes
+    /// any zero entries, reducing ongoing rent costs.
+    /// Returns the number of entries removed.
+    #[only_owner]
+    pub fn compact_storage(env: Env) -> u32 {
+        require_current_state(&env);
+        let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
+        let registry = registry_interface::Client::new(&env, &registry_addr);
+        let total = registry.total_projects();
+
+        let mut removed: u32 = 0;
+        for id in 1..=total {
+            let key = VaultKey::ProjectInvestment(id);
+            if env.storage().persistent().has(&key) {
+                let val: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+                if val == 0 {
+                    env.storage().persistent().remove(&key);
+                    removed += 1;
+                }
+            }
+        }
+        removed
     }
 
     #[only_owner]
