@@ -6,5 +6,23 @@
   "investment_vault.deposit": {
     "instructions": 1500000,
     "fee": 3000000
+  },
+  "investment_vault.fund_project": {
+    "cross_contract_calls": 1,
+    "cross_contract_call_note": "One get_project() call; total_projects() removed (#87). Saves ~1 cross-contract call overhead per invocation.",
+    "instructions": 2000000,
+    "fee": 4000000
+  },
+  "storage_key_sizes": {
+    "note": "Key bytes are XDR Symbol overhead + variant name length (#82). Shorter names reduce per-entry rent.",
+    "project_registry.Project(u32)": { "key_bytes": 12, "value_bytes_typical": 132, "value_bytes_max": 580 },
+    "project_registry.Arch(u32)": { "key_bytes": 9, "value_bytes": 52, "note": "Compact archive key — 4-char name demonstrates compact key pattern (#73, #82)" },
+    "project_registry.Whitelist(Address)": { "key_bytes": 42, "value_bytes": 1 },
+    "project_registry.HasVoted(u32,Address)": { "key_bytes": 47, "value_bytes": 1 },
+    "project_registry.Collateral(u32,Address)": { "key_bytes": 47, "value_bytes": 16 },
+    "investment_vault.ProjectInvestment(u32)": { "key_bytes": 25, "value_bytes": 16 },
+    "investment_vault.YieldDebt(Address)": { "key_bytes": 42, "value_bytes": 16 },
+    "investment_vault.TotalDeposited(Address)": { "key_bytes": 46, "value_bytes": 16 },
+    "investment_vault.CachedTotalAssets": { "key_bytes": 21, "value_bytes": 16, "storage_tier": "instance", "note": "Moved to instance (#85): read/written on every state change, no separate rent needed" }
   }
 }
