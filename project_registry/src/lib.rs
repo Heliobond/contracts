@@ -21,6 +21,8 @@ const MAX_MULTISIG_SIGNERS: u32 = 10;
 
 mod events;
 mod types;
+mod storage;
+mod logic;
 
 pub use types::{CertificationStatus, DataKey, ProjectData, Proposal, RegistryError};
 
@@ -916,3 +918,6 @@ impl Ownable for ProjectRegistry {}
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod wasm_test;

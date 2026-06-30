@@ -72,6 +72,8 @@ mod composability;
 mod events;
 mod types;
 mod wormhole;
+mod storage;
+mod logic;
 
 mod registry_interface {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm");
@@ -1698,3 +1700,6 @@ impl Ownable for InvestmentVault {}
 
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod wasm_test;
