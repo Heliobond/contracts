@@ -7,9 +7,7 @@ use soroban_sdk::{
     Address, Env, IntoVal, String,
 };
 
-mod vault_contract {
-    soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/investment_vault.wasm");
-}
+use investment_vault::{InvestmentVault, InvestmentVaultClient};
 
 fn setup() -> (Env, Address, Address, ProjectRegistryClient<'static>) {
     let env = Env::default();
@@ -728,8 +726,8 @@ fn test_registry_constructor_deployment_cost_estimate_and_initial_state() {
         fee.total
     );
 
-    let vault_id = env.register(vault_contract::WASM, (&admin, &usdc_sac, &registry_id));
-    let vault = vault_contract::Client::new(&env, &vault_id);
+    let vault_id = env.register(InvestmentVault, (&admin, &usdc_sac, &registry_id));
+    let vault = InvestmentVaultClient::new(&env, &vault_id);
 
     assert_eq!(vault.accepted_asset(), usdc_sac);
     assert_eq!(vault.get_registry(), registry_id);
@@ -878,13 +876,9 @@ fn test_multiple_creators_sequential_ids() {
 
 // Integration: full Heliobond flow across both contracts
 mod integration {
-    use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Address, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, token::StellarAssetClient, Address, Env, String};
 
-    mod vault_contract {
-        soroban_sdk::contractimport!(
-            file = "../target/wasm32v1-none/release/investment_vault.wasm"
-        );
-    }
+    use investment_vault::{InvestmentVault, InvestmentVaultClient};
 
     use super::{ProjectRegistry, ProjectRegistryClient};
 
@@ -908,9 +902,9 @@ mod integration {
         let registry_id = env.register(ProjectRegistry, (&admin, &whitelister));
         let registry = ProjectRegistryClient::new(&env, &registry_id);
 
-        // Deploy vault (using the imported WASM) with constructor
-        let vault_id = env.register(vault_contract::WASM, (&admin, &usdc_sac, &registry_id));
-        let vault = vault_contract::Client::new(&env, &vault_id);
+        // Deploy vault with constructor
+        let vault_id = env.register(InvestmentVault, (&admin, &usdc_sac, &registry_id));
+        let vault = InvestmentVaultClient::new(&env, &vault_id);
 
         // Create a project (no maturity date)
         registry.set_whitelist(&project_creator, &true);
@@ -947,6 +941,9 @@ mod integration {
         // total_assets = 2350, total_supply = 1990
         // returned = 995 * 2350 / 1990 = 1175 USDC (insurance pool is part of total assets)
         let half_shares = shares / 2;
+        env.ledger().with_mut(|li| {
+            li.sequence_number += 1;
+        });
         let returned = vault.withdraw(&investor, &half_shares, &0);
         assert_eq!(returned, 11_750_000_000i128);
 

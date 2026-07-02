@@ -391,6 +391,7 @@ impl InvestmentVault {
             .set(&VaultKey::CachedTotalAssets, &(cached_ta + usdc_amount));
 
         Base::mint(&env, &from, shares);
+        lock_deposit(&env, &from);
         events::deposit(&env, &from, usdc_amount, shares);
 
         shares
@@ -433,6 +434,7 @@ impl InvestmentVault {
     pub fn withdraw(env: Env, from: Address, shares_amount: i128, min_usdc_return: i128) -> i128 {
         require_not_paused(&env);
         require_current_state(&env);
+        check_deposit_lock(&env, &from);
         // Note: from.require_auth() is called inside Base::burn
         if shares_amount <= 0 {
             panic_with_error!(&env, VaultError::SharesNotPositive);
@@ -969,6 +971,7 @@ impl InvestmentVault {
             panic!("amount must be positive");
         }
         Base::mint(&env, &to, amount);
+        lock_deposit(&env, &to);
         events::bridge_mint(&env, &to, amount);
     }
 
@@ -1072,6 +1075,7 @@ impl InvestmentVault {
 
         let to = wormhole::bytes32_to_address(&env, &transfer.recipient);
         Base::mint(&env, &to, transfer.amount);
+        lock_deposit(&env, &to);
         events::bridge_transfer_completed(
             &env,
             transfer.source_chain,
@@ -1667,6 +1671,24 @@ fn require_not_paused(env: &Env) {
     }
 }
 
+fn lock_deposit(env: &Env, address: &Address) {
+    env.storage()
+        .persistent()
+        .set(&VaultKey::LastDeposit(address.clone()), &env.ledger().sequence());
+}
+
+fn check_deposit_lock(env: &Env, address: &Address) {
+    if let Some(last_seq) = env
+        .storage()
+        .persistent()
+        .get::<_, u32>(&VaultKey::LastDeposit(address.clone()))
+    {
+        if env.ledger().sequence() == last_seq {
+            panic_with_error!(env, VaultError::DepositLocked);
+        }
+    }
+}
+
 #[contractimpl]
 impl InvestmentVault {
     #[only_owner]
@@ -1736,6 +1758,7 @@ impl FungibleToken for InvestmentVault {
             panic_with_error!(e, VaultError::TransferToVaultBlocked);
         }
         Base::transfer(e, &from, &to, amount);
+        lock_deposit(e, &to.address());
     }
 }
 
