@@ -24,7 +24,10 @@ mod types;
 mod storage;
 mod logic;
 
-pub use types::{ArchiveSummary, CertificationStatus, DataKey, ProjectData, Proposal, RegistryError};
+pub use types::{ArchiveSummary, CertificationStatus, DataKey, ProjectData, Proposal, RegistryError, ScoreHistoryEntry};
+
+/// Maximum entries in the score history ring buffer (#123).
+const MAX_SCORE_HISTORY: u32 = 50;
 
 /// Minimum voting period in seconds (~1 day at 5s/ledger, ≈ 17280 ledgers) (#134).
 const MIN_VOTING_PERIOD: u64 = 86_400;
