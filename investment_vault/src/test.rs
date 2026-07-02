@@ -3,7 +3,7 @@
 extern crate std;
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Events as _},
+    testutils::{Address as _, Events as _, Ledger as _},
     token::StellarAssetClient,
     token::TokenClient,
     Address, Env, IntoVal, String,
@@ -142,6 +142,9 @@ fn test_withdraw_returns_usdc() {
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
 
     let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
     let returned = s.vault_client.withdraw(&investor, &shares, &0);
 
     assert_eq!(returned, 1_000_0000000i128);
@@ -525,6 +528,9 @@ fn test_full_withdrawal_with_no_investments() {
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
     let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
 
     // Full withdrawal with no outstanding investments drains the vault cleanly
     s.vault_client.withdraw(&investor, &shares, &0);
@@ -554,6 +560,9 @@ fn test_full_withdrawal_blocked_by_outstanding_investments() {
     s.vault_client.fund_project(&project_id, &1_000_0000000i128);
 
     // Full share redemption needs 2000 USDC but only 1000 liquid — must fail
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
     s.vault_client.withdraw(&investor, &shares, &0);
 }
 
@@ -748,6 +757,9 @@ fn test_withdraw_enqueues_when_insufficient_liquidity() {
     s.vault_client.fund_project(&project_id, &490_0000000i128);
 
     // Shares are worth ~1000 USDC but only ~510 USDC is liquid — should enqueue.
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
     let returned = s.vault_client.withdraw(&investor, &shares, &0);
 
     assert_eq!(returned, 0); // queued, not immediate
@@ -775,6 +787,9 @@ fn test_claim_settles_queued_redemption() {
 
     // Queue the withdrawal.
     let owed = s.vault_client.convert_to_assets(&shares);
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
     s.vault_client.withdraw(&investor1, &shares, &0);
 
     // Add liquidity: second investor deposits enough to cover the queued claim.
@@ -818,6 +833,9 @@ fn test_withdraw_emits_event() {
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
     let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
 
     s.vault_client.withdraw(&investor, &shares, &0);
 
@@ -872,6 +890,9 @@ fn test_withdraw_queued_emits_event() {
     s.vault_client.fund_project(&project_id, &490_0000000i128);
 
     // Withdrawal exceeds liquid USDC — should enqueue and emit WithdrawQueued.
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
     let returned = s.vault_client.withdraw(&investor, &shares, &0);
     assert_eq!(returned, 0);
 
@@ -900,6 +921,9 @@ fn test_claim_queued_emits_event() {
         registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64);
     // Fund 490 USDC (49% util) to stay below the 50% graduated withdrawal limit.
     s.vault_client.fund_project(&project_id, &490_0000000i128);
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
     s.vault_client.withdraw(&investor, &shares, &0);
 
     // Restore liquidity so claim() can settle.
@@ -970,6 +994,9 @@ fn test_high_utilization_withdrawal_emits_warning_event() {
 
     // Withdraw a small amount within the utilization limit — warning event should fire.
     let small_shares = 200_0000000i128; // 200 USDC worth of shares
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
     s.vault_client.withdraw(&investor, &small_shares, &0);
 
     // env.events().all() returns events from the most recent invocation only.
@@ -1192,6 +1219,9 @@ fn test_withdraw_below_minimum_panics() {
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
     s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
     // 10 shares is below MIN_WITHDRAW (100 shares)
     s.vault_client.withdraw(&investor, &10_0000000i128, &0);
 }
@@ -1202,6 +1232,9 @@ fn test_withdraw_at_minimum_succeeds() {
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
     s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
     // withdraw exactly MIN_WITHDRAW shares
     let returned = s.vault_client.withdraw(&investor, &100_0000000i128, &0);
     assert!(returned > 0);
@@ -1233,9 +1266,15 @@ fn test_concurrent_deposits_and_fund_project() {
 
     // Withdraw from investor1
     let shares1 = s.vault_client.balance(&investor1);
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
     s.vault_client.withdraw(&investor1, &shares1, &0);
     
     // Withdraw from investor2
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
     s.vault_client.withdraw(&investor2, &shares2, &0);
 
     // Some residual total_assets might remain due to integer rounding/fractions
@@ -1343,8 +1382,62 @@ proptest! {
         assert_eq!(shares_from_assets, shares);
 
         if withdraw_shares <= shares && withdraw_shares >= 100_0000000i128 {
+            s.env.ledger().with_mut(|li| {
+                li.sequence_number += 1;
+            });
             let withdrawn = s.vault_client.withdraw(&investor, &withdraw_shares, &0);
             assert!(withdrawn <= deposit_amount);
         }
     }
 }
+
+#[test]
+#[should_panic]
+fn test_withdrawal_rate_limiting_same_ledger() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    // Try to withdraw in the same ledger sequence -> should panic
+    s.vault_client.withdraw(&investor, &shares, &0);
+}
+
+#[test]
+fn test_withdrawal_rate_limiting_next_ledger() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    // Advance ledger sequence
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+
+    // Try to withdraw in the next ledger sequence -> should succeed
+    let returned = s.vault_client.withdraw(&investor, &shares, &0);
+    assert!(returned > 0);
+}
+
+#[test]
+#[should_panic]
+fn test_withdrawal_rate_limiting_transfer_locked() {
+    let s = setup();
+    let investor1 = Address::generate(&s.env);
+    let investor2 = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor1, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor1, &1_000_0000000i128);
+
+    // Advance sequence for investor1 so they can transfer
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+
+    // Transfer shares from investor1 to investor2
+    s.vault_client.transfer(&investor1, &soroban_sdk::MuxedAddress::from(investor2.clone()), &shares);
+
+    // Try to withdraw from investor2 in the same ledger sequence -> should panic
+    s.vault_client.withdraw(&investor2, &shares, &0);
+}
+

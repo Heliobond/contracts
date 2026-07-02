@@ -18,13 +18,17 @@ const BASE_RATE_BPS: u32 = 1_000;
 /// Maximum rate discount in basis points earned by a perfect-score project (5 %) (#129).
 const MAX_DISCOUNT_BPS: u32 = 500;
 const MAX_MULTISIG_SIGNERS: u32 = 10;
+const MAX_SCORE_HISTORY: u32 = 50;
 
 mod events;
 mod types;
 mod storage;
 mod logic;
 
-pub use types::{ArchiveSummary, CertificationStatus, DataKey, ProjectData, Proposal, RegistryError};
+pub use types::{
+    ArchiveSummary, CertificationStatus, DataKey, ProjectData, Proposal, RegistryError,
+    ScoreHistoryEntry,
+};
 
 /// Minimum voting period in seconds (~1 day at 5s/ledger, ≈ 17280 ledgers) (#134).
 const MIN_VOTING_PERIOD: u64 = 86_400;

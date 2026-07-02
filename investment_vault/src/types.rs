@@ -77,6 +77,8 @@ pub enum VaultError {
     Paused = 34,
     /// The linked ProjectRegistry is paused; new investments are not allowed (#72).
     RegistryPaused = 35,
+    /// Withdrawal requested too soon after deposit.
+    DepositLocked = 36,
 }
 
 #[contracttype]
@@ -138,6 +140,8 @@ pub enum VaultKey {
     MultiSigThreshold,
     /// Circuit breaker pause state.
     Paused,
+    /// Last deposit ledger sequence per address.
+    LastDeposit(Address),
 }
 
 /// Container for wormhole bridge data keys.
