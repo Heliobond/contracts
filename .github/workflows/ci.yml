@@ -180,3 +180,59 @@ jobs:
         with:
           name: contract-abi-${{ github.sha }}
           path: .abi/
+
+  docs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Generate Documentation
+        run: |
+          cargo doc --no-deps --all
+          # Create redirect index.html
+          cat << 'EOF' > target/doc/index.html
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <meta http-equiv="refresh" content="0; url=project_registry/index.html">
+              <title>Heliobond Contracts Documentation</title>
+          </head>
+          <body>
+              <p>Redirecting to <a href="project_registry/index.html">Project Registry documentation</a>...</p>
+              <p>You can also view the <a href="investment_vault/index.html">Investment Vault documentation</a>.</p>
+          </body>
+          </html>
+          EOF
+
+      - name: Upload Documentation Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: contracts-documentation-${{ github.sha }}
+          path: target/doc/
+          retention-days: 14
+
+      - name: Setup Pages
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages Artifact
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/doc
+
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        id: deployment
+        uses: actions/deploy-pages@v4
+
