@@ -1320,6 +1320,25 @@ fn test_vault_migrate_state_rejects_wrong_version() {
     s.vault_client.migrate_state(&0u32);
 }
 
+// ── Ownership transfer event test (#30) ───────────────────────────────────────
+
+#[test]
+fn test_transfer_ownership_emits_event() {
+    let s = setup();
+    let new_owner = Address::generate(&s.env);
+
+    // Initiate transfer; live_until_ledger = 1000 (well beyond current ledger 0).
+    s.vault_client.transfer_ownership(&new_owner, &1000u32);
+
+    let events = s.env.events().all().filter_by_contract(&s.vault_address);
+    // transfer_ownership emits: stellar-access OwnershipTransfer + our OwnershipTransferred.
+    assert_eq!(
+        events.events().len(),
+        2,
+        "transfer_ownership should emit 2 events (stellar-access + project-specific)"
+    );
+}
+
 proptest! {
     #[test]
     fn test_vault_arithmetic_fuzz(

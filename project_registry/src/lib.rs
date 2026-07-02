@@ -3,7 +3,7 @@ use soroban_sdk::{
     contract, contractimpl, panic_with_error, token::Client as TokenClient, Address, Env, String,
     Vec,
 };
-use stellar_access::ownable::{set_owner, Ownable};
+use stellar_access::ownable::{get_owner, set_owner, transfer_ownership as ownable_transfer_ownership, Ownable};
 use stellar_macros::only_owner;
 
 /// Maximum URI length in bytes. Prevents excessively large ledger entries (#119).
@@ -1096,7 +1096,15 @@ fn append_score_history(env: &Env, project_id: u32, credit_quality: u32, green_i
 }
 
 #[contractimpl(contracttrait)]
-impl Ownable for ProjectRegistry {}
+impl Ownable for ProjectRegistry {
+    /// Initiates a 2-step ownership transfer and emits a project-specific
+    /// `OwnershipTransferred` event for auditing (#30).
+    fn transfer_ownership(e: &Env, new_owner: Address, live_until_ledger: u32) {
+        let old_owner = get_owner(e).unwrap_or_else(|| panic!("owner not set"));
+        ownable_transfer_ownership(e, &new_owner, live_until_ledger);
+        events::ownership_transferred(e, &old_owner, &new_owner);
+    }
+}
 
 #[cfg(test)]
 mod test;
