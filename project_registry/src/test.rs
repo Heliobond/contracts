@@ -1136,3 +1136,22 @@ fn test_state_version_matches_stored() {
     assert_eq!(client.state_version(), client.stored_state_version());
 }
 
+// ── Ownership transfer event test (#30) ───────────────────────────────────────
+
+#[test]
+fn test_transfer_ownership_emits_event() {
+    let (env, _admin, _whitelister, client) = setup();
+    let new_owner = Address::generate(&env);
+
+    // Initiate transfer; live_until_ledger = 1000 (well beyond current ledger 0).
+    client.transfer_ownership(&new_owner, &1000u32);
+
+    let events = env.events().all().filter_by_contract(&client.address);
+    // transfer_ownership emits: stellar-access OwnershipTransfer + our OwnershipTransferred.
+    assert_eq!(
+        events.events().len(),
+        2,
+        "transfer_ownership should emit 2 events (stellar-access + project-specific)"
+    );
+}
+

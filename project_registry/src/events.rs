@@ -329,3 +329,20 @@ pub fn project_compacted(env: &Env, project_id: u32) {
     env.events()
         .publish((Symbol::new(env, "project_compacted"),), project_id);
 }
+
+/// Emitted when the admin initiates an ownership transfer (#30).
+#[contractevent]
+pub struct OwnershipTransferred {
+    #[topic]
+    pub old_owner: Address,
+    #[topic]
+    pub new_owner: Address,
+}
+
+pub fn ownership_transferred(env: &Env, old_owner: &Address, new_owner: &Address) {
+    OwnershipTransferred {
+        old_owner: old_owner.clone(),
+        new_owner: new_owner.clone(),
+    }
+    .publish(env);
+}
