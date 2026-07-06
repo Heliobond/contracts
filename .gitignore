@@ -1,3 +1,9 @@
 target/
 issue.md
 pr.md
+
+# Fuzz test snapshots (non-deterministic, generated locally)
+**/test_snapshots/test/*_fuzz.*.json
+
+# Local WASM build hash artifacts
+**/test_snapshots/wasm_hash.txt
