@@ -62,10 +62,17 @@ When impact scores change (via `update_impact_score` or `update_credit_quality_s
 
 For details, see [`docs/NOTIFICATIONS.md`](./docs/NOTIFICATIONS.md).
 
+### Governance Model
+
+The platform uses a role-based administrative design (Owner and Whitelister roles) alongside an on-chain proposal and voting system.
+
+For details, see [`docs/GOVERNANCE.md`](./docs/GOVERNANCE.md).
+
 ### API & Rust Crate Documentation
 
 Rust docs are automatically generated and published via CI:
 * Deployed reference: [https://BuildersWCT.github.io/contracts/](https://BuildersWCT.github.io/contracts/)
+
 
 ### ProjectRegistry
 

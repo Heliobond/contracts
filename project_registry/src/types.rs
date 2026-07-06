@@ -84,7 +84,7 @@ pub enum RegistryError {
     UpdateTooFrequent = 33,
     /// Project must be archived before it can be compacted.
     ProjectNotArchived = 34,
-    /// Contract operations are paused.
+    /// Circuit breaker is active (paused).
     Paused = 35,
 }
 

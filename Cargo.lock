@@ -1146,6 +1146,7 @@ dependencies = [
 name = "project-registry"
 version = "0.1.0"
 dependencies = [
+ "investment-vault",
  "sha2",
  "soroban-sdk",
  "stellar-access",
