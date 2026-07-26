@@ -2,13 +2,13 @@
 #![allow(clippy::inconsistent_digit_grouping)]
 extern crate std;
 use super::*;
+use proptest::prelude::*;
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
     token::StellarAssetClient,
     token::TokenClient,
     Address, BytesN, Env, IntoVal, String,
 };
-use proptest::prelude::*;
 
 mod registry_contract {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm");
@@ -240,12 +240,14 @@ fn test_multisig_batch_fund_projects() {
         &creator1,
         &String::from_str(&s.env, "ipfs://QmBatchFund1"),
         &0u64,
-    &test_metadata_hash(&s.env));
+        &test_metadata_hash(&s.env),
+    );
     let project2 = registry_client.create_project(
         &creator2,
         &String::from_str(&s.env, "ipfs://QmBatchFund2"),
         &0u64,
-    &test_metadata_hash(&s.env));
+        &test_metadata_hash(&s.env),
+    );
 
     s.vault_client.batch_fund_projects(
         &soroban_sdk::vec![
@@ -553,7 +555,8 @@ fn test_vault_constructor_and_registry_reference_initial_state() {
         &project_creator,
         &String::from_str(&env, "ipfs://QmVaultInit"),
         &0u64,
-    &test_metadata_hash(&env));
+        &test_metadata_hash(&env),
+    );
 
     let investor = Address::generate(&env);
     StellarAssetClient::new(&env, &usdc_sac).mint(&investor, &1_000_0000000i128);
@@ -601,8 +604,12 @@ fn test_fund_project_panics_when_fully_depleted() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
 
     // Fund with all deployable USDC: liquid (1000) - insurance_reserve (5) = 995
     s.vault_client.fund_project(&project_id, &995_0000000i128);
@@ -625,8 +632,12 @@ fn test_fund_project_panics_when_amount_exceeds_available() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
 
     // Attempt to fund exactly the full liquid balance — exceeds available by the
     // insurance reserve (0.25 USDC), so must fail.
@@ -644,8 +655,12 @@ fn test_fund_project_partial_funding_succeeds() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
 
     // Two partial fundings that together stay within the deployable amount.
     s.vault_client.fund_project(&project_id, &300_0000000i128);
@@ -667,8 +682,12 @@ fn test_fund_project_second_call_exhausts_remaining_deployable() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
 
     // First call: fund 600 USDC — leaves 400 liquid (5 reserved) → 395 deployable.
     s.vault_client.fund_project(&project_id, &600_0000000i128);
@@ -695,7 +714,8 @@ fn test_withdraw_fails_when_all_usdc_deployed() {
         &creator,
         &soroban_sdk::String::from_str(&s.env, "ipfs://Qm"),
         &0u64,
-    &test_metadata_hash(&s.env));
+        &test_metadata_hash(&s.env),
+    );
     // Fund with all deployable USDC (liquid − insurance = 995); vault liquid drops to 5
     s.vault_client.fund_project(&project_id, &995_0000000i128);
 
@@ -753,7 +773,8 @@ fn test_full_withdrawal_blocked_by_outstanding_investments() {
         &creator,
         &soroban_sdk::String::from_str(&s.env, "ipfs://Qm"),
         &0u64,
-    &test_metadata_hash(&s.env));
+        &test_metadata_hash(&s.env),
+    );
     // Fund 1000 USDC; vault liquid = 1000 but total assets = 2000
     s.vault_client.fund_project(&project_id, &1_000_0000000i128);
 
@@ -948,8 +969,12 @@ fn test_withdraw_enqueues_when_insufficient_liquidity() {
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://test"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://test"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
     // Fund 490 USDC (49% utilization — below the 50% limit threshold so the full
     // withdrawal is allowed but only ~510 USDC is liquid, causing a queue.
     s.vault_client.fund_project(&project_id, &490_0000000i128);
@@ -978,8 +1003,12 @@ fn test_claim_settles_queued_redemption() {
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://test"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://test"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
     // Fund 490 USDC (49% util) to stay below the 50% graduated withdrawal limit.
     s.vault_client.fund_project(&project_id, &490_0000000i128);
 
@@ -1058,8 +1087,12 @@ fn test_fund_project_emits_event() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
     s.vault_client.fund_project(&project_id, &100_0000000i128);
 
     // env.events().all() returns events from the most recent invocation only.
@@ -1082,8 +1115,12 @@ fn test_withdraw_queued_emits_event() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
     // Fund 490 USDC (49% util) to stay below the 50% graduated withdrawal limit.
     s.vault_client.fund_project(&project_id, &490_0000000i128);
 
@@ -1115,8 +1152,12 @@ fn test_claim_queued_emits_event() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
     // Fund 490 USDC (49% util) to stay below the 50% graduated withdrawal limit.
     s.vault_client.fund_project(&project_id, &490_0000000i128);
     s.env.ledger().with_mut(|li| {
@@ -1179,8 +1220,12 @@ fn test_high_utilization_withdrawal_emits_warning_event() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
     // Fund 8000 USDC: liquid = 2000, investments = 8000, utilization = 80%
     // max_withdraw at 80% = 2000 * 25% = 500 USDC — must be > MIN_WITHDRAW (100 USDC)
     s.vault_client.fund_project(&project_id, &8_000_0000000i128);
@@ -1287,8 +1332,12 @@ fn test_fund_project_blocked_below_credit_threshold() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
     // Project has credit_quality=0, green_impact=0 (defaults); require credit >= 50.
     s.vault_client.set_funding_thresholds(&50u32, &0u32);
     s.vault_client.fund_project(&project_id, &100_0000000i128);
@@ -1306,8 +1355,12 @@ fn test_fund_project_blocked_below_green_threshold() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
     // Project has credit_quality=0, green_impact=0; require green >= 30.
     s.vault_client.set_funding_thresholds(&0u32, &30u32);
     s.vault_client.fund_project(&project_id, &100_0000000i128);
@@ -1324,8 +1377,12 @@ fn test_fund_project_allowed_when_thresholds_met() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
     registry_client.update_impact_score(&project_id, &70u32, &80u32);
 
     s.vault_client.set_funding_thresholds(&50u32, &50u32);
@@ -1389,13 +1446,15 @@ fn test_set_trusted_emitter_persists_and_emits_event() {
     let emitter = BytesN::from_array(&s.env, &[3u8; 32]);
     let chain_id = 2u32; // Ethereum
 
-    s.vault_client.set_trusted_emitter(&chain_id, &emitter, &true);
+    s.vault_client
+        .set_trusted_emitter(&chain_id, &emitter, &true);
 
     let events = s.env.events().all().filter_by_contract(&s.vault_address);
     assert!(!events.events().is_empty());
 
     // Unmarking must also persist (and not panic).
-    s.vault_client.set_trusted_emitter(&chain_id, &emitter, &false);
+    s.vault_client
+        .set_trusted_emitter(&chain_id, &emitter, &false);
 }
 
 #[test]
@@ -1483,8 +1542,12 @@ fn test_fund_project_succeeds_with_valid_project_id() {
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id =
-        registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm12"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm12"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
 
     s.vault_client.fund_project(&project_id, &100_0000000i128);
     assert!(s.vault_client.total_assets() > 0);
@@ -1492,7 +1555,7 @@ fn test_fund_project_succeeds_with_valid_project_id() {
 
 #[test]
 #[should_panic]
-fn test_fund_project_rejects_self_funding_by_admin(){
+fn test_fund_project_rejects_self_funding_by_admin() {
     // #14: the vault admin must not be able to fund a project they own themselves.
     let s = setup();
     let investor = Address::generate(&s.env);
@@ -1533,7 +1596,10 @@ fn test_deposit_rejects_when_exceeding_max_hbs_supply() {
         }
         assert!(s.vault_client.total_supply() <= cap);
     }
-    assert!(hit_cap, "expected a deposit to eventually exceed MAX_HBS_SUPPLY");
+    assert!(
+        hit_cap,
+        "expected a deposit to eventually exceed MAX_HBS_SUPPLY"
+    );
     assert!(s.vault_client.total_supply() <= cap);
 }
 
@@ -1593,7 +1659,7 @@ fn test_concurrent_deposits_and_fund_project() {
     let investor1 = Address::generate(&s.env);
     let investor2 = Address::generate(&s.env);
     let creator = Address::generate(&s.env);
-    
+
     // Deposit 1
     mint_usdc(&s.env, &s.usdc_sac, &investor1, 2_000_0000000i128);
     s.vault_client.deposit(&investor1, &2_000_0000000i128);
@@ -1601,7 +1667,12 @@ fn test_concurrent_deposits_and_fund_project() {
     // Setup Project
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(&creator, &String::from_str(&s.env, "ipfs://Qm12"), &0u64, &test_metadata_hash(&s.env));
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://Qm12"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
     registry_client.update_impact_score(&project_id, &80u32, &60u32);
 
     // Fund project interleaved
@@ -1617,7 +1688,7 @@ fn test_concurrent_deposits_and_fund_project() {
         li.sequence_number += 1;
     });
     s.vault_client.withdraw(&investor1, &shares1, &0);
-    
+
     // Withdraw from investor2
     s.env.ledger().with_mut(|li| {
         li.sequence_number += 1;
@@ -1651,8 +1722,12 @@ fn test_emergency_admin_can_pause_and_unpause_without_owner() {
     let emergency_admin = Address::generate(&s.env);
 
     assert_eq!(s.vault_client.get_emergency_admin(), None);
-    s.vault_client.set_emergency_admin(&Some(emergency_admin.clone()));
-    assert_eq!(s.vault_client.get_emergency_admin(), Some(emergency_admin.clone()));
+    s.vault_client
+        .set_emergency_admin(&Some(emergency_admin.clone()));
+    assert_eq!(
+        s.vault_client.get_emergency_admin(),
+        Some(emergency_admin.clone())
+    );
 
     assert!(!s.vault_client.is_paused());
     s.vault_client.emergency_pause(&emergency_admin);
@@ -1701,7 +1776,8 @@ fn test_compact_storage_removes_zero_project_investment() {
         &project_creator,
         &soroban_sdk::String::from_str(&s.env, "ipfs://QmCompact"),
         &0u64,
-    &test_metadata_hash(&s.env));
+        &test_metadata_hash(&s.env),
+    );
     let fund_amount = 500_0000000i128; // 500 USDC, within available limit
     s.vault_client.fund_project(&pid, &fund_amount);
     assert_eq!(s.vault_client.get_project_investment(&pid), fund_amount);
@@ -1872,7 +1948,11 @@ fn test_withdrawal_rate_limiting_transfer_locked() {
     });
 
     // Transfer shares from investor1 to investor2
-    s.vault_client.transfer(&investor1, &soroban_sdk::MuxedAddress::from(investor2.clone()), &shares);
+    s.vault_client.transfer(
+        &investor1,
+        &soroban_sdk::MuxedAddress::from(investor2.clone()),
+        &shares,
+    );
 
     // Try to withdraw from investor2 in the same ledger sequence -> should panic
     s.vault_client.withdraw(&investor2, &shares, &0);
@@ -1951,7 +2031,9 @@ fn test_all_only_owner_functions_reject_non_admin_caller() {
     ];
 
     for (i, rejected) in results.iter().enumerate() {
-        assert!(rejected, "only_owner function at index {i} did not reject a non-admin caller");
+        assert!(
+            rejected,
+            "only_owner function at index {i} did not reject a non-admin caller"
+        );
     }
 }
-

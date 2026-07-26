@@ -12,4 +12,3 @@ pub mod logic {
         (yield_amount * (fee_bps as i128)) / 10000
     }
 }
-
