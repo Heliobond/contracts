@@ -840,6 +840,57 @@ fn test_fee_above_cap_panics() {
     s.vault_client.set_management_fee(&501u32, &fee_recipient);
 }
 
+// ── Issue #190: management fee across multiple fee-rate changes ───────────────
+
+#[test]
+fn test_management_fee_across_multiple_rate_changes() {
+    // Verify that each deposit applies the fee rate active *at that moment*,
+    // and that changing the fee between deposits produces the correct
+    // cumulative fee payout.
+    let s = setup();
+    let fee_recipient = Address::generate(&s.env);
+    let usdc_client = soroban_sdk::token::TokenClient::new(&s.env, &s.usdc_sac);
+    let deposit_amount = 1_000_0000000i128; // 1000 USDC
+
+    // ── Round 1: 100 bps (1%) ────────────────────────────────────────────────
+    s.vault_client.set_management_fee(&100u32, &fee_recipient);
+    let investor1 = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor1, deposit_amount);
+    s.vault_client.deposit(&investor1, &deposit_amount);
+
+    let expected_fee_1 = deposit_amount * 100 / 10_000; // 10_000_000 (0.1 USDC in stroops... actually 10 USDC)
+    assert_eq!(usdc_client.balance(&fee_recipient), expected_fee_1);
+
+    // ── Round 2: 300 bps (3%) ────────────────────────────────────────────────
+    s.vault_client.set_management_fee(&300u32, &fee_recipient);
+    let investor2 = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor2, deposit_amount);
+    s.vault_client.deposit(&investor2, &deposit_amount);
+
+    let expected_fee_2 = deposit_amount * 300 / 10_000; // 30_000_000
+    let cumulative_after_2 = expected_fee_1 + expected_fee_2;
+    assert_eq!(usdc_client.balance(&fee_recipient), cumulative_after_2);
+
+    // ── Round 3: 50 bps (0.5%) ───────────────────────────────────────────────
+    s.vault_client.set_management_fee(&50u32, &fee_recipient);
+    let investor3 = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor3, deposit_amount);
+    s.vault_client.deposit(&investor3, &deposit_amount);
+
+    let expected_fee_3 = deposit_amount * 50 / 10_000; // 5_000_000
+    let cumulative_after_3 = cumulative_after_2 + expected_fee_3;
+    assert_eq!(usdc_client.balance(&fee_recipient), cumulative_after_3);
+
+    // ── Round 4: back to 0 bps (fee disabled) ────────────────────────────────
+    s.vault_client.set_management_fee(&0u32, &fee_recipient);
+    let investor4 = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor4, deposit_amount);
+    s.vault_client.deposit(&investor4, &deposit_amount);
+
+    // No additional fee should have been charged.
+    assert_eq!(usdc_client.balance(&fee_recipient), cumulative_after_3);
+}
+
 // ── #126: secondary market trading tests ──────────────────────────────────────
 
 #[test]
