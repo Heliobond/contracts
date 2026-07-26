@@ -41,7 +41,9 @@ use soroban_sdk::{
     contract, contractimpl, panic_with_error, Address, Bytes, BytesN, Env, MuxedAddress, String,
     Vec,
 };
-use stellar_access::ownable::{get_owner, set_owner, transfer_ownership as ownable_transfer_ownership, Ownable};
+use stellar_access::ownable::{
+    get_owner, set_owner, transfer_ownership as ownable_transfer_ownership, Ownable,
+};
 use stellar_macros::only_owner;
 use stellar_tokens::fungible::burnable::FungibleBurnable;
 use stellar_tokens::fungible::{Base, FungibleToken};
@@ -80,10 +82,10 @@ const STATE_VERSION: u32 = 1;
 
 mod composability;
 mod events;
+mod logic;
+mod storage;
 mod types;
 mod wormhole;
-mod storage;
-mod logic;
 
 mod registry_interface {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm");
@@ -140,7 +142,6 @@ pub const CONTRACT_DESCRIPTION: &str = "Heliobond Investment Vault";
 pub const CONTRACT_VERSION: &str = "1.0.0";
 
 /// State schema version for this contract build. Increment when a migration is required.
-
 
 #[contract]
 pub struct InvestmentVault;
@@ -401,10 +402,9 @@ impl InvestmentVault {
             .get(&VaultKey::TotalDeposited(from.clone()))
             .unwrap_or(0);
         let key = VaultKey::TotalDeposited(from.clone());
-        env.storage().persistent().set(
-            &key,
-            &(prev_dep + usdc_amount),
-        );
+        env.storage()
+            .persistent()
+            .set(&key, &(prev_dep + usdc_amount));
         env.storage().persistent().extend_ttl(&key, 17280, 518400); // Add rent check/extend
 
         // Update cached total assets: liquid increases by full usdc_amount (#81, #85)
@@ -1791,9 +1791,10 @@ fn require_emergency_admin(env: &Env, caller: &Address) {
 }
 
 fn lock_deposit(env: &Env, address: &Address) {
-    env.storage()
-        .persistent()
-        .set(&VaultKey::LastDeposit(address.clone()), &env.ledger().sequence());
+    env.storage().persistent().set(
+        &VaultKey::LastDeposit(address.clone()),
+        &env.ledger().sequence(),
+    );
 }
 
 fn check_deposit_lock(env: &Env, address: &Address) {
@@ -1838,7 +1839,10 @@ impl InvestmentVault {
     #[only_owner]
     pub fn set_emergency_admin(env: Env, emergency_admin: Option<Address>) {
         match &emergency_admin {
-            Some(addr) => env.storage().instance().set(&VaultKey::EmergencyAdmin, addr),
+            Some(addr) => env
+                .storage()
+                .instance()
+                .set(&VaultKey::EmergencyAdmin, addr),
             None => env.storage().instance().remove(&VaultKey::EmergencyAdmin),
         }
         events::emergency_admin_changed(&env, emergency_admin);
