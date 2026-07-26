@@ -1223,6 +1223,58 @@ fn test_set_and_get_funding_thresholds() {
     assert_eq!(s.vault_client.get_min_green_impact(), 40u32);
 }
 
+// ── Issue #187: boundary tests for thresholds above 100% ─────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #19)")]
+fn test_set_funding_thresholds_rejects_credit_above_100() {
+    let s = setup();
+    // 101 is just above the valid 0–100 range; green impact is valid.
+    s.vault_client.set_funding_thresholds(&101u32, &40u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #19)")]
+fn test_set_funding_thresholds_rejects_green_above_100() {
+    let s = setup();
+    // credit quality is valid; green impact 200 is well above 100.
+    s.vault_client.set_funding_thresholds(&60u32, &200u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #19)")]
+fn test_set_funding_thresholds_rejects_both_above_100() {
+    let s = setup();
+    // Both values exceed the valid range.
+    s.vault_client.set_funding_thresholds(&101u32, &101u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #19)")]
+fn test_set_funding_thresholds_rejects_u32_max() {
+    let s = setup();
+    // u32::MAX is the largest possible out-of-range value.
+    s.vault_client.set_funding_thresholds(&u32::MAX, &u32::MAX);
+}
+
+#[test]
+fn test_set_funding_thresholds_accepts_boundary_100() {
+    let s = setup();
+    // 100 is the maximum valid value; must succeed.
+    s.vault_client.set_funding_thresholds(&100u32, &100u32);
+    assert_eq!(s.vault_client.get_min_credit_quality(), 100u32);
+    assert_eq!(s.vault_client.get_min_green_impact(), 100u32);
+}
+
+#[test]
+fn test_set_funding_thresholds_accepts_zero() {
+    let s = setup();
+    // 0 is the minimum valid value (default/no restriction).
+    s.vault_client.set_funding_thresholds(&0u32, &0u32);
+    assert_eq!(s.vault_client.get_min_credit_quality(), 0u32);
+    assert_eq!(s.vault_client.get_min_green_impact(), 0u32);
+}
+
 #[test]
 #[should_panic]
 fn test_fund_project_blocked_below_credit_threshold() {
