@@ -442,6 +442,55 @@ fn bench_batch_deposit_vs_equivalent_single_deposits() {
     assert!((single_total_instructions as u32) <= 100_000_000);
 }
 
+// ── Issue #189: benchmark for withdraw() under queued-redemption contention ──
+
+#[test]
+fn bench_withdraw_under_queued_redemption_contention() {
+    // Measure the cost of withdraw() when the vault has insufficient liquid
+    // USDC, forcing the redemption to be enqueued rather than settled
+    // immediately. This is the more expensive path because it burns shares,
+    // records a QueuedClaim, and updates the FIFO queue pointers.
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let deposit_amount = 1_000_0000000i128; // 1000 USDC
+    mint_usdc(&s.env, &s.usdc_sac, &investor, deposit_amount);
+    let shares = s.vault_client.deposit(&investor, &deposit_amount);
+
+    // Drain roughly half the vault's liquid USDC by funding a project.
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    let creator = Address::generate(&s.env);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://QmBenchWithdraw"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
+    // Fund 490 USDC (49% util — below the 50% graduated limit so the full
+    // withdrawal is allowed by the utilization check, but only ~510 USDC
+    // is liquid, causing the queue path to activate).
+    s.vault_client.fund_project(&project_id, &490_0000000i128);
+
+    // Advance ledger to satisfy rate-limiting (deposit locks same-ledger withdrawals).
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+
+    // This withdraw triggers the queued-redemption path.
+    let returned = s.vault_client.withdraw(&investor, &shares, &0);
+    assert_eq!(returned, 0); // queued, not immediate
+
+    let instructions = s.env.cost_estimate().resources().instructions;
+    std::println!(
+        "bench_withdraw_under_queued_redemption_contention: {} instructions",
+        instructions
+    );
+    // The queued path is more expensive than a normal withdraw (burn +
+    // queue entry write + head/tail pointer updates). Bound generously
+    // to avoid flaky failures while still catching regressions.
+    assert!(instructions <= 100_000_000);
+}
+
 #[test]
 fn test_vault_deposit_cost_estimate() {
     let env = Env::default();
