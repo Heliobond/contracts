@@ -1723,6 +1723,76 @@ fn test_transfer_ownership_emits_event() {
     );
 }
 
+// ── Issue #191: negative tests for transfer_ownership() ──────────────────────
+
+#[test]
+#[should_panic]
+fn test_transfer_ownership_rejects_non_owner_caller() {
+    let s = setup();
+    let stranger = Address::generate(&s.env);
+    let new_owner = Address::generate(&s.env);
+
+    // Only mock auth for the stranger, not the real owner — the
+    // owner.require_auth() check in the library must fail.
+    s.env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &stranger,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &s.vault_address,
+            fn_name: "transfer_ownership",
+            args: soroban_sdk::vec![
+                &s.env,
+                new_owner.clone().into_val(&s.env),
+                1000u32.into_val(&s.env),
+            ],
+            sub_invokes: &[],
+        },
+    }]);
+    s.vault_client.transfer_ownership(&new_owner, &1000u32);
+}
+
+#[test]
+#[should_panic]
+fn test_transfer_ownership_cancel_without_pending_panics() {
+    let s = setup();
+    let new_owner = Address::generate(&s.env);
+
+    // live_until_ledger = 0 cancels a pending transfer, but no transfer
+    // has been initiated yet — must panic with NoPendingTransfer.
+    s.vault_client.transfer_ownership(&new_owner, &0u32);
+}
+
+#[test]
+#[should_panic]
+fn test_transfer_ownership_with_expired_ledger_panics() {
+    let s = setup();
+    let new_owner = Address::generate(&s.env);
+
+    // Advance the ledger sequence past 1 so that live_until_ledger = 1 is in the past.
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 10;
+    });
+
+    // live_until_ledger = 1 < current ledger (10) — must panic with InvalidLiveUntilLedger.
+    s.vault_client.transfer_ownership(&new_owner, &1u32);
+}
+
+#[test]
+fn test_transfer_ownership_to_same_owner_succeeds() {
+    // Initiating a transfer to the current owner is a valid (if unusual) operation —
+    // the 2-step flow still requires accept_ownership() from the pending address.
+    let s = setup();
+
+    // Transfer to self with a valid live_until_ledger.
+    s.vault_client.transfer_ownership(&s.admin, &1000u32);
+
+    let events = s.env.events().all().filter_by_contract(&s.vault_address);
+    assert_eq!(
+        events.events().len(),
+        2,
+        "transfer to self should emit 2 events like any other transfer"
+    );
+}
+
 proptest! {
     #[test]
     fn test_vault_arithmetic_fuzz(
