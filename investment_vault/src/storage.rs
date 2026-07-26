@@ -1,5 +1,5 @@
-use soroban_sdk::{Address, Env};
 use crate::types::VaultKey;
+use soroban_sdk::{Address, Env};
 
 pub fn read_usdc_sac(env: &Env) -> Address {
     env.storage().instance().get(&VaultKey::UsdcSac).unwrap()
