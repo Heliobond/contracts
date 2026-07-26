@@ -3,7 +3,9 @@ use soroban_sdk::{
     contract, contractimpl, panic_with_error, token::Client as TokenClient, Address, BytesN, Env,
     String, Vec,
 };
-use stellar_access::ownable::{get_owner, set_owner, transfer_ownership as ownable_transfer_ownership, Ownable};
+use stellar_access::ownable::{
+    get_owner, set_owner, transfer_ownership as ownable_transfer_ownership, Ownable,
+};
 use stellar_macros::only_owner;
 
 /// Maximum URI length in bytes. Prevents excessively large ledger entries (#119).
@@ -21,9 +23,9 @@ const MAX_MULTISIG_SIGNERS: u32 = 10;
 const MAX_SCORE_HISTORY: u32 = 50;
 
 mod events;
-mod types;
-mod storage;
 mod logic;
+mod storage;
+mod types;
 
 pub use types::{
     ArchiveSummary, CertificationStatus, DataKey, HealthStatus, ProjectData, Proposal,
@@ -101,7 +103,7 @@ impl ProjectRegistry {
         require_current_state(&env);
         let whitelister: Address = env.storage().instance().get(&DataKey::Whitelister).unwrap();
         whitelister.require_auth();
-        // Validation: Soroban Address types inherently prevent null/zero addresses, 
+        // Validation: Soroban Address types inherently prevent null/zero addresses,
         // fulfilling explicit validation requirements for account.
         env.storage()
             .persistent()
@@ -121,7 +123,7 @@ impl ProjectRegistry {
         require_not_paused(&env);
         require_current_state(&env);
         creator.require_auth();
-        // Validation: Soroban Address types inherently prevent null/zero addresses, 
+        // Validation: Soroban Address types inherently prevent null/zero addresses,
         // fulfilling explicit validation requirements for creator.
         let is_whitelisted: bool = env
             .storage()
@@ -204,7 +206,9 @@ impl ProjectRegistry {
         env.storage()
             .persistent()
             .set(&DataKey::Project(project_id), &project);
-        env.storage().persistent().extend_ttl(&DataKey::Project(project_id), 17280, 518400); // Add rent check/extend
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Project(project_id), 17280, 518400); // Add rent check/extend
         env.storage()
             .instance()
             .set(&DataKey::ProjectCounter, &project_id);
@@ -963,9 +967,17 @@ impl ProjectRegistry {
             .get(&DataKey::ScoreHistoryTotal(project_id))
             .unwrap_or(0);
 
-        let count = if total < MAX_SCORE_HISTORY { total } else { MAX_SCORE_HISTORY };
+        let count = if total < MAX_SCORE_HISTORY {
+            total
+        } else {
+            MAX_SCORE_HISTORY
+        };
         // Oldest slot: when buffer is full it's total%MAX, otherwise it's 0.
-        let start_slot = if total >= MAX_SCORE_HISTORY { total % MAX_SCORE_HISTORY } else { 0 };
+        let start_slot = if total >= MAX_SCORE_HISTORY {
+            total % MAX_SCORE_HISTORY
+        } else {
+            0
+        };
 
         let mut result = Vec::new(&env);
         for i in 0..count {
