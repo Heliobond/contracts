@@ -1127,6 +1127,7 @@ impl InvestmentVault {
             .instance()
             .get(&VaultKey::WithdrawalWindowLedgers)
             .unwrap_or(1)
+    }
     // ── Dynamic fee structure (#39) ───────────────────────────────────────────
 
     /// Configure a two-tier volume-discount fee schedule for deposits (#39).
@@ -2097,7 +2098,6 @@ fn check_deposit_lock(env: &Env, address: &Address) {
             .instance()
             .get(&VaultKey::WithdrawalWindowLedgers)
             .unwrap_or(1);
-        if env.ledger().sequence() < last_seq.saturating_add(window) {
         if env.ledger().timestamp() < deposited_at + MIN_LOCK_PERIOD {
             panic_with_error!(env, VaultError::DepositLocked);
         }
