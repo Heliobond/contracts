@@ -257,14 +257,12 @@ describe("CORS configuration", () => {
     store = makeStore();
     const app = createApi(store);
 
-    const res = await request(app)
-      .put("/preferences/GINVESTOR")
-      .send({
-        email: "test@example.com",
-        webhook_url: "https://example.com/webhook",
-        enabled: true,
-        min_delta: 5,
-      });
+    const res = await request(app).put("/preferences/GINVESTOR").send({
+      email: "test@example.com",
+      webhook_url: "https://example.com/webhook",
+      enabled: true,
+      min_delta: 5,
+    });
 
     expect(res.status).toBe(200);
     expect(res.body.email).toBe("test@example.com");

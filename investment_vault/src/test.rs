@@ -1,5 +1,6 @@
 #![cfg(test)]
 #![allow(clippy::inconsistent_digit_grouping)]
+#![allow(unnameable_test_items)]
 extern crate std;
 use super::*;
 use proptest::prelude::*;
