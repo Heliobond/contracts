@@ -2313,154 +2313,154 @@ fn test_get_project_investments_batch_returns_correct_amounts() {
 
 #[test]
 fn test_get_all_project_investments_returns_all() {
-// ── Issue #176: deposit() must reject a zero-amount deposit ──────────────────
+    // ── Issue #176: deposit() must reject a zero-amount deposit ──────────────────
 
-#[test]
-#[should_panic(expected = "Error(Contract, #1)")]
-fn test_deposit_rejects_zero_amount() {
-    // Zero is ≤ 0; the contract panics with AmountNotPositive (#1) before
-    // any transfer or share calculation is attempted.
-    let s = setup();
-    let investor = Address::generate(&s.env);
-    s.vault_client.deposit(&investor, &0i128);
-}
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_deposit_rejects_zero_amount() {
+        // Zero is ≤ 0; the contract panics with AmountNotPositive (#1) before
+        // any transfer or share calculation is attempted.
+        let s = setup();
+        let investor = Address::generate(&s.env);
+        s.vault_client.deposit(&investor, &0i128);
+    }
 
-// ── Issue #181: fund_project() must reject a zero/negative amount ─────────────
+    // ── Issue #181: fund_project() must reject a zero/negative amount ─────────────
 
-#[test]
-#[should_panic(expected = "Error(Contract, #1)")]
-fn test_fund_project_rejects_zero_amount() {
-    // fund_project_internal checks `amount <= 0` before the cross-contract
-    // registry call, so no USDC transfer or project lookup occurs.
-    let s = setup();
-    let investor = Address::generate(&s.env);
-    let creator = Address::generate(&s.env);
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_fund_project_rejects_zero_amount() {
+        // fund_project_internal checks `amount <= 0` before the cross-contract
+        // registry call, so no USDC transfer or project lookup occurs.
+        let s = setup();
+        let investor = Address::generate(&s.env);
+        let creator = Address::generate(&s.env);
 
-    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+        mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+        s.vault_client.deposit(&investor, &1_000_0000000i128);
 
-    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://QmFundZero"),
-        &0u64,
-        &test_metadata_hash(&s.env),
-    );
+        let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+        registry_client.set_whitelist(&creator, &true);
+        let project_id = registry_client.create_project(
+            &creator,
+            &String::from_str(&s.env, "ipfs://QmFundZero"),
+            &0u64,
+            &test_metadata_hash(&s.env),
+        );
 
-    s.vault_client.fund_project(&project_id, &0i128);
-}
+        s.vault_client.fund_project(&project_id, &0i128);
+    }
 
-#[test]
-#[should_panic(expected = "Error(Contract, #1)")]
-fn test_fund_project_rejects_negative_amount() {
-    // Negative i128 also satisfies `amount <= 0`; confirm the guard fires
-    // for negative values just as it does for zero.
-    let s = setup();
-    let investor = Address::generate(&s.env);
-    let creator = Address::generate(&s.env);
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_fund_project_rejects_negative_amount() {
+        // Negative i128 also satisfies `amount <= 0`; confirm the guard fires
+        // for negative values just as it does for zero.
+        let s = setup();
+        let investor = Address::generate(&s.env);
+        let creator = Address::generate(&s.env);
 
-    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+        mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+        s.vault_client.deposit(&investor, &1_000_0000000i128);
 
-    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://QmFundNeg"),
-        &0u64,
-        &test_metadata_hash(&s.env),
-    );
+        let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+        registry_client.set_whitelist(&creator, &true);
+        let project_id = registry_client.create_project(
+            &creator,
+            &String::from_str(&s.env, "ipfs://QmFundNeg"),
+            &0u64,
+            &test_metadata_hash(&s.env),
+        );
 
-    s.vault_client.fund_project(&project_id, &-1i128);
-}
+        s.vault_client.fund_project(&project_id, &-1i128);
+    }
 
-// ── Issue #182: claim_queued() is idempotent against double-claim ─────────────
+    // ── Issue #182: claim_queued() is idempotent against double-claim ─────────────
 
-#[test]
-fn test_claim_queued_is_idempotent_against_double_claim() {
-    // claim() advances the queue head past every settled entry. A second
-    // call on the now-empty queue hits the head == tail fast-path and
-    // returns 0 without transferring USDC again — no double-payout.
-    let s = setup();
-    let investor = Address::generate(&s.env);
-    let creator = Address::generate(&s.env);
+    #[test]
+    fn test_claim_queued_is_idempotent_against_double_claim() {
+        // claim() advances the queue head past every settled entry. A second
+        // call on the now-empty queue hits the head == tail fast-path and
+        // returns 0 without transferring USDC again — no double-payout.
+        let s = setup();
+        let investor = Address::generate(&s.env);
+        let creator = Address::generate(&s.env);
 
-    mint_usdc(&s.env, &s.usdc_sac, &investor, 2_000_0000000i128);
-    s.vault_client.deposit(&investor, &2_000_0000000i128);
+        mint_usdc(&s.env, &s.usdc_sac, &investor, 2_000_0000000i128);
+        s.vault_client.deposit(&investor, &2_000_0000000i128);
 
-    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
-    let pid = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "Gamma"),
-        &String::from_str(&s.env, "desc"),
-        &100u32,
-        &100u32,
-        &test_metadata_hash(&s.env),
-    );
+        let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+        registry_client.set_whitelist(&creator, &true);
+        let pid = registry_client.create_project(
+            &creator,
+            &String::from_str(&s.env, "Gamma"),
+            &String::from_str(&s.env, "desc"),
+            &100u32,
+            &100u32,
+            &test_metadata_hash(&s.env),
+        );
 
-    let funded = 800_0000000i128;
-    s.vault_client.fund_project(&pid, &funded);
+        let funded = 800_0000000i128;
+        s.vault_client.fund_project(&pid, &funded);
 
-    let all = s.vault_client.get_all_project_investments();
-    assert_eq!(all.len(), 1);
-    let (id, amt) = all.get(0).unwrap();
-    assert_eq!(id, pid);
-    assert_eq!(amt, funded);
-}
+        let all = s.vault_client.get_all_project_investments();
+        assert_eq!(all.len(), 1);
+        let (id, amt) = all.get(0).unwrap();
+        assert_eq!(id, pid);
+        assert_eq!(amt, funded);
+    }
 
-// ── Issue #36: withdrawal sliding window ─────────────────────────────────────
+    // ── Issue #36: withdrawal sliding window ─────────────────────────────────────
 
-#[test]
-fn test_withdrawal_window_blocks_early_exit() {
-    // With a 5-ledger window, a withdraw attempted before 5 ledgers have
-    // elapsed since the deposit must be rejected with DepositLocked (#36).
-    let s = setup();
-    let investor = Address::generate(&s.env);
-    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    #[test]
+    fn test_withdrawal_window_blocks_early_exit() {
+        // With a 5-ledger window, a withdraw attempted before 5 ledgers have
+        // elapsed since the deposit must be rejected with DepositLocked (#36).
+        let s = setup();
+        let investor = Address::generate(&s.env);
+        mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
 
-    // Set a 5-ledger withdrawal window.
-    s.vault_client.set_withdrawal_window(&5u32);
+        // Set a 5-ledger withdrawal window.
+        s.vault_client.set_withdrawal_window(&5u32);
 
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+        let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
 
-    // Only 2 ledgers elapsed — still inside the 5-ledger window.
-    s.env.ledger().with_mut(|li| li.sequence_number += 2);
+        // Only 2 ledgers elapsed — still inside the 5-ledger window.
+        s.env.ledger().with_mut(|li| li.sequence_number += 2);
 
-    let result = s.vault_client.try_withdraw(&investor, &shares, &0);
-    assert!(
-        result.is_err(),
-        "withdraw should be blocked inside the sliding window"
-    );
-}
+        let result = s.vault_client.try_withdraw(&investor, &shares, &0);
+        assert!(
+            result.is_err(),
+            "withdraw should be blocked inside the sliding window"
+        );
+    }
 
-#[test]
-fn test_withdrawal_window_allows_exit_after_window() {
-    // After the configured window has elapsed the withdrawal succeeds (#36).
-    let s = setup();
-    let investor = Address::generate(&s.env);
-    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    #[test]
+    fn test_withdrawal_window_allows_exit_after_window() {
+        // After the configured window has elapsed the withdrawal succeeds (#36).
+        let s = setup();
+        let investor = Address::generate(&s.env);
+        mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
 
-    s.vault_client.set_withdrawal_window(&5u32);
+        s.vault_client.set_withdrawal_window(&5u32);
 
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+        let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
 
-    // Advance past the 5-ledger window.
-    s.env.ledger().with_mut(|li| li.sequence_number += 5);
+        // Advance past the 5-ledger window.
+        s.env.ledger().with_mut(|li| li.sequence_number += 5);
 
-    let returned = s.vault_client.withdraw(&investor, &shares, &0);
-    assert!(returned > 0, "withdraw should succeed after window expires");
-}
+        let returned = s.vault_client.withdraw(&investor, &shares, &0);
+        assert!(returned > 0, "withdraw should succeed after window expires");
+    }
 
-#[test]
-fn test_get_set_withdrawal_window() {
-    // Default window is 1; set_withdrawal_window updates it (#36).
-    let s = setup();
-    assert_eq!(s.vault_client.get_withdrawal_window(), 1u32);
-    s.vault_client.set_withdrawal_window(&10u32);
-    assert_eq!(s.vault_client.get_withdrawal_window(), 10u32);
-}
+    #[test]
+    fn test_get_set_withdrawal_window() {
+        // Default window is 1; set_withdrawal_window updates it (#36).
+        let s = setup();
+        assert_eq!(s.vault_client.get_withdrawal_window(), 1u32);
+        s.vault_client.set_withdrawal_window(&10u32);
+        assert_eq!(s.vault_client.get_withdrawal_window(), 10u32);
+    }
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
     let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
 
@@ -2586,6 +2586,7 @@ fn test_volume_fee_tier_is_admin_only() {
         },
     }]);
     s.vault_client.set_volume_fee_tier(&500_0000000i128, &50u32);
+}
 // ── #179: convert_to_shares() overflow guard on extremely large deposits ──────
 
 /// Verify that `convert_to_shares` panics (rather than silently wrapping) when

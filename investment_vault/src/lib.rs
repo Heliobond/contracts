@@ -291,8 +291,7 @@ impl InvestmentVault {
                 .unwrap_or(0);
             if investment > 0 {
                 let project = registry.get_project(&i);
-                let score_rate =
-                    project.credit_quality as i128 + project.green_impact as i128;
+                let score_rate = project.credit_quality as i128 + project.green_impact as i128;
 
                 let funded_at: u64 = env
                     .storage()
@@ -303,8 +302,7 @@ impl InvestmentVault {
                 if funded_at > 0 && now > funded_at {
                     // Time-weighted: accrue interest over elapsed time (#34).
                     let elapsed = (now - funded_at) as i128;
-                    expected +=
-                        investment * score_rate * elapsed / (200 * ANNUAL_PERIOD_SECS);
+                    expected += investment * score_rate * elapsed / (200 * ANNUAL_PERIOD_SECS);
                 } else {
                     // Static fallback for pre-existing investments without a timestamp.
                     expected += investment * score_rate / 200;
@@ -1152,9 +1150,7 @@ impl InvestmentVault {
             env.storage()
                 .instance()
                 .remove(&VaultKey::VolumeTierThreshold);
-            env.storage()
-                .instance()
-                .remove(&VaultKey::VolumeTierFeeBps);
+            env.storage().instance().remove(&VaultKey::VolumeTierFeeBps);
             return;
         }
         env.storage()
@@ -1193,7 +1189,11 @@ impl InvestmentVault {
         if cap < 0 {
             panic_with_error!(&env, VaultError::AmountNotPositive);
         }
-        let stored_cap = if cap == 0 { MAX_INVESTMENT_PER_PROJECT } else { cap };
+        let stored_cap = if cap == 0 {
+            MAX_INVESTMENT_PER_PROJECT
+        } else {
+            cap
+        };
         env.storage()
             .instance()
             .set(&VaultKey::MaxInvestmentPerProject, &stored_cap);
@@ -1217,7 +1217,11 @@ impl InvestmentVault {
             .get(&VaultKey::ProjectInvestment(project_id))
             .unwrap_or(0);
         let remaining = cap - invested;
-        if remaining < 0 { 0 } else { remaining }
+        if remaining < 0 {
+            0
+        } else {
+            remaining
+        }
     }
 
     // ── Deposit lock-up expiry query (#33) ────────────────────────────────────
