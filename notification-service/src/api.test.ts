@@ -189,6 +189,17 @@ describe("CORS configuration", () => {
   });
 
   it("returns 400 when body is an array", async () => {
+    store = makeStore();
+    const app = createApi(store);
+
+    const res = await request(app)
+      .put("/preferences/GINVESTOR")
+      .send([{ email: "test@example.com" }]);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/JSON object/);
+  });
+
   it("sets Access-Control-Allow-Origin for a matching origin", async () => {
     store = makeStore();
     const app = createApi(store, {
@@ -236,11 +247,10 @@ describe("CORS configuration", () => {
     const app = createApi(store);
 
     const res = await request(app)
-      .put("/preferences/GINVESTOR")
-      .send([{ email: "test@example.com" }]);
+      .get("/health")
+      .set("Origin", "https://heliobond.io");
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/JSON object/);
+    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
   it("accepts a valid payload and returns 200", async () => {
