@@ -1180,6 +1180,7 @@ impl InvestmentVault {
             .get(&VaultKey::VolumeTierFeeBps)
             .unwrap_or(0);
         (threshold, bps)
+    }
     // ── Per-project investment cap (#32) ──────────────────────────────────────
 
     /// Set the maximum total USDC the vault may invest in any single project. Admin-only.
