@@ -3,7 +3,7 @@ name: Changelog
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -24,12 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0   # need full history for conventional-changelog
+          fetch-depth: 0 # need full history for conventional-changelog
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install conventional-changelog-cli
         run: npm install -g conventional-changelog-cli conventional-recommended-bump conventional-changelog-angular

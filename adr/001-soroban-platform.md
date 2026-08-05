@@ -27,11 +27,13 @@ Key reasons:
 ## Consequences
 
 **Positive:**
+
 - Very low invocation cost (fractions of a cent per call).
 - Soroban's host-managed storage tiers (instance / persistent / temporary) give predictable data lifecycle without manual expiry logic.
 - `stellar_tokens` and `stellar_access` crates provide audited primitives for fungible tokens and ownership.
 
 **Negative / trade-offs:**
+
 - Smaller developer ecosystem than EVM; fewer ready-made audit firms.
 - No native multi-sig in contracts (must be handled at the Stellar account layer).
 - `no_std` limits available Rust crates; anything requiring `std` must be avoided or rewritten.

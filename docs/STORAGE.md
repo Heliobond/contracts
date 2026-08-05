@@ -8,11 +8,11 @@ This document enumerates every storage key used by the Heliobond contracts, the 
 
 ## Storage tiers
 
-| Tier | Lifetime | Rent | Typical use |
-|------|----------|------|-------------|
-| **Instance** | As long as the contract instance is live | Bumped automatically on every invocation | Config set once, read often; global state read on almost every call |
-| **Persistent** | Until TTL expires (rent must be paid) | Charged per byte per ledger | Long-lived per-entity state |
-| **Temporary** | Automatic expiry after TTL | Cheapest writes | Not currently used |
+| Tier           | Lifetime                                 | Rent                                     | Typical use                                                         |
+| -------------- | ---------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------- |
+| **Instance**   | As long as the contract instance is live | Bumped automatically on every invocation | Config set once, read often; global state read on almost every call |
+| **Persistent** | Until TTL expires (rent must be paid)    | Charged per byte per ledger              | Long-lived per-entity state                                         |
+| **Temporary**  | Automatic expiry after TTL               | Cheapest writes                          | Not currently used                                                  |
 
 See [ADR-002](../adr/002-storage-patterns.md) for the rationale behind this partitioning.
 
@@ -24,62 +24,62 @@ Every storage key prefix across both contracts, its Rust value type, storage tie
 the contract/module that owns it. This is a flat index for quick lookup; see the
 per-contract sections below for field-level detail, size estimates, and access patterns.
 
-| Prefix | Rust type | Tier | Owner |
-|--------|-----------|------|-------|
-| `StateVersion` | `u32` | Instance | `project_registry` |
-| `Whitelister` | `Address` | Instance | `project_registry` |
-| `ProjectCounter` | `u32` | Instance | `project_registry` |
-| `ProposalCounter` | `u32` | Instance | `project_registry` |
-| `MultiSigSigners` | `Vec<Address>` | Instance | `project_registry` |
-| `MultiSigThreshold` | `u32` | Instance | `project_registry` |
-| `Paused` | `bool` | Instance | `project_registry` |
-| `EmergencyAdmin` | `Option<Address>` | Instance | `project_registry` |
-| `Project(u32)` | `ProjectData` | Persistent | `project_registry` |
-| `Whitelist(Address)` | `bool` | Persistent | `project_registry` |
-| `Proposal(u32)` | `Proposal` | Persistent | `project_registry` |
-| `HasVoted(u32, Address)` | `bool` | Persistent | `project_registry` |
-| `Collateral(u32, Address)` | `i128` | Persistent | `project_registry` |
-| `CreatorReputation(Address)` | `u32` | Persistent | `project_registry` |
-| `Arch(u32)` | `ArchiveSummary` | Persistent | `project_registry` |
-| `ScoreHistorySlot(u32, u32)` | `ScoreHistoryEntry` | Persistent | `project_registry` |
-| `ScoreHistoryTotal(u32)` | `u32` | Persistent | `project_registry` |
-| `StateVersion` | `u32` | Instance | `investment_vault` |
-| `UsdcSac` | `Address` | Instance | `investment_vault` |
-| `Registry` | `Address` | Instance | `investment_vault` |
-| `CachedTotalAssets` | `i128` | Instance | `investment_vault` |
-| `ManagementFeeBps` | `u32` | Instance | `investment_vault` |
-| `ManagementFeeRecipient` | `Address` | Instance | `investment_vault` |
-| `TradingEnabled` | `bool` | Instance | `investment_vault` |
-| `MinCreditQuality` | `u32` | Instance | `investment_vault` |
-| `MinGreenImpact` | `u32` | Instance | `investment_vault` |
-| `Bridge` | `Address` | Instance | `investment_vault` |
-| `FlashLoanFee` | `i128` | Instance | `investment_vault` |
-| `CarbonOracle` | `Address` | Instance | `investment_vault` |
-| `CarbonCreditPrice` | `i128` | Instance | `investment_vault` |
-| `MaxTransactionAmount` | `i128` | Instance | `investment_vault` |
-| `MultiSigSigners` | `Vec<Address>` | Instance | `investment_vault` |
-| `MultiSigThreshold` | `u32` | Instance | `investment_vault` |
-| `Paused` | `bool` | Instance | `investment_vault` |
-| `ComplianceEventCounter` | `u64` | Instance | `investment_vault` |
-| `ReportingSnapshot` | `ReportingSnapshotData` | Instance | `investment_vault` |
-| `EmergencyAdmin` | `Option<Address>` | Instance | `investment_vault` |
-| `CachedExpectedReturns` | `i128` | Persistent (dead — never read, see Migration notes) | `investment_vault` |
-| `TotalInvestments` | `i128` | Persistent | `investment_vault` |
-| `ProjectInvestment(u32)` | `i128` | Persistent | `investment_vault` |
-| `YieldPerShareAccum` | `i128` | Persistent | `investment_vault` |
-| `YieldDebt(Address)` | `i128` | Persistent | `investment_vault` |
-| `InsuranceFund` | `i128` | Persistent | `investment_vault` |
-| `InsuranceClaimed(u32)` | `bool` | Persistent | `investment_vault` |
-| `TotalDeposited(Address)` | `i128` | Persistent | `investment_vault` |
-| `QueueHead` | `u64` | Persistent | `investment_vault` |
-| `QueueTail` | `u64` | Persistent | `investment_vault` |
-| `QueueEntry(u64)` | `QueuedClaim` | Persistent | `investment_vault` |
-| `CarbonCreditBalance(Address)` | `i128` | Persistent | `investment_vault` |
-| `ComplianceEvent(u64)` | `ComplianceEventData` | Persistent | `investment_vault` |
-| `LastDeposit(Address)` | `u32` | Persistent | `investment_vault` |
-| `WormholeCore` | `Address` | Instance | `investment_vault` (`BridgeDataKey`) |
-| `TrustedEmitter(u32, BytesN<32>)` | `bool` | Persistent | `investment_vault` (`BridgeDataKey`) |
-| `ConsumedVaa(BytesN<32>)` | `bool` | Persistent | `investment_vault` (`BridgeDataKey`) |
+| Prefix                            | Rust type               | Tier                                                | Owner                                |
+| --------------------------------- | ----------------------- | --------------------------------------------------- | ------------------------------------ |
+| `StateVersion`                    | `u32`                   | Instance                                            | `project_registry`                   |
+| `Whitelister`                     | `Address`               | Instance                                            | `project_registry`                   |
+| `ProjectCounter`                  | `u32`                   | Instance                                            | `project_registry`                   |
+| `ProposalCounter`                 | `u32`                   | Instance                                            | `project_registry`                   |
+| `MultiSigSigners`                 | `Vec<Address>`          | Instance                                            | `project_registry`                   |
+| `MultiSigThreshold`               | `u32`                   | Instance                                            | `project_registry`                   |
+| `Paused`                          | `bool`                  | Instance                                            | `project_registry`                   |
+| `EmergencyAdmin`                  | `Option<Address>`       | Instance                                            | `project_registry`                   |
+| `Project(u32)`                    | `ProjectData`           | Persistent                                          | `project_registry`                   |
+| `Whitelist(Address)`              | `bool`                  | Persistent                                          | `project_registry`                   |
+| `Proposal(u32)`                   | `Proposal`              | Persistent                                          | `project_registry`                   |
+| `HasVoted(u32, Address)`          | `bool`                  | Persistent                                          | `project_registry`                   |
+| `Collateral(u32, Address)`        | `i128`                  | Persistent                                          | `project_registry`                   |
+| `CreatorReputation(Address)`      | `u32`                   | Persistent                                          | `project_registry`                   |
+| `Arch(u32)`                       | `ArchiveSummary`        | Persistent                                          | `project_registry`                   |
+| `ScoreHistorySlot(u32, u32)`      | `ScoreHistoryEntry`     | Persistent                                          | `project_registry`                   |
+| `ScoreHistoryTotal(u32)`          | `u32`                   | Persistent                                          | `project_registry`                   |
+| `StateVersion`                    | `u32`                   | Instance                                            | `investment_vault`                   |
+| `UsdcSac`                         | `Address`               | Instance                                            | `investment_vault`                   |
+| `Registry`                        | `Address`               | Instance                                            | `investment_vault`                   |
+| `CachedTotalAssets`               | `i128`                  | Instance                                            | `investment_vault`                   |
+| `ManagementFeeBps`                | `u32`                   | Instance                                            | `investment_vault`                   |
+| `ManagementFeeRecipient`          | `Address`               | Instance                                            | `investment_vault`                   |
+| `TradingEnabled`                  | `bool`                  | Instance                                            | `investment_vault`                   |
+| `MinCreditQuality`                | `u32`                   | Instance                                            | `investment_vault`                   |
+| `MinGreenImpact`                  | `u32`                   | Instance                                            | `investment_vault`                   |
+| `Bridge`                          | `Address`               | Instance                                            | `investment_vault`                   |
+| `FlashLoanFee`                    | `i128`                  | Instance                                            | `investment_vault`                   |
+| `CarbonOracle`                    | `Address`               | Instance                                            | `investment_vault`                   |
+| `CarbonCreditPrice`               | `i128`                  | Instance                                            | `investment_vault`                   |
+| `MaxTransactionAmount`            | `i128`                  | Instance                                            | `investment_vault`                   |
+| `MultiSigSigners`                 | `Vec<Address>`          | Instance                                            | `investment_vault`                   |
+| `MultiSigThreshold`               | `u32`                   | Instance                                            | `investment_vault`                   |
+| `Paused`                          | `bool`                  | Instance                                            | `investment_vault`                   |
+| `ComplianceEventCounter`          | `u64`                   | Instance                                            | `investment_vault`                   |
+| `ReportingSnapshot`               | `ReportingSnapshotData` | Instance                                            | `investment_vault`                   |
+| `EmergencyAdmin`                  | `Option<Address>`       | Instance                                            | `investment_vault`                   |
+| `CachedExpectedReturns`           | `i128`                  | Persistent (dead — never read, see Migration notes) | `investment_vault`                   |
+| `TotalInvestments`                | `i128`                  | Persistent                                          | `investment_vault`                   |
+| `ProjectInvestment(u32)`          | `i128`                  | Persistent                                          | `investment_vault`                   |
+| `YieldPerShareAccum`              | `i128`                  | Persistent                                          | `investment_vault`                   |
+| `YieldDebt(Address)`              | `i128`                  | Persistent                                          | `investment_vault`                   |
+| `InsuranceFund`                   | `i128`                  | Persistent                                          | `investment_vault`                   |
+| `InsuranceClaimed(u32)`           | `bool`                  | Persistent                                          | `investment_vault`                   |
+| `TotalDeposited(Address)`         | `i128`                  | Persistent                                          | `investment_vault`                   |
+| `QueueHead`                       | `u64`                   | Persistent                                          | `investment_vault`                   |
+| `QueueTail`                       | `u64`                   | Persistent                                          | `investment_vault`                   |
+| `QueueEntry(u64)`                 | `QueuedClaim`           | Persistent                                          | `investment_vault`                   |
+| `CarbonCreditBalance(Address)`    | `i128`                  | Persistent                                          | `investment_vault`                   |
+| `ComplianceEvent(u64)`            | `ComplianceEventData`   | Persistent                                          | `investment_vault`                   |
+| `LastDeposit(Address)`            | `u32`                   | Persistent                                          | `investment_vault`                   |
+| `WormholeCore`                    | `Address`               | Instance                                            | `investment_vault` (`BridgeDataKey`) |
+| `TrustedEmitter(u32, BytesN<32>)` | `bool`                  | Persistent                                          | `investment_vault` (`BridgeDataKey`) |
+| `ConsumedVaa(BytesN<32>)`         | `bool`                  | Persistent                                          | `investment_vault` (`BridgeDataKey`) |
 
 `StateVersion`, `MultiSigSigners`, `MultiSigThreshold`, `Paused`, and `EmergencyAdmin` are
 independent per-contract prefixes: each contract's `DataKey`/`VaultKey` enum is scoped to
@@ -93,10 +93,10 @@ lives alongside `VaultKey` for the Wormhole bridge feature.
 
 Soroban encodes `#[contracttype]` enum keys as XDR `SCVal`. The variant name is stored as a `Symbol`; shorter names reduce per-key byte cost.
 
-| Key shape | XDR encoding | Approximate key bytes |
-|-----------|-------------|----------------------|
-| Unit variant (e.g. `StateVersion`) | `Symbol("StateVersion")` | name length + 4 overhead |
-| Tuple variant (e.g. `Project(u32)`) | `Map {Symbol("Project") → u32}` | name length + 4 + 4 (u32) |
+| Key shape                                           | XDR encoding                       | Approximate key bytes       |
+| --------------------------------------------------- | ---------------------------------- | --------------------------- |
+| Unit variant (e.g. `StateVersion`)                  | `Symbol("StateVersion")`           | name length + 4 overhead    |
+| Tuple variant (e.g. `Project(u32)`)                 | `Map {Symbol("Project") → u32}`    | name length + 4 + 4 (u32)   |
 | Tuple variant with Address (e.g. `Whitelist(addr)`) | `Map {Symbol("Whitelist") → addr}` | name length + 4 + 32 (addr) |
 
 **New keys should use short variant names** (4 characters or fewer where practical) to reduce per-entry cost. Existing names are stable after deployment — do not rename variants without a migration.
@@ -111,26 +111,26 @@ Example: `DataKey::Arch(u32)` (4 chars) vs `ArchiveSummary(u32)` (13 chars) save
 
 All configuration and counters are in instance storage. The instance TTL is bumped on every contract invocation, so no explicit TTL management is needed.
 
-| Key (`DataKey` variant) | Rust type | Key bytes | Description |
-|-------------------------|-----------|-----------|-------------|
-| `StateVersion` | `u32` | ~16 | Storage schema version |
-| `Whitelister` | `Address` | ~18 | Address authorised to whitelist creators |
-| `ProjectCounter` | `u32` | ~18 | Auto-incrementing project ID |
-| `ProposalCounter` | `u32` | ~20 | Auto-incrementing governance proposal ID |
-| `MultiSigSigners` | `Vec<Address>` | ~18 | Multi-sig signer set for admin ops |
-| `MultiSigThreshold` | `u32` | ~22 | Required approval count |
+| Key (`DataKey` variant) | Rust type      | Key bytes | Description                              |
+| ----------------------- | -------------- | --------- | ---------------------------------------- |
+| `StateVersion`          | `u32`          | ~16       | Storage schema version                   |
+| `Whitelister`           | `Address`      | ~18       | Address authorised to whitelist creators |
+| `ProjectCounter`        | `u32`          | ~18       | Auto-incrementing project ID             |
+| `ProposalCounter`       | `u32`          | ~20       | Auto-incrementing governance proposal ID |
+| `MultiSigSigners`       | `Vec<Address>` | ~18       | Multi-sig signer set for admin ops       |
+| `MultiSigThreshold`     | `u32`          | ~22       | Required approval count                  |
 
 ### Persistent storage
 
-| Key | Rust type | Key bytes | Value bytes (approx) | Description |
-|-----|-----------|-----------|---------------------|-------------|
-| `DataKey::Project(u32)` | `ProjectData` | ~12 | ~132–580 | Full project record keyed by ID |
-| `DataKey::Whitelist(Address)` | `bool` | ~42 | 1 | `true` if address is whitelisted |
-| `DataKey::Proposal(u32)` | `Proposal` | ~13 | ~100+ | Governance proposal keyed by ID |
-| `DataKey::HasVoted(u32, Address)` | `bool` | ~47 | 1 | `true` if address has voted on proposal |
-| `DataKey::Collateral(u32, Address)` | `i128` | ~47 | 16 | Collateral balance for (project, token) |
-| `DataKey::CreatorReputation(Address)` | `u32` | ~49 | 4 | Reputation score 0–100 for a creator |
-| `DataKey::Arch(u32)` | `ArchiveSummary` | ~9 | ~52 | Compact record for compacted projects (#73) |
+| Key                                   | Rust type        | Key bytes | Value bytes (approx) | Description                                 |
+| ------------------------------------- | ---------------- | --------- | -------------------- | ------------------------------------------- |
+| `DataKey::Project(u32)`               | `ProjectData`    | ~12       | ~132–580             | Full project record keyed by ID             |
+| `DataKey::Whitelist(Address)`         | `bool`           | ~42       | 1                    | `true` if address is whitelisted            |
+| `DataKey::Proposal(u32)`              | `Proposal`       | ~13       | ~100+                | Governance proposal keyed by ID             |
+| `DataKey::HasVoted(u32, Address)`     | `bool`           | ~47       | 1                    | `true` if address has voted on proposal     |
+| `DataKey::Collateral(u32, Address)`   | `i128`           | ~47       | 16                   | Collateral balance for (project, token)     |
+| `DataKey::CreatorReputation(Address)` | `u32`            | ~49       | 4                    | Reputation score 0–100 for a creator        |
+| `DataKey::Arch(u32)`                  | `ArchiveSummary` | ~9        | ~52                  | Compact record for compacted projects (#73) |
 
 #### `ProjectData` layout
 
@@ -184,27 +184,27 @@ pub struct Proposal {
 
 All configuration and global aggregate caches are in instance storage.
 
-| Key (`VaultKey` variant) | Rust type | Key bytes | Description |
-|--------------------------|-----------|-----------|-------------|
-| `StateVersion` | `u32` | ~16 | Storage schema version |
-| `UsdcSac` | `Address` | ~11 | USDC Stellar Asset Contract address |
-| `Registry` | `Address` | ~12 | `project_registry` contract address |
-| `ManagementFeeBps` | `u32` | ~20 | Optional management fee in bps (0–500) |
-| `ManagementFeeRecipient` | `Address` | ~27 | Fee recipient address |
-| `TradingEnabled` | `bool` | ~18 | Whether secondary market trading is active |
-| `MinCreditQuality` | `u32` | ~20 | Minimum credit quality threshold for funding |
-| `MinGreenImpact` | `u32` | ~17 | Minimum green impact threshold for funding |
-| `Bridge` | `Address` | ~9 | Bridge contract address |
-| `FlashLoanFee` | `i128` | ~16 | Flash loan fee in bps |
-| `CarbonOracle` | `Address` | ~15 | Carbon credit oracle address |
-| `CarbonCreditPrice` | `i128` | ~21 | Carbon credit price in USD micro-units |
-| `MaxTransactionAmount` | `i128` | ~25 | Compliance transaction limit (0 = no limit) |
-| `MultiSigSigners` | `Vec<Address>` | ~18 | Multi-sig signer set |
-| `MultiSigThreshold` | `u32` | ~22 | Required approval count |
-| `Paused` | `bool` | ~9 | Circuit-breaker pause state |
-| `ComplianceEventCounter` | `u64` | ~27 | Compliance event sequence counter |
-| `ReportingSnapshot` | `ReportingSnapshotData` | ~22 | Latest regulatory snapshot |
-| `CachedTotalAssets` | `i128` | ~21 | NAV cache — updated on deposit/withdraw/yield (#85) |
+| Key (`VaultKey` variant) | Rust type               | Key bytes | Description                                         |
+| ------------------------ | ----------------------- | --------- | --------------------------------------------------- |
+| `StateVersion`           | `u32`                   | ~16       | Storage schema version                              |
+| `UsdcSac`                | `Address`               | ~11       | USDC Stellar Asset Contract address                 |
+| `Registry`               | `Address`               | ~12       | `project_registry` contract address                 |
+| `ManagementFeeBps`       | `u32`                   | ~20       | Optional management fee in bps (0–500)              |
+| `ManagementFeeRecipient` | `Address`               | ~27       | Fee recipient address                               |
+| `TradingEnabled`         | `bool`                  | ~18       | Whether secondary market trading is active          |
+| `MinCreditQuality`       | `u32`                   | ~20       | Minimum credit quality threshold for funding        |
+| `MinGreenImpact`         | `u32`                   | ~17       | Minimum green impact threshold for funding          |
+| `Bridge`                 | `Address`               | ~9        | Bridge contract address                             |
+| `FlashLoanFee`           | `i128`                  | ~16       | Flash loan fee in bps                               |
+| `CarbonOracle`           | `Address`               | ~15       | Carbon credit oracle address                        |
+| `CarbonCreditPrice`      | `i128`                  | ~21       | Carbon credit price in USD micro-units              |
+| `MaxTransactionAmount`   | `i128`                  | ~25       | Compliance transaction limit (0 = no limit)         |
+| `MultiSigSigners`        | `Vec<Address>`          | ~18       | Multi-sig signer set                                |
+| `MultiSigThreshold`      | `u32`                   | ~22       | Required approval count                             |
+| `Paused`                 | `bool`                  | ~9        | Circuit-breaker pause state                         |
+| `ComplianceEventCounter` | `u64`                   | ~27       | Compliance event sequence counter                   |
+| `ReportingSnapshot`      | `ReportingSnapshotData` | ~22       | Latest regulatory snapshot                          |
+| `CachedTotalAssets`      | `i128`                  | ~21       | NAV cache — updated on deposit/withdraw/yield (#85) |
 
 `CachedTotalAssets` was moved from persistent to instance storage (#85): it is written on almost every state-changing operation and read on every asset query, so instance storage eliminates separate persistent reads and removes its individual rent obligation.
 
@@ -212,21 +212,21 @@ All configuration and global aggregate caches are in instance storage.
 
 ### Persistent storage
 
-| Key | Rust type | Key bytes | Value bytes | Description |
-|-----|-----------|-----------|-------------|-------------|
-| `VaultKey::TotalInvestments` | `i128` | ~21 | 16 | Cumulative USDC sent to projects |
-| `VaultKey::ProjectInvestment(u32)` | `i128` | ~25 | 16 | USDC invested in a specific project |
-| `VaultKey::YieldPerShareAccum` | `i128` | ~24 | 16 | Global yield-per-share accumulator (×10¹⁸) |
-| `VaultKey::YieldDebt(Address)` | `i128` | ~42 | 16 | Per-investor yield checkpoint at last claim |
-| `VaultKey::InsuranceFund` | `i128` | ~17 | 16 | Insurance fund USDC balance |
-| `VaultKey::InsuranceClaimed(u32)` | `bool` | ~23 | 1 | `true` once insurance payout made for project |
-| `VaultKey::TotalDeposited(Address)` | `i128` | ~46 | 16 | Lifetime USDC deposited by an investor |
-| `VaultKey::QueueHead` | `u64` | ~14 | 8 | Oldest unprocessed redemption queue entry |
-| `VaultKey::QueueTail` | `u64` | ~14 | 8 | Next free redemption queue index |
-| `VaultKey::QueueEntry(u64)` | `QueuedClaim` | ~15 | ~48 | A queued redemption by index |
-| `VaultKey::CarbonCreditBalance(Address)` | `i128` | ~30 | 16 | Carbon credit balance per address |
-| `VaultKey::ComplianceEvent(u64)` | `ComplianceEventData` | ~22 | ~100+ | A compliance event record |
-| `VaultKey::InsuranceClaimed(u32)` | `bool` | ~23 | 1 | One-time insurance claim flag per project |
+| Key                                      | Rust type             | Key bytes | Value bytes | Description                                   |
+| ---------------------------------------- | --------------------- | --------- | ----------- | --------------------------------------------- |
+| `VaultKey::TotalInvestments`             | `i128`                | ~21       | 16          | Cumulative USDC sent to projects              |
+| `VaultKey::ProjectInvestment(u32)`       | `i128`                | ~25       | 16          | USDC invested in a specific project           |
+| `VaultKey::YieldPerShareAccum`           | `i128`                | ~24       | 16          | Global yield-per-share accumulator (×10¹⁸)    |
+| `VaultKey::YieldDebt(Address)`           | `i128`                | ~42       | 16          | Per-investor yield checkpoint at last claim   |
+| `VaultKey::InsuranceFund`                | `i128`                | ~17       | 16          | Insurance fund USDC balance                   |
+| `VaultKey::InsuranceClaimed(u32)`        | `bool`                | ~23       | 1           | `true` once insurance payout made for project |
+| `VaultKey::TotalDeposited(Address)`      | `i128`                | ~46       | 16          | Lifetime USDC deposited by an investor        |
+| `VaultKey::QueueHead`                    | `u64`                 | ~14       | 8           | Oldest unprocessed redemption queue entry     |
+| `VaultKey::QueueTail`                    | `u64`                 | ~14       | 8           | Next free redemption queue index              |
+| `VaultKey::QueueEntry(u64)`              | `QueuedClaim`         | ~15       | ~48         | A queued redemption by index                  |
+| `VaultKey::CarbonCreditBalance(Address)` | `i128`                | ~30       | 16          | Carbon credit balance per address             |
+| `VaultKey::ComplianceEvent(u64)`         | `ComplianceEventData` | ~22       | ~100+       | A compliance event record                     |
+| `VaultKey::InsuranceClaimed(u32)`        | `bool`                | ~23       | 1           | One-time insurance claim flag per project     |
 
 ---
 
@@ -274,16 +274,16 @@ Call `compact_archive(project_id)` when ALL of the following hold:
 
 Soroban charges rent based on **entry size in bytes × ledger TTL**. The following are rough estimates.
 
-| Entry | Key bytes | Value bytes | Total | Notes |
-|-------|-----------|-------------|-------|-------|
-| `ProjectData` (max URI) | ~12 | ~580 | ~592 | Dominant cost per project |
-| `ProjectData` (64-byte IPFS CID) | ~12 | ~132 | ~144 | Typical cost |
-| `ArchiveSummary` | ~9 | ~52 | ~61 | After `compact_archive` |
-| `Proposal` (short description) | ~13 | ~100 | ~113 | Depends on description length |
-| `HasVoted(id, addr)` | ~47 | 1 | ~48 | One per voter per proposal |
-| `YieldDebt(addr)` | ~42 | 16 | ~58 | One per investor who claims yield |
-| `TotalDeposited(addr)` | ~46 | 16 | ~62 | One per depositing investor |
-| `ProjectInvestment(id)` | ~25 | 16 | ~41 | One per funded project |
+| Entry                            | Key bytes | Value bytes | Total | Notes                             |
+| -------------------------------- | --------- | ----------- | ----- | --------------------------------- |
+| `ProjectData` (max URI)          | ~12       | ~580        | ~592  | Dominant cost per project         |
+| `ProjectData` (64-byte IPFS CID) | ~12       | ~132        | ~144  | Typical cost                      |
+| `ArchiveSummary`                 | ~9        | ~52         | ~61   | After `compact_archive`           |
+| `Proposal` (short description)   | ~13       | ~100        | ~113  | Depends on description length     |
+| `HasVoted(id, addr)`             | ~47       | 1           | ~48   | One per voter per proposal        |
+| `YieldDebt(addr)`                | ~42       | 16          | ~58   | One per investor who claims yield |
+| `TotalDeposited(addr)`           | ~46       | 16          | ~62   | One per depositing investor       |
+| `ProjectInvestment(id)`          | ~25       | 16          | ~41   | One per funded project            |
 
 Instance storage is billed as a single ledger entry for all instance keys combined; total instance size for the vault is approximately 400–600 bytes (configuration only, no per-entity data).
 
@@ -293,11 +293,11 @@ Instance storage is billed as a single ledger entry for all instance keys combin
 
 Cross-contract calls are the most expensive single operation in Soroban. Each call costs several thousand instructions beyond the callee's own work.
 
-| Operation | Cross-contract calls | Notes |
-|-----------|---------------------|-------|
-| `fund_project` | 1 (`get_project`) | Previously 2 — `total_projects()` removed (#87) |
-| `get_expected_returns` | 1 + N (`total_projects` + per-funded project `get_project`) | N = number of funded projects |
-| `calculate_carbon_credits` | 1 (`get_project`) | Cannot be reduced further |
+| Operation                  | Cross-contract calls                                        | Notes                                           |
+| -------------------------- | ----------------------------------------------------------- | ----------------------------------------------- |
+| `fund_project`             | 1 (`get_project`)                                           | Previously 2 — `total_projects()` removed (#87) |
+| `get_expected_returns`     | 1 + N (`total_projects` + per-funded project `get_project`) | N = number of funded projects                   |
+| `calculate_carbon_credits` | 1 (`get_project`)                                           | Cannot be reduced further                       |
 
 `fund_project_internal` was optimised to make a single cross-contract call (`get_project`) instead of two (`total_projects` + `get_project`). The project-not-found case is handled by `get_project`'s own error path. A local check (`project_id == 0`) rejects the invalid zero ID without a cross-contract call.
 
@@ -305,24 +305,24 @@ Cross-contract calls are the most expensive single operation in Soroban. Each ca
 
 ## Access patterns
 
-| Operation | Keys read | Keys written |
-|-----------|-----------|--------------|
-| `create_project` | `StateVersion`, `Whitelist(creator)`, `ProjectCounter` | `Project(id)`, `ProjectCounter` |
-| `archive_project` | `Project(id)` | `Project(id)` |
-| `compact_archive` | `Project(id)` | `Arch(id)` — removes `Project(id)` |
-| `get_archive_summary` | `Arch(id)` | — |
-| `update_impact_score` | `Project(id)` | `Project(id)` (skipped if no-op) |
-| `certify_project` | `Whitelister`, owner (via `get_owner`) | `Project(id)` |
-| `create_proposal` | `ProposalCounter` | `Proposal(id)`, `ProposalCounter` |
-| `cast_vote` | `HasVoted(id, addr)`, `Proposal(id)` | `Proposal(id)`, `HasVoted(id, addr)` |
-| `execute_proposal` | `Proposal(id)` | `Proposal(id)` |
-| `deposit` | `UsdcSac`, `InsuranceFund`, `TotalDeposited(from)`, `CachedTotalAssets` | `InsuranceFund`, `TotalDeposited(from)`, `CachedTotalAssets` |
-| `withdraw` | `UsdcSac`, `CachedTotalAssets` | `CachedTotalAssets` |
-| `fund_project` | `Registry`, `UsdcSac`, `InsuranceFund`, `ProjectInvestment(id)`, `TotalInvestments` + 1 cross-contract `get_project` | `ProjectInvestment(id)`, `TotalInvestments` |
-| `receive_yield` | `YieldPerShareAccum` | `YieldPerShareAccum` |
-| `claim_yield` | `YieldPerShareAccum`, `YieldDebt(from)`, `UsdcSac`, `CachedTotalAssets` | `YieldDebt(from)`, `CachedTotalAssets` |
-| `get_portfolio` | `YieldPerShareAccum`, `YieldDebt(addr)`, `TotalDeposited(addr)` | — |
-| `claim_insurance` | `InsuranceFund`, `InsuranceClaimed(id)` | `InsuranceFund`, `InsuranceClaimed(id)` |
+| Operation             | Keys read                                                                                                            | Keys written                                                 |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `create_project`      | `StateVersion`, `Whitelist(creator)`, `ProjectCounter`                                                               | `Project(id)`, `ProjectCounter`                              |
+| `archive_project`     | `Project(id)`                                                                                                        | `Project(id)`                                                |
+| `compact_archive`     | `Project(id)`                                                                                                        | `Arch(id)` — removes `Project(id)`                           |
+| `get_archive_summary` | `Arch(id)`                                                                                                           | —                                                            |
+| `update_impact_score` | `Project(id)`                                                                                                        | `Project(id)` (skipped if no-op)                             |
+| `certify_project`     | `Whitelister`, owner (via `get_owner`)                                                                               | `Project(id)`                                                |
+| `create_proposal`     | `ProposalCounter`                                                                                                    | `Proposal(id)`, `ProposalCounter`                            |
+| `cast_vote`           | `HasVoted(id, addr)`, `Proposal(id)`                                                                                 | `Proposal(id)`, `HasVoted(id, addr)`                         |
+| `execute_proposal`    | `Proposal(id)`                                                                                                       | `Proposal(id)`                                               |
+| `deposit`             | `UsdcSac`, `InsuranceFund`, `TotalDeposited(from)`, `CachedTotalAssets`                                              | `InsuranceFund`, `TotalDeposited(from)`, `CachedTotalAssets` |
+| `withdraw`            | `UsdcSac`, `CachedTotalAssets`                                                                                       | `CachedTotalAssets`                                          |
+| `fund_project`        | `Registry`, `UsdcSac`, `InsuranceFund`, `ProjectInvestment(id)`, `TotalInvestments` + 1 cross-contract `get_project` | `ProjectInvestment(id)`, `TotalInvestments`                  |
+| `receive_yield`       | `YieldPerShareAccum`                                                                                                 | `YieldPerShareAccum`                                         |
+| `claim_yield`         | `YieldPerShareAccum`, `YieldDebt(from)`, `UsdcSac`, `CachedTotalAssets`                                              | `YieldDebt(from)`, `CachedTotalAssets`                       |
+| `get_portfolio`       | `YieldPerShareAccum`, `YieldDebt(addr)`, `TotalDeposited(addr)`                                                      | —                                                            |
+| `claim_insurance`     | `InsuranceFund`, `InsuranceClaimed(id)`                                                                              | `InsuranceFund`, `InsuranceClaimed(id)`                      |
 
 ---
 
