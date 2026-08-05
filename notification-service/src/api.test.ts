@@ -121,7 +121,6 @@ describe("GET /notifications/history", () => {
 
 // ── Issue #218: input validation for malformed payloads ─────────────────────
 
-describe("PUT /preferences/:address input validation", () => {
 describe("CORS configuration", () => {
   let store: Store;
 
@@ -267,14 +266,6 @@ describe("CORS configuration", () => {
 
 // ── Issue #219: health-check with DB connectivity ──────────────────────────
 
-describe("GET /health with DB connectivity", () => {
-      .get("/health")
-      .set("Origin", "https://heliobond.io");
-
-    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
-  });
-});
-
 describe("GET /metrics", () => {
   let store: Store;
 
@@ -305,6 +296,7 @@ describe("GET /metrics", () => {
 
     expect(res.status).toBe(503);
     expect(res.body.status).toBe("degraded");
+  });
   it("returns snapshot from the provided Metrics instance", async () => {
     store = makeStore();
     const metrics = new Metrics();

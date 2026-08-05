@@ -2284,17 +2284,13 @@ fn test_get_project_investments_batch_returns_correct_amounts() {
     let pid1 = registry_client.create_project(
         &creator1,
         &String::from_str(&s.env, "Alpha"),
-        &String::from_str(&s.env, "desc"),
-        &100u32,
-        &80u32,
+        &0u64,
         &test_metadata_hash(&s.env),
     );
     let pid2 = registry_client.create_project(
         &creator2,
         &String::from_str(&s.env, "Beta"),
-        &String::from_str(&s.env, "desc"),
-        &90u32,
-        &70u32,
+        &0u64,
         &test_metadata_hash(&s.env),
     );
 
@@ -2394,9 +2390,7 @@ fn test_get_all_project_investments_returns_all() {
         let pid = registry_client.create_project(
             &creator,
             &String::from_str(&s.env, "Gamma"),
-            &String::from_str(&s.env, "desc"),
-            &100u32,
-            &100u32,
+            &0u64,
             &test_metadata_hash(&s.env),
         );
 
