@@ -2098,11 +2098,6 @@ fn check_deposit_lock(env: &Env, address: &Address) {
         .persistent()
         .get::<_, u64>(&VaultKey::LastDeposit(address.clone()))
     {
-        let window: u32 = env
-            .storage()
-            .instance()
-            .get(&VaultKey::WithdrawalWindowLedgers)
-            .unwrap_or(1);
         if env.ledger().timestamp() < deposited_at + MIN_LOCK_PERIOD {
             panic_with_error!(env, VaultError::DepositLocked);
         }
