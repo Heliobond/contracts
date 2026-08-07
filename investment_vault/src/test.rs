@@ -2456,48 +2456,54 @@ fn test_get_all_project_investments_returns_all() {
         s.vault_client.set_withdrawal_window(&10u32);
         assert_eq!(s.vault_client.get_withdrawal_window(), 10u32);
     }
-    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
 
-    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
-    let project_id = registry_client.create_project(
-        &creator,
-        &String::from_str(&s.env, "ipfs://QmIdempotent"),
-        &0u64,
-        &test_metadata_hash(&s.env),
-    );
-    // Fund 490 USDC (49% util) to reduce liquidity below the full redemption
-    // value, forcing the withdrawal into the FIFO queue.
-    s.vault_client.fund_project(&project_id, &490_0000000i128);
-    s.env.ledger().with_mut(|li| {
-        li.sequence_number += 1;
-    });
-    // Shares are burned immediately; claim is enqueued.
-    let enqueued = s.vault_client.withdraw(&investor, &shares, &0);
-    assert_eq!(enqueued, 0);
-    assert_eq!(s.vault_client.balance(&investor), 0);
+    #[test]
+    fn test_claim_idempotent_returns_zero_when_queue_empty() {
+        let s = setup();
+        let investor = Address::generate(&s.env);
+        let creator = Address::generate(&s.env);
+        mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+        let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
 
-    // Restore liquidity so claim() can settle.
-    let funder = Address::generate(&s.env);
-    mint_usdc(&s.env, &s.usdc_sac, &funder, 2_000_0000000i128);
-    s.vault_client.deposit(&funder, &2_000_0000000i128);
+        let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+        registry_client.set_whitelist(&creator, &true);
+        let project_id = registry_client.create_project(
+            &creator,
+            &String::from_str(&s.env, "ipfs://QmIdempotent"),
+            &0u64,
+            &test_metadata_hash(&s.env),
+        );
+        // Fund 490 USDC (49% util) to reduce liquidity below the full redemption
+        // value, forcing the withdrawal into the FIFO queue.
+        s.vault_client.fund_project(&project_id, &490_0000000i128);
+        s.env.ledger().with_mut(|li| {
+            li.sequence_number += 1;
+        });
+        // Shares are burned immediately; claim is enqueued.
+        let enqueued = s.vault_client.withdraw(&investor, &shares, &0);
+        assert_eq!(enqueued, 0);
+        assert_eq!(s.vault_client.balance(&investor), 0);
 
-    let usdc_client = TokenClient::new(&s.env, &s.usdc_sac);
+        // Restore liquidity so claim() can settle.
+        let funder = Address::generate(&s.env);
+        mint_usdc(&s.env, &s.usdc_sac, &funder, 2_000_0000000i128);
+        s.vault_client.deposit(&funder, &2_000_0000000i128);
 
-    // First claim: settles the queued entry, transfers USDC to investor.
-    let paid_first = s.vault_client.claim();
-    assert!(paid_first > 0);
-    let balance_after_first = usdc_client.balance(&investor);
-    assert_eq!(balance_after_first, paid_first);
+        let usdc_client = TokenClient::new(&s.env, &s.usdc_sac);
 
-    // Second claim: queue is empty (head == tail) → returns 0 immediately.
-    let paid_second = s.vault_client.claim();
-    assert_eq!(paid_second, 0);
+        // First claim: settles the queued entry, transfers USDC to investor.
+        let paid_first = s.vault_client.claim();
+        assert!(paid_first > 0);
+        let balance_after_first = usdc_client.balance(&investor);
+        assert_eq!(balance_after_first, paid_first);
 
-    // Investor's USDC balance must not have changed — no double payout.
-    assert_eq!(usdc_client.balance(&investor), balance_after_first);
-}
+        // Second claim: queue is empty (head == tail) → returns 0 immediately.
+        let paid_second = s.vault_client.claim();
+        assert_eq!(paid_second, 0);
+
+        // Investor's USDC balance must not have changed — no double payout.
+        assert_eq!(usdc_client.balance(&investor), balance_after_first);
+    }
 
 // ── Issue #39: dynamic (volume-tiered) fee structure ─────────────────────────
 
