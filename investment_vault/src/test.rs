@@ -2311,6 +2311,7 @@ fn test_get_project_investments_batch_returns_correct_amounts() {
 #[test]
 fn test_get_all_project_investments_returns_all() {
     // ── Issue #176: deposit() must reject a zero-amount deposit ──────────────────
+}
 
     #[test]
     #[should_panic(expected = "Error(Contract, #1)")]

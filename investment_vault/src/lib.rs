@@ -399,7 +399,7 @@ impl InvestmentVault {
             env.storage().instance().get(&VaultKey::VolumeTierThreshold);
         let volume_tier_bps: Option<u32> =
             env.storage().instance().get(&VaultKey::VolumeTierFeeBps);
-        let effective_fee_bps = logic::logic::calculate_dynamic_fee_bps(
+        let effective_fee_bps = logic::calculate_dynamic_fee_bps(
             usdc_amount,
             fee_bps,
             volume_threshold,
