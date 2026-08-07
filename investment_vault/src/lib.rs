@@ -260,7 +260,7 @@ impl InvestmentVault {
         require_admin_approval(&env, approvals);
         let mut seen = Vec::new(&env);
         for funding in fundings.iter() {
-            if seen.contains(&funding.0) {
+            if seen.contains(funding.0) {
                 panic_with_error!(&env, VaultError::DuplicateProjectId);
             }
             seen.push_back(funding.0);
@@ -291,8 +291,7 @@ impl InvestmentVault {
                 .unwrap_or(0);
             if investment > 0 {
                 let project = registry.get_project(&i);
-                let score_rate =
-                    project.credit_quality as i128 + project.green_impact as i128;
+                let score_rate = project.credit_quality as i128 + project.green_impact as i128;
 
                 let funded_at: u64 = env
                     .storage()
@@ -303,8 +302,7 @@ impl InvestmentVault {
                 if funded_at > 0 && now > funded_at {
                     // Time-weighted: accrue interest over elapsed time (#34).
                     let elapsed = (now - funded_at) as i128;
-                    expected +=
-                        investment * score_rate * elapsed / (200 * ANNUAL_PERIOD_SECS);
+                    expected += investment * score_rate * elapsed / (200 * ANNUAL_PERIOD_SECS);
                 } else {
                     // Static fallback for pre-existing investments without a timestamp.
                     expected += investment * score_rate / 200;
@@ -401,7 +399,7 @@ impl InvestmentVault {
             env.storage().instance().get(&VaultKey::VolumeTierThreshold);
         let volume_tier_bps: Option<u32> =
             env.storage().instance().get(&VaultKey::VolumeTierFeeBps);
-        let effective_fee_bps = logic::logic::calculate_dynamic_fee_bps(
+        let effective_fee_bps = logic::calculate_dynamic_fee_bps(
             usdc_amount,
             fee_bps,
             volume_threshold,
@@ -1127,6 +1125,7 @@ impl InvestmentVault {
             .instance()
             .get(&VaultKey::WithdrawalWindowLedgers)
             .unwrap_or(1)
+    }
     // ── Dynamic fee structure (#39) ───────────────────────────────────────────
 
     /// Configure a two-tier volume-discount fee schedule for deposits (#39).
@@ -1151,9 +1150,7 @@ impl InvestmentVault {
             env.storage()
                 .instance()
                 .remove(&VaultKey::VolumeTierThreshold);
-            env.storage()
-                .instance()
-                .remove(&VaultKey::VolumeTierFeeBps);
+            env.storage().instance().remove(&VaultKey::VolumeTierFeeBps);
             return;
         }
         env.storage()
@@ -1179,6 +1176,7 @@ impl InvestmentVault {
             .get(&VaultKey::VolumeTierFeeBps)
             .unwrap_or(0);
         (threshold, bps)
+    }
     // ── Per-project investment cap (#32) ──────────────────────────────────────
 
     /// Set the maximum total USDC the vault may invest in any single project. Admin-only.
@@ -1191,7 +1189,11 @@ impl InvestmentVault {
         if cap < 0 {
             panic_with_error!(&env, VaultError::AmountNotPositive);
         }
-        let stored_cap = if cap == 0 { MAX_INVESTMENT_PER_PROJECT } else { cap };
+        let stored_cap = if cap == 0 {
+            MAX_INVESTMENT_PER_PROJECT
+        } else {
+            cap
+        };
         env.storage()
             .instance()
             .set(&VaultKey::MaxInvestmentPerProject, &stored_cap);
@@ -1215,7 +1217,11 @@ impl InvestmentVault {
             .get(&VaultKey::ProjectInvestment(project_id))
             .unwrap_or(0);
         let remaining = cap - invested;
-        if remaining < 0 { 0 } else { remaining }
+        if remaining < 0 {
+            0
+        } else {
+            remaining
+        }
     }
 
     // ── Deposit lock-up expiry query (#33) ────────────────────────────────────
@@ -2092,12 +2098,6 @@ fn check_deposit_lock(env: &Env, address: &Address) {
         .persistent()
         .get::<_, u64>(&VaultKey::LastDeposit(address.clone()))
     {
-        let window: u32 = env
-            .storage()
-            .instance()
-            .get(&VaultKey::WithdrawalWindowLedgers)
-            .unwrap_or(1);
-        if env.ledger().sequence() < last_seq.saturating_add(window) {
         if env.ledger().timestamp() < deposited_at + MIN_LOCK_PERIOD {
             panic_with_error!(env, VaultError::DepositLocked);
         }

@@ -61,3 +61,32 @@ Each event lists the public [`INTERFACE.md`](INTERFACE.md) function(s) that emit
 - **Data**: `(from: Address, amount: i128)`
 - **Description**: Emitted when yield repayment USDC is received from a project and folded into the yield-per-share accumulator for later claims.
 - **Emitted by**: [`receive_yield`](INTERFACE.md#investmentvault)
+
+
+---
+## 📋 Auto-Detected Missing Events (20260802_071554)
+
+The following 3 events were detected in source but missing from EVENTS.md:
+
+| # | Event | Source |
+|---|-------|--------|
+| 1 | `project_archived` | project_registry/src/ |
+| 2 | `project_compacted` | project_registry/src/ |
+| 3 | `project_deleted` | project_registry/src/ |
+
+> **Detection**: Automated scan of source for event emission patterns.
+> **Verify**: `cargo test -- --nocapture`
+
+Part of Stellar Wave Program - Wave 7
+
+
+---
+## 📋 Auto-Detected Missing Events (20260802_071655)
+
+The following 0 events were detected in source but missing from EVENTS.md:
+
+
+> **Detection**: Automated scan for event emission patterns in source.
+> Verify with: `cargo test -- --nocapture`
+
+Part of Stellar Wave Program - Wave 7

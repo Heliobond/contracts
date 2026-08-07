@@ -43,7 +43,10 @@ export function createApi(
     const origin = req.headers.origin;
     if (origin && options.allowedOrigins?.includes(origin)) {
       res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Access-Control-Allow-Methods", "GET, PUT, DELETE, OPTIONS");
+      res.setHeader(
+        "Access-Control-Allow-Methods",
+        "GET, PUT, DELETE, OPTIONS",
+      );
       res.setHeader("Access-Control-Allow-Headers", "Content-Type");
     }
     if (req.method === "OPTIONS") {
@@ -133,7 +136,11 @@ export function createApi(
       return;
     }
 
-    if (webhook_url !== undefined && typeof webhook_url === "string" && webhook_url.length > 0) {
+    if (
+      webhook_url !== undefined &&
+      typeof webhook_url === "string" &&
+      webhook_url.length > 0
+    ) {
       try {
         new URL(webhook_url);
       } catch {
@@ -147,8 +154,15 @@ export function createApi(
       return;
     }
 
-    if (min_delta !== undefined && (typeof min_delta !== "number" || !Number.isFinite(min_delta) || min_delta < 0)) {
-      res.status(400).json({ error: "min_delta must be a non-negative number" });
+    if (
+      min_delta !== undefined &&
+      (typeof min_delta !== "number" ||
+        !Number.isFinite(min_delta) ||
+        min_delta < 0)
+    ) {
+      res
+        .status(400)
+        .json({ error: "min_delta must be a non-negative number" });
       return;
     }
 

@@ -106,6 +106,7 @@ Multi-sig errors:
 | `stored_state_version()` | none | `u32` | Schema version recorded in instance storage; 0 for unversioned deployments. |
 | `migrate_state(from_version: u32)` | owner | `u32` | Migrates storage from `from_version` to the current schema version. |
 | `upgrade(new_wasm_hash: BytesN<32>)` | owner | none | Deploys new contract code at the current address. |
+| `update_impact_scores_batch(updates: Vec<(u32, u32, u32)>)` | owner | none | Batch update multiple project scores atomically. |
 
 ## InvestmentVault
 
@@ -197,6 +198,18 @@ Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 | `health_check()` | none | `HealthStatus` | Consolidated status snapshot for monitoring integrations (#77). |
 | `state_version()` | none | `u32` | Schema version supported by this contract build. |
 | `stored_state_version()` | none | `u32` | Schema version recorded in instance storage; 0 for unversioned deployments. |
+| `is_funding_round_active()` | none | `bool` | Whether a funding round is currently active (#38). |
+| `start_funding_round()` | owner | none | Opens a funding round, blocking share transfers (#38). |
+| `end_funding_round()` | owner | none | Closes the active funding round, re-enabling share transfers (#38). |
+| `set_withdrawal_window(ledgers: u32)` | owner | none | Configures minimum ledgers between deposit and withdrawal; 0 disables (#36). |
+| `get_withdrawal_window()` | none | `u32` | Returns configured withdrawal window in ledgers (#36). |
+| `set_volume_fee_tier(threshold: i128, discounted_bps: u32)` | owner | none | Configures volume-discount tier for management fees (#39). |
+| `get_volume_fee_tier()` | none | `(i128, u32)` | Returns (threshold, discounted_bps); (0,0) when inactive (#39). |
+| `set_max_investment_per_project(cap: i128)` | owner | none | Sets max USDC per project; 0 restores default (#32). |
+| `investment_capacity(project_id: u32)` | none | `i128` | Returns remaining USDC capacity before hitting per-project cap (#32). |
+| `get_deposit_lock_expiry(account: Address)` | none | `u64` | Returns the Unix timestamp when the account deposit lock expires; 0 if never deposited. |
+| `get_all_project_investments()` | none | `Vec<(u32, i128)>` | Returns (project_id, invested) for all projects 1..total_projects (#35). |
+| `get_project_investments_batch(project_ids: Vec<u32>)` | none | `Vec<i128>` | Returns investment amounts for requested IDs in order (#35). |
 | `migrate_state(from_version: u32)` | owner | `u32` | Migrates storage from `from_version` to the current schema version. |
 | `upgrade(new_wasm_hash: BytesN<32>)` | owner | none | Deploys new contract code at the current address. |
 
