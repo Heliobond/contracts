@@ -1932,7 +1932,6 @@ fn receive_yield_internal(env: Env, from: Address, amount: i128) {
 
     events::yield_received(&env, &from, amount);
 }
-} // close impl InvestmentVault
 
 fn claim_insurance_internal(env: Env, project_id: u32, recipient: Address, amount: i128) {
     if amount <= 0 {
