@@ -50,9 +50,7 @@ describe("loadConfig", () => {
     const config = loadConfig();
 
     expect(config.rpc_url).toBe("https://soroban-testnet.stellar.org");
-    expect(config.network_passphrase).toBe(
-      "Test SDF Network ; September 2015",
-    );
+    expect(config.network_passphrase).toBe("Test SDF Network ; September 2015");
     expect(config.db_path).toBe("./data/notifications.db");
     expect(config.poll_interval_ms).toBe(30000);
     expect(config.api_port).toBe(3000);

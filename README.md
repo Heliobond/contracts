@@ -4,10 +4,10 @@
 
 On-chain core of [Heliobond](https://heliobond.io) — a green bond platform built on Stellar. Two [Soroban](https://stellar.org/soroban) smart contracts manage the full lifecycle from project registration through investor deposits and capital disbursement.
 
-| Contract | Crate | Purpose |
-|---|---|---|
+| Contract          | Crate              | Purpose                                                  |
+| ----------------- | ------------------ | -------------------------------------------------------- |
 | `ProjectRegistry` | `project_registry` | Stores project metadata and oracle-updated impact scores |
-| `InvestmentVault` | `investment_vault` | SEP-41 token vault; accepts USDC and mints HBS shares |
+| `InvestmentVault` | `investment_vault` | SEP-41 token vault; accepts USDC and mints HBS shares    |
 
 ---
 
@@ -100,10 +100,10 @@ For details, see [`docs/GOVERNANCE.md`](./docs/GOVERNANCE.md).
 ### API & Rust Crate Documentation
 
 Rust docs are automatically generated and published via CI:
-* Deployed reference: [https://BuildersWCT.github.io/contracts/](https://BuildersWCT.github.io/contracts/)
+
+- Deployed reference: [https://BuildersWCT.github.io/contracts/](https://BuildersWCT.github.io/contracts/)
 
 For the complete, up-to-date interface specification including all functions, parameters, and error codes, see [`INTERFACE.md`](./INTERFACE.md).
-
 
 ### ProjectRegistry
 
@@ -117,23 +117,23 @@ Sets the `Ownable` owner to `admin` and records the `whitelister` address.
 
 **Public functions**
 
-| Function | Auth required | Description |
-|---|---|---|
-| `set_whitelist(account, status)` | `Whitelister` | Grant or revoke whitelist status for a creator address |
-| `create_project(creator, uri, maturity_date, metadata_hash)` | `creator` | Register a new project; requires whitelist; returns `project_id` |
-| `get_project(id)` | none | Return `ProjectData` for a given `project_id`; panics if not found |
-| `total_projects()` | none | Return the current project counter |
-| `update_impact_score(project_id, credit_quality, green_impact)` | `Admin` | Set impact scores (0–100 each) for a project |
-| `update_impact_score_approved(project_id, credit_quality, green_impact, approvals)` | Multi-sig signers | Multi-sig variant for critical operations |
-| `update_credit_quality_score(project_id, credit_quality)` | `Admin` | Update credit score only |
-| `get_projects_page(offset, limit)` | none | Paginated project listing with stable ordering |
-| `get_all_projects()` | none | Return all non-archived projects |
-| `certify_project(caller, project_id, status)` | Whitelister or Admin | Update project certification status |
-| `create_proposal(proposer, description, voting_duration_secs)` | `proposer` | Create governance proposal |
-| `cast_vote(voter, proposal_id, support, weight)` | `voter` | Vote on proposal with HBS weight |
-| `transfer_ownership(new_owner)` | `Admin` | Transfer contract ownership |
-| `set_multisig_admin(signers, threshold)` | `Admin` | Configure multi-sig for critical operations |
-| `pause()` / `unpause()` | `Admin` | Circuit breaker for emergency pauses |
+| Function                                                                            | Auth required        | Description                                                        |
+| ----------------------------------------------------------------------------------- | -------------------- | ------------------------------------------------------------------ |
+| `set_whitelist(account, status)`                                                    | `Whitelister`        | Grant or revoke whitelist status for a creator address             |
+| `create_project(creator, uri, maturity_date, metadata_hash)`                        | `creator`            | Register a new project; requires whitelist; returns `project_id`   |
+| `get_project(id)`                                                                   | none                 | Return `ProjectData` for a given `project_id`; panics if not found |
+| `total_projects()`                                                                  | none                 | Return the current project counter                                 |
+| `update_impact_score(project_id, credit_quality, green_impact)`                     | `Admin`              | Set impact scores (0–100 each) for a project                       |
+| `update_impact_score_approved(project_id, credit_quality, green_impact, approvals)` | Multi-sig signers    | Multi-sig variant for critical operations                          |
+| `update_credit_quality_score(project_id, credit_quality)`                           | `Admin`              | Update credit score only                                           |
+| `get_projects_page(offset, limit)`                                                  | none                 | Paginated project listing with stable ordering                     |
+| `get_all_projects()`                                                                | none                 | Return all non-archived projects                                   |
+| `certify_project(caller, project_id, status)`                                       | Whitelister or Admin | Update project certification status                                |
+| `create_proposal(proposer, description, voting_duration_secs)`                      | `proposer`           | Create governance proposal                                         |
+| `cast_vote(voter, proposal_id, support, weight)`                                    | `voter`              | Vote on proposal with HBS weight                                   |
+| `transfer_ownership(new_owner)`                                                     | `Admin`              | Transfer contract ownership                                        |
+| `set_multisig_admin(signers, threshold)`                                            | `Admin`              | Configure multi-sig for critical operations                        |
+| `pause()` / `unpause()`                                                             | `Admin`              | Circuit breaker for emergency pauses                               |
 
 **ProjectData struct**
 
@@ -166,25 +166,25 @@ Sets the `Ownable` owner to `admin`, stores USDC SAC and Registry addresses, ini
 
 **Public functions**
 
-| Function | Auth required | Description |
-|---|---|---|
-| `deposit(from, usdc_amount)` | `from` | Transfer USDC from investor; mint HBS shares; return shares minted |
-| `batch_deposit(deposits)` | Each depositor | Batch deposit for multiple investors |
-| `withdraw(from, shares_amount)` | `from` | Burn HBS shares; enqueue if insufficient liquidity |
-| `claim()` | none | Settle queued redemptions FIFO; return USDC paid out |
-| `fund_project(project_id, amount)` | `Admin` | Cross-call Registry; transfer USDC to project owner |
-| `fund_project_with_approvals(project_id, amount, approvals)` | Multi-sig signers | Multi-sig variant for critical operations |
-| `batch_fund_projects(fundings, approvals)` | Admin or Multi-sig | Batch funding for multiple projects |
-| `receive_yield(from, amount)` | `Admin` | Register interest/yield payments from projects |
-| `claim_yield(from)` | `from` | Claim accrued yield when liquid |
-| `total_assets()` | none | Return `liquid_USDC + investments + expected_returns` |
-| `convert_to_shares(usdc_amount)` | none | Preview HBS for given USDC deposit (ERC-4626) |
-| `convert_to_assets(shares_amount)` | none | Preview USDC for given HBS redemption (ERC-4626) |
-| `get_expected_returns()` | none | Sum `investment × (credit_quality + green_impact) / 200` |
-| `claim_insurance(project_id, recipient, amount)` | `Admin` | Authorize default insurance payouts |
-| `set_multisig_admin(signers, threshold)` | `Admin` | Configure multi-sig for critical operations |
-| `transfer_ownership(new_owner)` | `Admin` | Transfer contract ownership |
-| `pause()` / `unpause()` | `Admin` | Circuit breaker for emergency pauses |
+| Function                                                     | Auth required      | Description                                                        |
+| ------------------------------------------------------------ | ------------------ | ------------------------------------------------------------------ |
+| `deposit(from, usdc_amount)`                                 | `from`             | Transfer USDC from investor; mint HBS shares; return shares minted |
+| `batch_deposit(deposits)`                                    | Each depositor     | Batch deposit for multiple investors                               |
+| `withdraw(from, shares_amount)`                              | `from`             | Burn HBS shares; enqueue if insufficient liquidity                 |
+| `claim()`                                                    | none               | Settle queued redemptions FIFO; return USDC paid out               |
+| `fund_project(project_id, amount)`                           | `Admin`            | Cross-call Registry; transfer USDC to project owner                |
+| `fund_project_with_approvals(project_id, amount, approvals)` | Multi-sig signers  | Multi-sig variant for critical operations                          |
+| `batch_fund_projects(fundings, approvals)`                   | Admin or Multi-sig | Batch funding for multiple projects                                |
+| `receive_yield(from, amount)`                                | `Admin`            | Register interest/yield payments from projects                     |
+| `claim_yield(from)`                                          | `from`             | Claim accrued yield when liquid                                    |
+| `total_assets()`                                             | none               | Return `liquid_USDC + investments + expected_returns`              |
+| `convert_to_shares(usdc_amount)`                             | none               | Preview HBS for given USDC deposit (ERC-4626)                      |
+| `convert_to_assets(shares_amount)`                           | none               | Preview USDC for given HBS redemption (ERC-4626)                   |
+| `get_expected_returns()`                                     | none               | Sum `investment × (credit_quality + green_impact) / 200`           |
+| `claim_insurance(project_id, recipient, amount)`             | `Admin`            | Authorize default insurance payouts                                |
+| `set_multisig_admin(signers, threshold)`                     | `Admin`            | Configure multi-sig for critical operations                        |
+| `transfer_ownership(new_owner)`                              | `Admin`            | Transfer contract ownership                                        |
+| `pause()` / `unpause()`                                      | `Admin`            | Circuit breaker for emergency pauses                               |
 
 The vault also exposes the full SEP-41 `FungibleToken` interface (`balance`, `transfer`, `allowance`, `approve`, etc.) and `FungibleBurnable` (`burn`, `burn_from`) from `stellar-tokens`.
 
@@ -275,49 +275,50 @@ Every state-changing function emits a structured event. Topics are indexed by th
 
 ### InvestmentVault
 
-| Event | Topics | Data | Emitted by |
-|---|---|---|---|
-| `Deposit` | `from` (Address) | `usdc_amount`, `shares_minted` (i128) | `deposit()` |
-| `Withdraw` | `from` (Address) | `shares_burned`, `usdc_returned` (i128) | `withdraw()` — immediate path |
-| `WithdrawQueued` | `from` (Address) | `shares_burned`, `usdc_owed` (i128) | `withdraw()` — queued path (insufficient liquidity) |
-| `WithdrawClaimed` | `to` (Address) | `usdc_paid` (i128), `claim_index` (u64) | `claim()` |
-| `ProjectFunded` | `project_id` (u32) | `amount` (i128), `recipient` (Address) | `fund_project()` |
-| `YieldReceived` | `from` (Address) | `amount` (i128) | `receive_yield()` |
-| `YieldClaimed` | `to` (Address) | `amount` (i128) | `claim_yield()` |
-| `InsuranceClaimed` | `project_id` (u32) | `recipient` (Address), `amount` (i128) | `claim_insurance()` |
-| `OwnershipTransfer` | (library) | `new_owner` (Address) | `transfer_ownership()` — emitted by `stellar-access` |
-| `OwnershipTransferCompleted` | (library) | `new_owner` (Address) | `accept_ownership()` — emitted by `stellar-access` |
-| `OwnershipRenounced` | (library) | — | `renounce_ownership()` — emitted by `stellar-access` |
+| Event                        | Topics             | Data                                    | Emitted by                                           |
+| ---------------------------- | ------------------ | --------------------------------------- | ---------------------------------------------------- |
+| `Deposit`                    | `from` (Address)   | `usdc_amount`, `shares_minted` (i128)   | `deposit()`                                          |
+| `Withdraw`                   | `from` (Address)   | `shares_burned`, `usdc_returned` (i128) | `withdraw()` — immediate path                        |
+| `WithdrawQueued`             | `from` (Address)   | `shares_burned`, `usdc_owed` (i128)     | `withdraw()` — queued path (insufficient liquidity)  |
+| `WithdrawClaimed`            | `to` (Address)     | `usdc_paid` (i128), `claim_index` (u64) | `claim()`                                            |
+| `ProjectFunded`              | `project_id` (u32) | `amount` (i128), `recipient` (Address)  | `fund_project()`                                     |
+| `YieldReceived`              | `from` (Address)   | `amount` (i128)                         | `receive_yield()`                                    |
+| `YieldClaimed`               | `to` (Address)     | `amount` (i128)                         | `claim_yield()`                                      |
+| `InsuranceClaimed`           | `project_id` (u32) | `recipient` (Address), `amount` (i128)  | `claim_insurance()`                                  |
+| `OwnershipTransfer`          | (library)          | `new_owner` (Address)                   | `transfer_ownership()` — emitted by `stellar-access` |
+| `OwnershipTransferCompleted` | (library)          | `new_owner` (Address)                   | `accept_ownership()` — emitted by `stellar-access`   |
+| `OwnershipRenounced`         | (library)          | —                                       | `renounce_ownership()` — emitted by `stellar-access` |
 
 ### ProjectRegistry
 
-| Event | Topics | Data | Emitted by |
-|---|---|---|---|
-| `ProjectCreated` | `project_id` (u32), `owner` (Address) | — | `create_project()` |
-| `ProjectUpdated` | `project_id` (u32) | `credit_quality`, `green_impact` (u32) | `update_impact_score()` (only when values change) |
-| `ScoreChanged` | `project_id` (u32) | `old_credit_quality`, `new_credit_quality`, `old_green_impact`, `new_green_impact`, `old_rate_bps`, `new_rate_bps` (u32) | `update_impact_score()`, `update_credit_quality_score()` (#131) |
-| `WhitelistSet` | `account` (Address) | `status` (bool) | `set_whitelist()` |
-| `ProjectCertified` | `project_id` (u32) | `status` (CertificationStatus) | `certify_project()` |
-| `ProposalCreated` | `proposal_id` (u32) | `proposer` (Address), `voting_ends_at` (u64) | `create_proposal()` |
-| `VoteCast` | `proposal_id` (u32) | `voter` (Address), `support` (bool), `weight` (i128) | `cast_vote()` |
-| `ProposalExecuted` | `proposal_id` (u32) | `passed` (bool) | `execute_proposal()` |
-| `OwnershipTransfer` | (library) | `new_owner` (Address) | `transfer_ownership()` — emitted by `stellar-access` |
-| `OwnershipTransferCompleted` | (library) | `new_owner` (Address) | `accept_ownership()` — emitted by `stellar-access` |
-| `OwnershipRenounced` | (library) | — | `renounce_ownership()` — emitted by `stellar-access` |
+| Event                        | Topics                                | Data                                                                                                                     | Emitted by                                                      |
+| ---------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `ProjectCreated`             | `project_id` (u32), `owner` (Address) | —                                                                                                                        | `create_project()`                                              |
+| `ProjectUpdated`             | `project_id` (u32)                    | `credit_quality`, `green_impact` (u32)                                                                                   | `update_impact_score()` (only when values change)               |
+| `ScoreChanged`               | `project_id` (u32)                    | `old_credit_quality`, `new_credit_quality`, `old_green_impact`, `new_green_impact`, `old_rate_bps`, `new_rate_bps` (u32) | `update_impact_score()`, `update_credit_quality_score()` (#131) |
+| `WhitelistSet`               | `account` (Address)                   | `status` (bool)                                                                                                          | `set_whitelist()`                                               |
+| `ProjectCertified`           | `project_id` (u32)                    | `status` (CertificationStatus)                                                                                           | `certify_project()`                                             |
+| `ProposalCreated`            | `proposal_id` (u32)                   | `proposer` (Address), `voting_ends_at` (u64)                                                                             | `create_proposal()`                                             |
+| `VoteCast`                   | `proposal_id` (u32)                   | `voter` (Address), `support` (bool), `weight` (i128)                                                                     | `cast_vote()`                                                   |
+| `ProposalExecuted`           | `proposal_id` (u32)                   | `passed` (bool)                                                                                                          | `execute_proposal()`                                            |
+| `OwnershipTransfer`          | (library)                             | `new_owner` (Address)                                                                                                    | `transfer_ownership()` — emitted by `stellar-access`            |
+| `OwnershipTransferCompleted` | (library)                             | `new_owner` (Address)                                                                                                    | `accept_ownership()` — emitted by `stellar-access`              |
+| `OwnershipRenounced`         | (library)                             | —                                                                                                                        | `renounce_ownership()` — emitted by `stellar-access`            |
 
 ---
 
 ## Tech Stack
 
-| Component | Version |
-|---|---|
-| Language | Rust (edition 2021, `#![no_std]`) |
-| Soroban SDK | `soroban-sdk = 26.1.0` |
-| OZ stellar-tokens | `stellar-tokens = 0.7.2` |
-| OZ stellar-access | `stellar-access = 0.7.2` |
-| OZ stellar-macros | `stellar-macros = 0.7.2` |
-| Compile target | `wasm32v1-none` |
-| Release profile | LTO, `opt-level = "z"`, `panic = "abort"` |
+| Component         | Version                                   |
+| ----------------- | ----------------------------------------- |
+| Language          | Rust (edition 2021, `#![no_std]`)         |
+| Soroban SDK       | `soroban-sdk = 26.1.0`                    |
+| OZ stellar-tokens | `stellar-tokens = 0.7.2`                  |
+| OZ stellar-access | `stellar-access = 0.7.2`                  |
+| OZ stellar-macros | `stellar-macros = 0.7.2`                  |
+| Compile target    | `wasm32v1-none`                           |
+| Release profile   | LTO, `opt-level = "z"`, `panic = "abort"` |
 
 ## Storage Rent Considerations
+
 Soroban charges rent for persistent storage. Projects, whitelists, and investments occupy persistent storage. To minimize costs, older inactive projects should be compacted using the `compact_archive` function, which reduces the storage footprint from ~580 bytes down to ~52 bytes. Instance storage is used for global configuration to lower per-access fees.

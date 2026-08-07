@@ -22,7 +22,7 @@ The `ProjectRegistry` contract manages project lifecycle, certification, reputat
   }
   ```
 - **`CertificationStatus`**: `None`, `Pending`, `Certified`, `Revoked`.
-- **`Proposal`**: 
+- **`Proposal`**:
   ```rust
   pub struct Proposal {
       pub description: String,
@@ -37,9 +37,11 @@ The `ProjectRegistry` contract manages project lifecycle, certification, reputat
 ### Key Functions
 
 #### `create_project(env: Env, creator: Address, uri: String, maturity_date: u64) -> u32`
-Creates a new project. 
+
+Creates a new project.
+
 - **Auth**: `creator` must authorize.
-- **Parameters**: 
+- **Parameters**:
   - `creator`: Project owner. Must be whitelisted.
   - `uri`: Project metadata URI.
   - `maturity_date`: Future Unix timestamp (0 for open-ended).
@@ -48,26 +50,34 @@ Creates a new project.
   ```javascript
   const tx = await contract.invoke({
     method: "create_project",
-    args: [creator, "https://example.com/project1", 0]
+    args: [creator, "https://example.com/project1", 0],
   });
   ```
 
 #### `get_project(env: Env, id: u32) -> ProjectData`
+
 Returns the state of a project.
+
 - **Errors**: `ProjectNotFound`.
 
 #### `update_impact_score(env: Env, project_id: u32, credit_quality: u32, green_impact: u32)`
+
 Updates the impact score (admin only).
+
 - **Auth**: Admin.
 - **Errors**: `ProjectNotFound`.
 
 #### `deposit_collateral(env: Env, project_id: u32, depositor: Address, token: Address, amount: i128)`
+
 Deposits collateral for a project.
+
 - **Auth**: `depositor`.
 - **Errors**: `ProjectNotFound`, `AmountMustBePositive`.
 
 #### `certify_project(env: Env, project_id: u32, status: CertificationStatus)`
+
 Updates a project's certification status.
+
 - **Auth**: Admin.
 - **Errors**: `ProjectNotFound`.
 
@@ -92,7 +102,9 @@ The `InvestmentVault` contract handles funding projects, claiming yields, and wi
 ### Key Functions
 
 #### `deposit(env: Env, caller: Address, amount: i128)`
+
 Deposits underlying tokens into the vault and mints shares.
+
 - **Auth**: `caller`.
 - **Parameters**: `amount` to deposit.
 - **Errors**: `VaultIsPaused`, `AmountMustBePositive`, `VaultCapExceeded`.
@@ -100,20 +112,25 @@ Deposits underlying tokens into the vault and mints shares.
   ```javascript
   const tx = await vault.invoke({
     method: "deposit",
-    args: [caller, 100000000] // 10 tokens with 7 decimals
+    args: [caller, 100000000], // 10 tokens with 7 decimals
   });
   ```
 
 #### `withdraw(env: Env, caller: Address, share_amount: i128)`
+
 Burns shares and returns underlying tokens.
+
 - **Auth**: `caller`.
 - **Errors**: `VaultIsPaused`, `AmountMustBePositive`, `InsufficientShares`.
 
 #### `fund_project(env: Env, project_id: u32, amount: i128)`
+
 Funds a registered project (admin only).
+
 - **Auth**: Admin.
 - **Errors**: `VaultIsPaused`, `InsufficientVaultFunds`, `ProjectNotCertified`.
 
 ## General Considerations & Panics
+
 - All base token values have 7 decimal places unless noted.
 - Contract will panic on arithmetic overflow or if SDK constraints are violated.

@@ -6,17 +6,18 @@
 
 Soroban offers three storage tiers:
 
-| Tier | Lifetime | Cost | Use case |
-|------|----------|------|----------|
-| Instance | Lives as long as the contract instance | Cheapest reads | Config set once, read often |
-| Persistent | Survives as long as rent is paid | Moderate | Long-lived per-entity state |
-| Temporary | Automatically expires after TTL | Cheapest writes | Short-lived scratch state |
+| Tier       | Lifetime                               | Cost            | Use case                    |
+| ---------- | -------------------------------------- | --------------- | --------------------------- |
+| Instance   | Lives as long as the contract instance | Cheapest reads  | Config set once, read often |
+| Persistent | Survives as long as rent is paid       | Moderate        | Long-lived per-entity state |
+| Temporary  | Automatically expires after TTL        | Cheapest writes | Short-lived scratch state   |
 
 Every persistent entry has a TTL that must be extended (rent paid) or the entry is evicted. Incorrect partitioning means either paying unnecessary rent or losing data.
 
 ## Decision
 
 **Instance storage** holds contract-level configuration that never changes after deployment:
+
 - `VaultKey::UsdcSac` — the USDC SAC address
 - `VaultKey::Registry` — the ProjectRegistry contract address
 - `DataKey::Whitelister` — the whitelister address
@@ -25,6 +26,7 @@ Every persistent entry has a TTL that must be extended (rent paid) or the entry 
 Rationale: instance storage is bumped automatically when any function is invoked on the contract, so no explicit TTL management is needed for these entries.
 
 **Persistent storage** holds per-entity state that must outlive individual invocations:
+
 - `DataKey::Project(id)` — project metadata
 - `DataKey::Whitelist(addr)` — per-address whitelist status
 - `VaultKey::ProjectInvestment(id)` — USDC invested per project
@@ -37,9 +39,11 @@ Rationale: project records and investment ledgers must survive indefinitely. Ren
 ## Consequences
 
 **Positive:**
+
 - No manual TTL calls needed for instance-stored config.
 - Clean separation: adding a new config value → instance; adding a new per-entity record → persistent.
 
 **Negative / trade-offs:**
+
 - Persistent entries can be evicted if a project is never touched for a long time. Operators must either invoke the contract periodically or monitor for approaching TTL expiry.
 - `ProjectCounter` in instance storage means it is trivially readable but also updated on every project creation, slightly increasing instance storage cost over time (Soroban charges for updated bytes).

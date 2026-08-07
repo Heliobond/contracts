@@ -15,15 +15,15 @@ The `ProjectRegistry` contract emits `ScoreChanged` whenever an impact score is 
 
 ### Event Structure
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `project_id` (topic) | `u32` | The project whose scores changed |
-| `old_credit_quality` | `u32` | Previous credit quality (0–100) |
-| `new_credit_quality` | `u32` | New credit quality (0–100) |
-| `old_green_impact` | `u32` | Previous green impact (0–100) |
-| `new_green_impact` | `u32` | New green impact (0–100) |
-| `old_rate_bps` | `u32` | Previous interest rate in basis points (500–1000) |
-| `new_rate_bps` | `u32` | New interest rate in basis points (500–1000) |
+| Field                | Type  | Description                                       |
+| -------------------- | ----- | ------------------------------------------------- |
+| `project_id` (topic) | `u32` | The project whose scores changed                  |
+| `old_credit_quality` | `u32` | Previous credit quality (0–100)                   |
+| `new_credit_quality` | `u32` | New credit quality (0–100)                        |
+| `old_green_impact`   | `u32` | Previous green impact (0–100)                     |
+| `new_green_impact`   | `u32` | New green impact (0–100)                          |
+| `old_rate_bps`       | `u32` | Previous interest rate in basis points (500–1000) |
+| `new_rate_bps`       | `u32` | New interest rate in basis points (500–1000)      |
 
 ### When It Fires
 
@@ -64,14 +64,14 @@ Off-chain consumers that decode the raw Soroban event (as `notification-service/
 }
 ```
 
-| Field | Type | Description |
-|-------|------|--------------|
-| `project_id` | `number` | The project whose scores changed (decoded from the event's topic) |
-| `old_credit_quality` / `new_credit_quality` | `number` | Credit quality before/after (0–100) |
-| `old_green_impact` / `new_green_impact` | `number` | Green impact before/after (0–100) |
-| `old_rate_bps` / `new_rate_bps` | `number` | Interest rate in basis points before/after (500–1000) |
-| `timestamp` | `number` | Unix timestamp (seconds) of the ledger close time |
-| `ledger` | `number` | Stellar ledger sequence number the event was emitted in |
+| Field                                       | Type     | Description                                                       |
+| ------------------------------------------- | -------- | ----------------------------------------------------------------- |
+| `project_id`                                | `number` | The project whose scores changed (decoded from the event's topic) |
+| `old_credit_quality` / `new_credit_quality` | `number` | Credit quality before/after (0–100)                               |
+| `old_green_impact` / `new_green_impact`     | `number` | Green impact before/after (0–100)                                 |
+| `old_rate_bps` / `new_rate_bps`             | `number` | Interest rate in basis points before/after (500–1000)             |
+| `timestamp`                                 | `number` | Unix timestamp (seconds) of the ledger close time                 |
+| `ledger`                                    | `number` | Stellar ledger sequence number the event was emitted in           |
 
 All fields are required — the decoder rejects any raw event that doesn't decode to every field above as a finite number, rather than passing through `null`/`NaN`.
 
@@ -93,13 +93,13 @@ Soroban RPC  ──►  Listener  ──►  Investor Index  ──►  Notifier
 
 ### Components
 
-| Component | File | Description |
-|-----------|------|-------------|
-| `Listener` | `src/listener.ts` | Polls Soroban RPC for `ScoreChanged` events |
-| `Store` | `src/db.ts` | SQLite database for investor preferences and project-investor index |
+| Component  | File              | Description                                                         |
+| ---------- | ----------------- | ------------------------------------------------------------------- |
+| `Listener` | `src/listener.ts` | Polls Soroban RPC for `ScoreChanged` events                         |
+| `Store`    | `src/db.ts`       | SQLite database for investor preferences and project-investor index |
 | `Notifier` | `src/notifier.ts` | Dispatches email (nodemailer) and webhook (HTTP POST) notifications |
-| `API` | `src/api.ts` | Express REST API for managing notification preferences |
-| `Config` | `src/config.ts` | Environment-based configuration |
+| `API`      | `src/api.ts`      | Express REST API for managing notification preferences              |
+| `Config`   | `src/config.ts`   | Environment-based configuration                                     |
 
 ### Quick Start
 
@@ -113,21 +113,21 @@ npm run dev
 
 ### Configuration
 
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `STELLAR_RPC_URL` | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint |
-| `STELLAR_NETWORK_PASSPHRASE` | Testnet passphrase | Network passphrase |
-| `REGISTRY_CONTRACT_ID` | (required) | Deployed `ProjectRegistry` contract ID |
-| `VAULT_CONTRACT_ID` | (optional) | Deployed `InvestmentVault` contract ID |
-| `DB_PATH` | `./data/notifications.db` | SQLite database path |
-| `POLL_INTERVAL_MS` | `30000` | Event polling interval |
-| `FROM_EMAIL` | — | Sender email address |
-| `SMTP_HOST` | — | SMTP server hostname |
-| `SMTP_PORT` | `587` | SMTP port |
-| `SMTP_SECURE` | `false` | Use TLS for SMTP |
-| `SMTP_USER` | — | SMTP username |
-| `SMTP_PASS` | — | SMTP password |
-| `API_PORT` | `3000` | REST API port |
+| Environment Variable         | Default                               | Description                            |
+| ---------------------------- | ------------------------------------- | -------------------------------------- |
+| `STELLAR_RPC_URL`            | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint                   |
+| `STELLAR_NETWORK_PASSPHRASE` | Testnet passphrase                    | Network passphrase                     |
+| `REGISTRY_CONTRACT_ID`       | (required)                            | Deployed `ProjectRegistry` contract ID |
+| `VAULT_CONTRACT_ID`          | (optional)                            | Deployed `InvestmentVault` contract ID |
+| `DB_PATH`                    | `./data/notifications.db`             | SQLite database path                   |
+| `POLL_INTERVAL_MS`           | `30000`                               | Event polling interval                 |
+| `FROM_EMAIL`                 | —                                     | Sender email address                   |
+| `SMTP_HOST`                  | —                                     | SMTP server hostname                   |
+| `SMTP_PORT`                  | `587`                                 | SMTP port                              |
+| `SMTP_SECURE`                | `false`                               | Use TLS for SMTP                       |
+| `SMTP_USER`                  | —                                     | SMTP username                          |
+| `SMTP_PASS`                  | —                                     | SMTP password                          |
+| `API_PORT`                   | `3000`                                | REST API port                          |
 
 ### REST API
 
@@ -140,6 +140,7 @@ npm run dev
 **PUT `/preferences/:address`** — Create or update a preference.
 
 Request body:
+
 ```json
 {
   "email": "investor@example.com",
@@ -149,12 +150,12 @@ Request body:
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `email` | `string` | No | Email address for email notifications |
-| `webhook_url` | `string` | No | HTTPS URL for webhook POST notifications |
-| `enabled` | `boolean` | No (default: true) | Master toggle for notifications |
-| `min_delta` | `number` | No (default: 1) | Minimum absolute score change (0–100) to trigger a notification |
+| Field         | Type      | Required           | Description                                                     |
+| ------------- | --------- | ------------------ | --------------------------------------------------------------- |
+| `email`       | `string`  | No                 | Email address for email notifications                           |
+| `webhook_url` | `string`  | No                 | HTTPS URL for webhook POST notifications                        |
+| `enabled`     | `boolean` | No (default: true) | Master toggle for notifications                                 |
+| `min_delta`   | `number`  | No (default: 1)    | Minimum absolute score change (0–100) to trigger a notification |
 
 At least one of `email` or `webhook_url` must be provided. Both can be set simultaneously.
 
@@ -166,13 +167,14 @@ At least one of `email` or `webhook_url` must be provided. Both can be set simul
 
 Query parameters:
 
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `limit` | `number` | `50` (max `200`) | Maximum number of entries to return |
-| `offset` | `number` | `0` | Number of entries to skip |
-| `investor_address` | `string` | — | Restrict results to a single investor |
+| Param              | Type     | Default          | Description                           |
+| ------------------ | -------- | ---------------- | ------------------------------------- |
+| `limit`            | `number` | `50` (max `200`) | Maximum number of entries to return   |
+| `offset`           | `number` | `0`              | Number of entries to skip             |
+| `investor_address` | `string` | —                | Restrict results to a single investor |
 
 Response body:
+
 ```json
 {
   "items": [

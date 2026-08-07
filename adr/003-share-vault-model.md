@@ -26,11 +26,13 @@ Key reasons:
 ## Consequences
 
 **Positive:**
+
 - Share price naturally incorporates all value in the vault including projected returns.
 - LPs can trade HBS on any SEP-41-compatible DEX as a secondary exit.
 - First depositor receives 1:1 shares (guarded by `total_shares == 0 || total_assets == 0` check).
 
 **Negative / trade-offs:**
+
 - Share price depends on `get_expected_returns`, which reads every project in the registry. This is O(n) in the number of projects; gas cost grows linearly. A future optimisation may maintain a running expected-return accumulator.
 - The share model means early LPs dilute later LPs if returns are recognised before new deposits — this is standard vault behaviour but must be communicated clearly to users.
 - Rounding is in favour of the vault (integer truncation), which may leave tiny dust amounts unclaimable.

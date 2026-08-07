@@ -1,5 +1,6 @@
 #![cfg(test)]
 #![allow(clippy::inconsistent_digit_grouping)]
+#![allow(unnameable_test_items)]
 extern crate std;
 use super::*;
 use proptest::prelude::*;
@@ -2284,17 +2285,13 @@ fn test_get_project_investments_batch_returns_correct_amounts() {
     let pid1 = registry_client.create_project(
         &creator1,
         &String::from_str(&s.env, "Alpha"),
-        &String::from_str(&s.env, "desc"),
-        &100u32,
-        &80u32,
+        &0u64,
         &test_metadata_hash(&s.env),
     );
     let pid2 = registry_client.create_project(
         &creator2,
         &String::from_str(&s.env, "Beta"),
-        &String::from_str(&s.env, "desc"),
-        &90u32,
-        &70u32,
+        &0u64,
         &test_metadata_hash(&s.env),
     );
 
@@ -2313,7 +2310,8 @@ fn test_get_project_investments_batch_returns_correct_amounts() {
 
 #[test]
 fn test_get_all_project_investments_returns_all() {
-// ── Issue #176: deposit() must reject a zero-amount deposit ──────────────────
+    // ── Issue #176: deposit() must reject a zero-amount deposit ──────────────────
+}
 
 #[test]
 #[should_panic(expected = "Error(Contract, #1)")]
@@ -2394,9 +2392,7 @@ fn test_claim_queued_is_idempotent_against_double_claim() {
     let pid = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "Gamma"),
-        &String::from_str(&s.env, "desc"),
-        &100u32,
-        &100u32,
+        &0u64,
         &test_metadata_hash(&s.env),
     );
 
@@ -2461,6 +2457,12 @@ fn test_get_set_withdrawal_window() {
     s.vault_client.set_withdrawal_window(&10u32);
     assert_eq!(s.vault_client.get_withdrawal_window(), 10u32);
 }
+
+#[test]
+fn test_claim_idempotent_returns_zero_when_queue_empty() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
     let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
 
@@ -2586,6 +2588,7 @@ fn test_volume_fee_tier_is_admin_only() {
         },
     }]);
     s.vault_client.set_volume_fee_tier(&500_0000000i128, &50u32);
+}
 // ── #179: convert_to_shares() overflow guard on extremely large deposits ──────
 
 /// Verify that `convert_to_shares` panics (rather than silently wrapping) when

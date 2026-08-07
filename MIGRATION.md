@@ -18,8 +18,8 @@ whenever a storage layout change requires a migration step.
 
 ## Storage Layout Versioning
 
-| Key | Type | Notes |
-|-----|------|-------|
+| Key                       | Type  | Notes                                                     |
+| ------------------------- | ----- | --------------------------------------------------------- |
 | `StateVersion` (instance) | `u32` | Written at construction; read by `require_current_state`. |
 
 `require_current_state` rejects calls if the stored version does not match the
@@ -34,8 +34,7 @@ introduced).
 0 as compatible and does **not** reject calls in that case (0 is treated as
 equivalent to v1, since the v0→v1 migration involved no layout changes).
 `InvestmentVault`'s `require_current_state` has no such exception — it rejects
-any stored version that isn't exactly the current `STATE_VERSION`, including
-0. Both contracts reject any other mismatched version identically.
+any stored version that isn't exactly the current `STATE_VERSION`, including 0. Both contracts reject any other mismatched version identically.
 
 ## Upgrade Procedure
 
@@ -163,10 +162,10 @@ pub fn migrate_state(env: Env, from_version: u32) -> u32 {
 
 ## Version History
 
-| Version | Contract | Description |
-|---------|----------|-------------|
-| 0 | Both | Pre-versioning deployments (treat as v1 state layout). |
-| 1 | Both | Initial versioned deployment. No layout changes from v0. |
+| Version | Contract | Description                                              |
+| ------- | -------- | -------------------------------------------------------- |
+| 0       | Both     | Pre-versioning deployments (treat as v1 state layout).   |
+| 1       | Both     | Initial versioned deployment. No layout changes from v0. |
 
 ## Versioned Storage Patterns
 

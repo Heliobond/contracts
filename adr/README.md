@@ -4,12 +4,12 @@ This directory contains Architecture Decision Records (ADRs) for the Heliobond s
 
 ## Index
 
-| # | Title | Status |
-|---|-------|--------|
-| [001](001-soroban-platform.md) | Use Soroban / Stellar for smart contracts | Accepted |
-| [002](002-storage-patterns.md) | Persistent vs instance storage partitioning | Accepted |
-| [003](003-share-vault-model.md) | ERC-4626-inspired share vault for investments | Accepted |
-| [004](004-security-model.md) | Owner-only admin pattern and whitelist access control | Accepted |
+| #                               | Title                                                 | Status   |
+| ------------------------------- | ----------------------------------------------------- | -------- |
+| [001](001-soroban-platform.md)  | Use Soroban / Stellar for smart contracts             | Accepted |
+| [002](002-storage-patterns.md)  | Persistent vs instance storage partitioning           | Accepted |
+| [003](003-share-vault-model.md) | ERC-4626-inspired share vault for investments         | Accepted |
+| [004](004-security-model.md)    | Owner-only admin pattern and whitelist access control | Accepted |
 
 ## When to write a new ADR
 

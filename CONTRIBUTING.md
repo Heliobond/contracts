@@ -12,11 +12,11 @@ Browse [open issues](https://github.com/heliobond/contracts/issues). Issues tagg
 
 ### Prerequisites
 
-| Tool | Version | Install |
-|------|---------|---------|
-| Rust | stable (≥ 1.78) | `rustup update stable` |
-| wasm target | `wasm32v1-none` | `rustup target add wasm32v1-none` |
-| Stellar CLI | ≥ 26.1.0 | [docs.stellar.org/tools/cli](https://developers.stellar.org/docs/tools/cli) |
+| Tool        | Version         | Install                                                                     |
+| ----------- | --------------- | --------------------------------------------------------------------------- |
+| Rust        | stable (≥ 1.78) | `rustup update stable`                                                      |
+| wasm target | `wasm32v1-none` | `rustup target add wasm32v1-none`                                           |
+| Stellar CLI | ≥ 26.1.0        | [docs.stellar.org/tools/cli](https://developers.stellar.org/docs/tools/cli) |
 
 ```bash
 # Clone and verify the setup
@@ -67,6 +67,7 @@ We use [Conventional Commits](https://www.conventionalcommits.org/). The changel
 **Scopes:** `investment_vault`, `project_registry`, `ci`, `adr` (or omit for cross-cutting)
 
 Examples:
+
 ```
 feat(investment_vault): add MAX_DEPOSIT cap to prevent overflow
 fix(project_registry): guard u32 counter against overflow at u32::MAX
@@ -78,7 +79,8 @@ ci: add WASM size budget check to CI
 
 `CHANGELOG.md` is generated automatically, not written by hand — do not edit it in your PR. [`.github/workflows/changelog.yml`](.github/workflows/changelog.yml) runs on every `v*` tag push (or manually via `workflow_dispatch`), scans commit history with `conventional-changelog` (Angular preset), regenerates `CHANGELOG.md`, and publishes it as the GitHub release notes.
 
-This means your changelog entry *is* your commit message, so it has to follow the format above correctly:
+This means your changelog entry _is_ your commit message, so it has to follow the format above correctly:
+
 - `feat:` commits bump the minor version and appear under "Features"
 - `fix:` (and anything else conventional-changelog treats as a fix) bumps patch and appears under "Bug Fixes"
 - A `BREAKING CHANGE:` footer, or a `!` after the type/scope (e.g. `feat(investment_vault)!: ...`), bumps major
@@ -101,16 +103,17 @@ project_registry/src/test.rs      ← registry tests
 
 ### What to test
 
-| Change type | Minimum tests required |
-|-------------|----------------------|
-| New function | Happy path + at least one error case |
-| Bug fix | Regression test that would have caught the original bug |
+| Change type                            | Minimum tests required                                   |
+| -------------------------------------- | -------------------------------------------------------- |
+| New function                           | Happy path + at least one error case                     |
+| Bug fix                                | Regression test that would have caught the original bug  |
 | Edge case guard (overflow, zero, etc.) | Test that triggers the guard and asserts the panic/error |
-| Math / share calculations | Rounding test + extreme value test |
+| Math / share calculations              | Rounding test + extreme value test                       |
 
 ### Money paths are sacred
 
 Anything touching `deposit`, `withdraw`, `fund_project`, or share math needs tests for:
+
 - First deposit into an empty vault
 - Vault with non-zero assets and shares
 - Rounding direction (truncation should favour the vault, never the user)
@@ -131,7 +134,7 @@ cargo test --all -- --nocapture               # see println! output
 - **No `std`** — contracts are `#![no_std]`. Do not add `std`-dependent crates.
 - **No panics in library paths** — panics in `#[contractimpl]` are fine (they become Soroban errors); panics inside utility functions called from tests are not.
 - **Events for every state change** — every mutation must emit a Soroban event so the indexer can reconstruct state. See `events.rs` in each contract.
-- **Comments on non-obvious decisions** — explain *why*, not *what*. Reference the issue number for workarounds (`// #112: cap prevents i128 overflow in share calc`).
+- **Comments on non-obvious decisions** — explain _why_, not _what_. Reference the issue number for workarounds (`// #112: cap prevents i128 overflow in share calc`).
 
 ---
 

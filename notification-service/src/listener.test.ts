@@ -239,19 +239,18 @@ describe("pollScoreChanges reconnects after a dropped RPC connection", () => {
       .mockResolvedValueOnce({ sequence: 100 });
 
     // Second poll returns an event
-    getEventsMock
-      .mockResolvedValueOnce({
-        events: [
-          {
-            value: buildScoreChangedEvent(
-              ["score_changed", 7],
-              buildDataMap(FULL_SCORES),
-            ),
-            ledger: 100,
-            timestamp: TIMESTAMP,
-          },
-        ],
-      });
+    getEventsMock.mockResolvedValueOnce({
+      events: [
+        {
+          value: buildScoreChangedEvent(
+            ["score_changed", 7],
+            buildDataMap(FULL_SCORES),
+          ),
+          ledger: 100,
+          timestamp: TIMESTAMP,
+        },
+      ],
+    });
 
     const handle = await pollScoreChanges(
       config,

@@ -121,7 +121,6 @@ describe("GET /notifications/history", () => {
 
 // ── Issue #218: input validation for malformed payloads ─────────────────────
 
-describe("PUT /preferences/:address input validation", () => {
 describe("CORS configuration", () => {
   let store: Store;
 
@@ -190,6 +189,17 @@ describe("CORS configuration", () => {
   });
 
   it("returns 400 when body is an array", async () => {
+    store = makeStore();
+    const app = createApi(store);
+
+    const res = await request(app)
+      .put("/preferences/GINVESTOR")
+      .send([{ email: "test@example.com" }]);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/JSON object/);
+  });
+
   it("sets Access-Control-Allow-Origin for a matching origin", async () => {
     store = makeStore();
     const app = createApi(store, {
@@ -237,25 +247,22 @@ describe("CORS configuration", () => {
     const app = createApi(store);
 
     const res = await request(app)
-      .put("/preferences/GINVESTOR")
-      .send([{ email: "test@example.com" }]);
+      .get("/health")
+      .set("Origin", "https://heliobond.io");
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/JSON object/);
+    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
   it("accepts a valid payload and returns 200", async () => {
     store = makeStore();
     const app = createApi(store);
 
-    const res = await request(app)
-      .put("/preferences/GINVESTOR")
-      .send({
-        email: "test@example.com",
-        webhook_url: "https://example.com/webhook",
-        enabled: true,
-        min_delta: 5,
-      });
+    const res = await request(app).put("/preferences/GINVESTOR").send({
+      email: "test@example.com",
+      webhook_url: "https://example.com/webhook",
+      enabled: true,
+      min_delta: 5,
+    });
 
     expect(res.status).toBe(200);
     expect(res.body.email).toBe("test@example.com");
@@ -266,14 +273,6 @@ describe("CORS configuration", () => {
 });
 
 // ── Issue #219: health-check with DB connectivity ──────────────────────────
-
-describe("GET /health with DB connectivity", () => {
-      .get("/health")
-      .set("Origin", "https://heliobond.io");
-
-    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
-  });
-});
 
 describe("GET /metrics", () => {
   let store: Store;
@@ -305,6 +304,7 @@ describe("GET /metrics", () => {
 
     expect(res.status).toBe(503);
     expect(res.body.status).toBe("degraded");
+  });
   it("returns snapshot from the provided Metrics instance", async () => {
     store = makeStore();
     const metrics = new Metrics();

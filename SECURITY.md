@@ -15,11 +15,13 @@ This is testnet, pre-production software. The smart contracts have not yet been 
 ## Threat Model and Trust Assumptions
 
 ### Trust Boundaries
+
 - **Project Registry & Investment Vault**: These contracts trust each other explicitly for interoperability where documented. Administrative functions are restricted to a multi-sig or single highly-trusted admin key.
 - **Oracles and External Data**: We assume our selected oracles (if any) provide accurate and timely data. Any compromise of the oracle may lead to incorrect valuations or interest rate calculations.
 - **End Users**: Users are responsible for securing their own private keys. The contracts do not have a mechanism to recover funds sent to the wrong address or lost due to compromised keys.
 
 ### Known Limitations
+
 - The contracts currently rely on a centralized whitelister for project creation.
 - Maximum URI lengths and specific string size bounds are strictly enforced to prevent ledger bloat.
 
@@ -31,7 +33,7 @@ contract, walk through this checklist (#265):
 - [ ] **Auth checks**: Does this function require the right caller's
       authorization? `#[only_owner]` for admin-only actions, an explicit
       `caller.require_auth()` for actions gated to a specific non-admin
-      party (e.g. a project owner). Confirm the check happens *before* any
+      party (e.g. a project owner). Confirm the check happens _before_ any
       state mutation, not after. If the function is admin-only, add it to
       `test_all_only_owner_functions_reject_non_admin_caller` in the
       relevant crate's `test.rs` (#266) — don't rely solely on a one-off
@@ -58,7 +60,7 @@ contract, walk through this checklist (#265):
       table for its contract, and update `ProjectData`/other type docs if
       you changed a struct. `scripts/check_interface_docs.py` (wired into CI,
       #273) will fail the build if you forget — but it only catches missing
-      *names*, not incorrect auth/return/notes columns, so still write them
+      _names_, not incorrect auth/return/notes columns, so still write them
       accurately by hand.
 - [ ] **Tests**: A happy-path test, at least one negative/panic test for
       the primary validation failure mode, and (if admin-gated) an entry in
@@ -74,6 +76,7 @@ contract, walk through this checklist (#265):
 ## Incident Response Procedures
 
 If a critical vulnerability is discovered and verified:
+
 1. **Triage**: The core team will assess the severity and potential impact within 24 hours.
 2. **Mitigation**: If necessary and feasible, administrative functions may be used to pause certain contract operations to prevent further exploitation.
 3. **Patch & Deploy**: A fix will be developed, tested, and deployed as a contract upgrade.

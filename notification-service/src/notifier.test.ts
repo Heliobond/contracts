@@ -131,8 +131,8 @@ describe("Notifier retry behavior on a failed delivery", () => {
   });
 
   it("does not record a notification or dedup key when webhook returns a server error", async () => {
-    fetchMock.mockImplementationOnce(async () =>
-      new Response("Internal Server Error", { status: 500 }),
+    fetchMock.mockImplementationOnce(
+      async () => new Response("Internal Server Error", { status: 500 }),
     );
 
     const store = makeStore();
@@ -173,13 +173,13 @@ describe("Notifier retry behavior on a failed delivery", () => {
     } as unknown as Store;
 
     // First attempt: webhook fails
-    fetchMock.mockImplementationOnce(async () =>
-      new Response("bad gateway", { status: 502 }),
+    fetchMock.mockImplementationOnce(
+      async () => new Response("bad gateway", { status: 502 }),
     );
 
     // Redelivery: webhook succeeds
-    fetchMock.mockImplementationOnce(async () =>
-      new Response(null, { status: 200 }),
+    fetchMock.mockImplementationOnce(
+      async () => new Response(null, { status: 200 }),
     );
 
     // Use a config without email transport — webhook-only path

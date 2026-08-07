@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0   # need history to compare against baseline
+          fetch-depth: 0 # need history to compare against baseline
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
