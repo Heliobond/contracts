@@ -244,14 +244,17 @@ impl ProjectRegistry {
     pub fn delete_project(env: Env, project_id: u32) {
         require_current_state(&env);
         // Verify project exists
-        let _project: ProjectData = env
+        let project: ProjectData = env
             .storage()
             .persistent()
             .get(&DataKey::Project(project_id))
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
 
-        // NOTE: In production, should verify no investments via vault.get_project_investment(project_id)
-        // For now, we allow deletion assuming caller has verified no active investments
+        // Reject deletion of non-archived projects (#325): a project that is still
+        // Active/Funded/Pending may carry active investments.
+        if project.status != types::ProjectStatus::Archived {
+            panic_with_error!(&env, RegistryError::ProjectNotArchived);
+        }
 
         env.storage()
             .persistent()
