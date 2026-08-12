@@ -805,11 +805,15 @@ impl InvestmentVault {
             shares * 10_000 / total_shares
         };
 
+        let deposited_key = VaultKey::TotalDeposited(account);
         let total_deposited: i128 = env
             .storage()
             .persistent()
-            .get(&VaultKey::TotalDeposited(account))
+            .get(&deposited_key)
             .unwrap_or(0);
+        if env.storage().persistent().has(&deposited_key) {
+            env.storage().persistent().extend_ttl(&deposited_key, 17280, 518400);
+        }
 
         PortfolioInfo {
             shares,
