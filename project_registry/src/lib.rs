@@ -1223,9 +1223,9 @@ fn require_multisig_disabled(env: &Env) {
 }
 
 fn compute_rate(credit_quality: u32, green_impact: u32) -> u32 {
-    let avg = (credit_quality + green_impact) / 2;
-    let discount = avg * MAX_DISCOUNT_BPS / 100;
-    BASE_RATE_BPS - discount
+    // Single source of truth: logic::calculate_interest_rate already applies
+    // the underflow guard this local copy lacked.
+    logic::calculate_interest_rate(BASE_RATE_BPS, MAX_DISCOUNT_BPS, credit_quality, green_impact)
 }
 
 fn read_state_version(env: &Env) -> u32 {
