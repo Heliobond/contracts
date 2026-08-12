@@ -453,6 +453,15 @@ pub fn carbon_credits_transferred(env: &Env, from: &Address, to: &Address, amoun
     .publish(env);
 }
 
+pub fn carbon_credits_issued(env: &Env, to: &Address, project_id: u32, credits: i128) {
+    CarbonCreditsIssued {
+        to: to.clone(),
+        project_id,
+        credits,
+    }
+    .publish(env);
+}
+
 // ── Compliance / regulatory events ───────────────────────────────────────
 
 #[contractevent]
