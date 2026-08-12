@@ -1318,7 +1318,8 @@ impl InvestmentVault {
         nonce: u64,
     ) -> u64 {
         require_current_state(&env);
-        from.require_auth();
+        // Note: from.require_auth() is called inside Base::burn — calling it
+        // here too triggers a double-auth ("frame is already authorized") error.
         if amount <= 0 {
             panic!("amount must be positive");
         }

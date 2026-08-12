@@ -2283,18 +2283,14 @@ fn test_get_project_investments_batch_returns_correct_amounts() {
     registry_client.set_whitelist(&creator2, &true);
     let pid1 = registry_client.create_project(
         &creator1,
-        &String::from_str(&s.env, "Alpha"),
-        &String::from_str(&s.env, "desc"),
-        &100u32,
-        &80u32,
+        &String::from_str(&s.env, "ipfs://QmBatchAlpha"),
+        &0u64,
         &test_metadata_hash(&s.env),
     );
     let pid2 = registry_client.create_project(
         &creator2,
-        &String::from_str(&s.env, "Beta"),
-        &String::from_str(&s.env, "desc"),
-        &90u32,
-        &70u32,
+        &String::from_str(&s.env, "ipfs://QmBatchBeta"),
+        &0u64,
         &test_metadata_hash(&s.env),
     );
 
@@ -2311,8 +2307,6 @@ fn test_get_project_investments_batch_returns_correct_amounts() {
     assert_eq!(amounts.get(1).unwrap(), fund2);
 }
 
-#[test]
-fn test_get_all_project_investments_returns_all() {
 // ── Issue #176: deposit() must reject a zero-amount deposit ──────────────────
 
 #[test]
@@ -2393,10 +2387,8 @@ fn test_claim_queued_is_idempotent_against_double_claim() {
     registry_client.set_whitelist(&creator, &true);
     let pid = registry_client.create_project(
         &creator,
-        &String::from_str(&s.env, "Gamma"),
-        &String::from_str(&s.env, "desc"),
-        &100u32,
-        &100u32,
+        &String::from_str(&s.env, "ipfs://QmBatchGamma"),
+        &0u64,
         &test_metadata_hash(&s.env),
     );
 
@@ -2461,6 +2453,12 @@ fn test_get_set_withdrawal_window() {
     s.vault_client.set_withdrawal_window(&10u32);
     assert_eq!(s.vault_client.get_withdrawal_window(), 10u32);
 }
+
+#[test]
+fn test_claim_settles_queued_redemption_without_double_payout() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
     let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
 
@@ -2586,6 +2584,7 @@ fn test_volume_fee_tier_is_admin_only() {
         },
     }]);
     s.vault_client.set_volume_fee_tier(&500_0000000i128, &50u32);
+}
 // ── #179: convert_to_shares() overflow guard on extremely large deposits ──────
 
 /// Verify that `convert_to_shares` panics (rather than silently wrapping) when
@@ -2732,4 +2731,259 @@ fn test_flash_loan_fails_without_repayment() {
         &1_000_0000000i128,
         &soroban_sdk::Bytes::new(&s.env),
     );
+}
+// ── Issue #321: per-project investment cap coverage ───────────────────────────
+
+#[test]
+fn test_investment_cap_respects_and_enforces_limit() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 10_000_0000000i128);
+    s.vault_client.deposit(&investor, &10_000_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://QmCapTest"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
+
+    // Set a tight per-project cap well below the compile-time default.
+    let cap = 100_0000000i128;
+    s.vault_client.set_max_investment_per_project(&cap);
+
+    // Full headroom is available before any funding.
+    assert_eq!(s.vault_client.investment_capacity(&project_id), cap);
+
+    // Funding exactly at the cap succeeds.
+    s.vault_client.fund_project(&project_id, &cap);
+    assert_eq!(s.vault_client.investment_capacity(&project_id), 0);
+
+    // Funding one stroop over the cap must fail with InvestmentCapExceeded.
+    let over = s.vault_client.try_fund_project(&project_id, &1i128);
+    assert!(over.is_err());
+
+    // Passing 0 restores the compile-time default rather than disabling the cap.
+    s.vault_client.set_max_investment_per_project(&0i128);
+    assert_eq!(
+        s.vault_client.investment_capacity(&project_id),
+        MAX_INVESTMENT_PER_PROJECT - cap
+    );
+}
+
+#[test]
+fn test_set_max_investment_per_project_rejects_negative_cap() {
+    let s = setup();
+    let r = s.vault_client.try_set_max_investment_per_project(&(-1i128));
+    assert!(r.is_err());
+}
+// ── Issue #319: funding-round transfer block coverage ─────────────────────────
+
+#[test]
+#[should_panic]
+fn test_funding_round_blocks_share_transfer() {
+    let s = setup();
+    let investor1 = Address::generate(&s.env);
+    let investor2 = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor1, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor1, &1_000_0000000i128);
+
+    // Advance the ledger so the deposit lock from the deposit above cannot
+    // interfere with the transfer path under test.
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+
+    s.vault_client.start_funding_round();
+    assert!(s.vault_client.is_funding_round_active());
+
+    // A share transfer must panic with FundingRoundActive while the round is open.
+    s.vault_client.transfer(
+        &investor1,
+        &soroban_sdk::MuxedAddress::from(investor2.clone()),
+        &shares,
+    );
+}
+
+#[test]
+fn test_share_transfer_resumes_after_funding_round_ends() {
+    let s = setup();
+    let investor1 = Address::generate(&s.env);
+    let investor2 = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor1, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor1, &1_000_0000000i128);
+
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+
+    // Round is inactive before start.
+    assert!(!s.vault_client.is_funding_round_active());
+
+    s.vault_client.start_funding_round();
+    assert!(s.vault_client.is_funding_round_active());
+
+    s.vault_client.end_funding_round();
+    assert!(!s.vault_client.is_funding_round_active());
+
+    // The same transfer now succeeds once the round is closed.
+    s.vault_client.transfer(
+        &investor1,
+        &soroban_sdk::MuxedAddress::from(investor2.clone()),
+        &shares,
+    );
+    assert_eq!(s.vault_client.balance(&investor2), shares);
+    assert_eq!(s.vault_client.balance(&investor1), 0);
+}
+// ── Issue #318: carbon credit feature coverage ────────────────────────────────
+
+/// Create a project with the given green-impact score and return its id.
+fn setup_carbon_project(s: &TestSetup, green_impact: u32) -> u32 {
+    let creator = Address::generate(&s.env);
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://QmCarbon"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
+    if green_impact > 0 {
+        registry_client.update_impact_score(&project_id, &50u32, &green_impact);
+    }
+    project_id
+}
+
+#[test]
+fn test_calculate_carbon_credits_uses_green_impact() {
+    let s = setup();
+    let project_id = setup_carbon_project(&s, 50u32);
+    let amount = 1_000_0000000i128;
+    let calc = s.vault_client.calculate_carbon_credits(&project_id, &amount);
+    assert_eq!(calc.project_id, project_id);
+    assert_eq!(calc.amount_invested, amount);
+    // amount (1e10 stroops) * green_impact (50) / CARBON_UNIT (1e10) = 50.
+    assert_eq!(calc.credits, 50i128);
+}
+
+#[test]
+fn test_issue_carbon_credits_fails_without_green_impact() {
+    let s = setup();
+    // green_impact = 0 → credits = 0 → issuance must panic.
+    let project_id = setup_carbon_project(&s, 0u32);
+    let recipient = Address::generate(&s.env);
+    let r = s
+        .vault_client
+        .try_issue_carbon_credits(&recipient, &project_id, &1_000_0000000i128);
+    assert!(r.is_err());
+}
+
+#[test]
+fn test_issue_and_transfer_carbon_credits() {
+    let s = setup();
+    let project_id = setup_carbon_project(&s, 50u32);
+    let recipient = Address::generate(&s.env);
+    let amount = 1_000_0000000i128;
+
+    let issued = s.vault_client.issue_carbon_credits(&recipient, &project_id, &amount);
+    assert_eq!(issued, 50i128);
+    assert_eq!(s.vault_client.carbon_credit_balance(&recipient), 50i128);
+
+    let other = Address::generate(&s.env);
+    s.vault_client.transfer_carbon_credits(&recipient, &other, &20i128);
+    assert_eq!(s.vault_client.carbon_credit_balance(&recipient), 30i128);
+    assert_eq!(s.vault_client.carbon_credit_balance(&other), 20i128);
+
+    // Insufficient balance → transfer must panic.
+    let r = s
+        .vault_client
+        .try_transfer_carbon_credits(&recipient, &other, &999i128);
+    assert!(r.is_err());
+}
+// ── Issue #320: outbound Wormhole bridge path coverage ────────────────────────
+
+mod mock_wormhole_core {
+    use soroban_sdk::{contract, contractimpl, Bytes, Env};
+
+    #[contract]
+    pub struct MockWormholeCore;
+
+    #[contractimpl]
+    impl MockWormholeCore {
+        /// Return a fixed sequence number for every published message.
+        pub fn publish_message(_env: Env, _consistency_level: u32, _payload: Bytes) -> u64 {
+            7u64
+        }
+    }
+}
+
+#[test]
+fn test_bridge_payload_serialize_parse_round_trip() {
+    let s = setup();
+    let payload = BridgeTransferPayload {
+        token_address: BytesN::from_array(&s.env, &[1u8; 32]),
+        recipient: BytesN::from_array(&s.env, &[2u8; 32]),
+        amount: 123_456_789i128,
+        source_chain: wormhole::chain_id::STELLAR,
+        target_chain: wormhole::chain_id::ETHEREUM,
+        nonce: 42u64,
+    };
+    let bytes = wormhole::serialize_bridge_payload(&s.env, &payload);
+    let parsed = wormhole::parse_bridge_payload(&s.env, &bytes);
+    // Round-trip must preserve every field exactly.
+    assert_eq!(parsed.token_address, payload.token_address);
+    assert_eq!(parsed.recipient, payload.recipient);
+    assert_eq!(parsed.amount, payload.amount);
+    assert_eq!(parsed.source_chain, payload.source_chain);
+    assert_eq!(parsed.target_chain, payload.target_chain);
+    assert_eq!(parsed.nonce, payload.nonce);
+}
+
+#[test]
+fn test_initiate_bridge_transfer_burns_shares_and_publishes() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let core = s.env.register(mock_wormhole_core::MockWormholeCore, ());
+    s.vault_client.set_wormhole_core(&core);
+
+    let recipient = BytesN::from_array(&s.env, &[9u8; 32]);
+    let amount = shares / 2;
+    let before = s.vault_client.balance(&investor);
+
+    let sequence = s.vault_client.initiate_bridge_transfer(
+        &investor,
+        &amount,
+        &wormhole::chain_id::ETHEREUM,
+        &recipient,
+        &123u64,
+    );
+    assert_eq!(sequence, 7u64);
+    assert_eq!(s.vault_client.balance(&investor), before - amount);
+}
+
+#[test]
+fn test_initiate_bridge_transfer_rejects_non_positive_amount() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let core = s.env.register(mock_wormhole_core::MockWormholeCore, ());
+    s.vault_client.set_wormhole_core(&core);
+
+    let recipient = BytesN::from_array(&s.env, &[9u8; 32]);
+    let r = s.vault_client.try_initiate_bridge_transfer(
+        &investor,
+        &0i128,
+        &wormhole::chain_id::ETHEREUM,
+        &recipient,
+        &123u64,
+    );
+    assert!(r.is_err());
 }
