@@ -2733,3 +2733,30 @@ fn test_flash_loan_fails_without_repayment() {
         &soroban_sdk::Bytes::new(&s.env),
     );
 }
+
+
+#[test]
+fn test_issue_carbon_credits_rejects_non_oracle_caller() {
+    let s = setup();
+    let oracle = Address::generate(&s.env);
+    s.vault_client.set_carbon_oracle(&oracle);
+
+    let stranger = Address::generate(&s.env);
+    s.env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &stranger,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &s.vault_address,
+            fn_name: "issue_carbon_credits",
+            args: soroban_sdk::vec![&s.env, stranger.clone(), 1u32, 1_000_0000000i128],
+            sub_invokes: &[],
+        },
+    }]);
+
+    let res = s
+        .vault_client
+        .try_issue_carbon_credits(&stranger, &1u32, &1_000_0000000i128);
+    assert!(
+        res.is_err(),
+        "a non-oracle caller must not be able to mint carbon credits"
+    );
+}
