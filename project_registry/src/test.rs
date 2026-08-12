@@ -1659,7 +1659,9 @@ fn test_score_history_multiple_updates_ordered() {
     );
 
     client.update_impact_score(&id, &10u32, &20u32);
+    env.ledger().with_mut(|li| li.timestamp += 1);
     client.update_impact_score(&id, &30u32, &40u32);
+    env.ledger().with_mut(|li| li.timestamp += 1);
     client.update_impact_score(&id, &50u32, &60u32);
 
     let history = client.get_score_history(&id);
@@ -2177,4 +2179,189 @@ proptest! {
         let result = client.try_set_creator_reputation(&whitelister, &creator, &score);
         prop_assert!(result.is_err());
     }
+}
+// ── Issue #326: governance proposal coverage ──────────────────────────────────
+
+#[test]
+fn test_create_proposal_and_get_proposal() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Increase green threshold"),
+        &MIN_VOTING_PERIOD,
+    );
+    assert_eq!(id, 1);
+
+    let p = client.get_proposal(&id);
+    assert_eq!(p.proposer, proposer);
+    assert_eq!(p.votes_for, 0);
+    assert_eq!(p.votes_against, 0);
+    assert!(!p.executed);
+    assert!(p.voting_ends_at >= MIN_VOTING_PERIOD);
+}
+
+#[test]
+fn test_create_proposal_rejects_too_short_voting_period() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let r = client.try_create_proposal(
+        &proposer,
+        &String::from_str(&env, "Too short"),
+        &(MIN_VOTING_PERIOD - 1),
+    );
+    assert!(r.is_err());
+}
+
+#[test]
+fn test_cast_vote_validation() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter = Address::generate(&env);
+    let id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Vote validation"),
+        &MIN_VOTING_PERIOD,
+    );
+
+    // weight <= 0 rejected.
+    assert!(client.try_cast_vote(&voter, &id, &true, &0i128).is_err());
+    // Unknown proposal rejected.
+    assert!(client.try_cast_vote(&voter, &999u32, &true, &1i128).is_err());
+    // First vote succeeds; a second vote from the same voter is rejected.
+    client.cast_vote(&voter, &id, &true, &10i128);
+    assert!(client.try_cast_vote(&voter, &id, &true, &5i128).is_err());
+}
+
+#[test]
+fn test_proposal_full_flow_pass_and_double_execution_guard() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter_for = Address::generate(&env);
+    let voter_against = Address::generate(&env);
+    let id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Full governance flow"),
+        &MIN_VOTING_PERIOD,
+    );
+
+    // Voting still open → execution rejected.
+    assert!(client.try_execute_proposal(&id).is_err());
+
+    client.cast_vote(&voter_for, &id, &true, &100i128);
+    client.cast_vote(&voter_against, &id, &false, &40i128);
+
+    // Advance time past the voting deadline.
+    let deadline = client.get_proposal(&id).voting_ends_at;
+    env.ledger().with_mut(|li| {
+        li.timestamp = deadline + 1;
+    });
+
+    // Voting ended → further votes rejected.
+    assert!(client.try_cast_vote(&voter_for, &id, &true, &1i128).is_err());
+
+    // Execution passes (100 > 40).
+    assert!(client.execute_proposal(&id));
+
+    // Double execution rejected.
+    assert!(client.try_execute_proposal(&id).is_err());
+
+    let p = client.get_proposal(&id);
+    assert!(p.executed);
+    assert_eq!(p.votes_for, 100i128);
+    assert_eq!(p.votes_against, 40i128);
+}
+
+#[test]
+fn test_get_proposal_not_found() {
+    let (env, _admin, _whitelister, client) = setup();
+    assert!(client.try_get_proposal(&999u32).is_err());
+}
+// ── Issue #327: project archive/delete/compact lifecycle coverage ─────────────
+
+#[test]
+fn test_archive_project_flips_status_and_excludes_from_listings() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmArchive"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    client.archive_project(&id);
+
+    let project = client.get_project(&id);
+    assert_eq!(project.status, crate::types::ProjectStatus::Archived);
+
+    // get_all_projects excludes archived entries.
+    let active = client.get_all_projects();
+    assert!(active.iter().all(|entry| entry.0 != id));
+
+    // get_all_projects_with_archived still includes it.
+    let all = client.get_all_projects_with_archived();
+    assert!(all.iter().any(|entry| entry.0 == id));
+}
+
+#[test]
+fn test_delete_project_removes_entry() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmDelete"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    client.delete_project(&id);
+
+    // get_project must fail with ProjectNotFound after deletion.
+    assert!(client.try_get_project(&id).is_err());
+}
+
+#[test]
+fn test_compact_archive_matches_pre_compaction_data() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmCompact"),
+        &12345u64,
+        &test_metadata_hash(&env),
+    );
+
+    let before = client.get_project(&id);
+    client.archive_project(&id);
+    client.compact_archive(&id);
+
+    let summary = client.get_archive_summary(&id);
+    assert_eq!(summary.owner, before.owner);
+    assert_eq!(summary.final_credit_quality, before.credit_quality);
+    assert_eq!(summary.final_green_impact, before.green_impact);
+    assert_eq!(summary.maturity_date, before.maturity_date);
+    assert_eq!(summary.certification_status, before.certification_status);
+
+    // Full project data is gone after compaction.
+    assert!(client.try_get_project(&id).is_err());
+}
+
+#[test]
+fn test_compact_archive_requires_prior_archiving() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmCompactGuard"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    // Not archived yet → compact_archive must panic with ProjectNotArchived.
+    assert!(client.try_compact_archive(&id).is_err());
 }

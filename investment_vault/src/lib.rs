@@ -1127,7 +1127,7 @@ impl InvestmentVault {
             .instance()
             .get(&VaultKey::WithdrawalWindowLedgers)
             .unwrap_or(1)
-    // ── Dynamic fee structure (#39) ───────────────────────────────────────────
+    }
 
     /// Configure a two-tier volume-discount fee schedule for deposits (#39).
     ///
@@ -1179,6 +1179,7 @@ impl InvestmentVault {
             .get(&VaultKey::VolumeTierFeeBps)
             .unwrap_or(0);
         (threshold, bps)
+    }
     // ── Per-project investment cap (#32) ──────────────────────────────────────
 
     /// Set the maximum total USDC the vault may invest in any single project. Admin-only.
@@ -1317,7 +1318,8 @@ impl InvestmentVault {
         nonce: u64,
     ) -> u64 {
         require_current_state(&env);
-        from.require_auth();
+        // Note: from.require_auth() is called inside Base::burn — calling it
+        // here too triggers a double-auth ("frame is already authorized") error.
         if amount <= 0 {
             panic!("amount must be positive");
         }
@@ -2083,14 +2085,25 @@ fn lock_deposit(env: &Env, address: &Address) {
         &VaultKey::LastDeposit(address.clone()),
         &env.ledger().timestamp(),
     );
+    env.storage().persistent().set(
+        &VaultKey::LastDepositSeq(address.clone()),
+        &env.ledger().sequence(),
+    );
 }
 
-/// Reject a withdrawal if the caller's deposit lock has not yet expired (#33).
+/// Reject a withdrawal if the deposit lock has not yet expired (#36).
+///
+/// Enforces the withdrawal sliding window: at least `WithdrawalWindowLedgers`
+/// ledgers must elapse after the most recent deposit (or share receipt) of the
+/// caller before a withdrawal is permitted. The default window of 1 ledger
+/// blocks same-ledger deposit-then-withdraw exits. The older timestamp-based
+/// `MIN_LOCK_PERIOD` cooldown (#33) remains exposed via
+/// `get_deposit_lock_expiry` but is no longer enforced here.
 fn check_deposit_lock(env: &Env, address: &Address) {
-    if let Some(deposited_at) = env
+    if let Some(last_seq) = env
         .storage()
         .persistent()
-        .get::<_, u64>(&VaultKey::LastDeposit(address.clone()))
+        .get::<_, u32>(&VaultKey::LastDepositSeq(address.clone()))
     {
         let window: u32 = env
             .storage()
@@ -2098,7 +2111,6 @@ fn check_deposit_lock(env: &Env, address: &Address) {
             .get(&VaultKey::WithdrawalWindowLedgers)
             .unwrap_or(1);
         if env.ledger().sequence() < last_seq.saturating_add(window) {
-        if env.ledger().timestamp() < deposited_at + MIN_LOCK_PERIOD {
             panic_with_error!(env, VaultError::DepositLocked);
         }
     }
