@@ -105,6 +105,14 @@ pub enum CertificationStatus {
     Revoked = 3,
 }
 
+/// The lifecycle status of a project (#27).
+///
+/// Which variants this contract can produce today: project creation writes
+/// `Pending`, and `archive_project` writes `Archived`. The `Active`, `Funded`,
+/// and `Completed` variants are reserved for future vault-managed lifecycle
+/// transitions and are not currently assigned by this contract; do not branch
+/// on them in downstream logic until the cross-contract funding-status call is
+/// implemented (see #329).
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 #[repr(u32)]
