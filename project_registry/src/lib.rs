@@ -429,6 +429,9 @@ impl ProjectRegistry {
             .persistent()
             .get(&DataKey::Project(project_id))
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+        if project.status == types::ProjectStatus::Archived {
+            panic_with_error!(&env, RegistryError::ProjectArchived);
+        }
         if project.certification_status == status {
             panic_with_error!(&env, RegistryError::AlreadyCertified);
         }
@@ -718,6 +721,9 @@ impl ProjectRegistry {
             .persistent()
             .get(&DataKey::Project(project_id))
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+        if project.status == types::ProjectStatus::Archived {
+            panic_with_error!(&env, RegistryError::ProjectArchived);
+        }
         if project.owner != depositor {
             panic_with_error!(&env, RegistryError::NotProjectOwner);
         }
@@ -1059,6 +1065,10 @@ fn update_impact_score_internal(env: Env, project_id: u32, credit_quality: u32, 
         .persistent()
         .get(&DataKey::Project(project_id))
         .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+
+    if project.status == types::ProjectStatus::Archived {
+        panic_with_error!(&env, RegistryError::ProjectArchived);
+    }
 
     if project.credit_quality == credit_quality && project.green_impact == green_impact {
         return;
