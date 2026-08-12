@@ -90,9 +90,9 @@ pub enum VaultError {
     /// batch_deposit received an empty investor list (#178).
     EmptyBatchDeposit = 41,
     /// Share transfers are blocked because a funding round is active (#38).
-    FundingRoundActive = 41,
+    FundingRoundActive = 42,
     /// Funding would push cumulative investment in a project above its per-project cap (#32).
-    InvestmentCapExceeded = 41,
+    InvestmentCapExceeded = 43,
 }
 
 #[contracttype]
@@ -154,7 +154,7 @@ pub enum VaultKey {
     MultiSigThreshold,
     /// Circuit breaker pause state.
     Paused,
-    /// Last deposit ledger sequence per address.
+    /// Last deposit ledger timestamp (seconds) per address (#33).
     LastDeposit(Address),
     /// Optional emergency-admin address that may pause/unpause without
     /// holding full owner privileges (#43). Unset means no emergency admin.
@@ -178,6 +178,9 @@ pub enum VaultKey {
     /// Ledger timestamp (seconds) at which a project was first funded (#34).
     /// Used for time-weighted expected-returns calculation.
     InvestmentTimestamp(u32),
+    /// Last deposit ledger sequence per address (#36).
+    /// Used by `check_deposit_lock` to enforce the withdrawal sliding window.
+    LastDepositSeq(Address),
 }
 
 /// Container for wormhole bridge data keys.

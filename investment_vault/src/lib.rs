@@ -249,6 +249,7 @@ impl InvestmentVault {
         amount: i128,
         approvals: Vec<Address>,
     ) {
+        require_not_paused(&env);
         require_admin_approval(&env, approvals);
         fund_project_internal(env, project_id, amount);
     }
@@ -257,6 +258,7 @@ impl InvestmentVault {
     ///
     /// Rejects batch requests containing duplicate project IDs to prevent double-funding.
     pub fn batch_fund_projects(env: Env, fundings: Vec<(u32, i128)>, approvals: Vec<Address>) {
+        require_not_paused(&env);
         require_admin_approval(&env, approvals);
         let mut seen = Vec::new(&env);
         for funding in fundings.iter() {
@@ -704,6 +706,7 @@ impl InvestmentVault {
     /// Called by the owner when a project makes a repayment.
     #[only_owner]
     pub fn receive_yield(env: Env, from: Address, amount: i128) {
+        require_not_paused(&env);
         require_multisig_disabled(&env);
         receive_yield_internal(env, from, amount);
     }
@@ -727,6 +730,7 @@ impl InvestmentVault {
 
     /// Claim accumulated yield for `from`. Transfers claimable USDC to `from`.
     pub fn claim_yield(env: Env, from: Address) -> i128 {
+        require_not_paused(&env);
         require_current_state(&env);
         from.require_auth();
         let accum: i128 = env
@@ -835,6 +839,7 @@ impl InvestmentVault {
     /// Transfers `amount` from the insurance fund to `recipient`.
     #[only_owner]
     pub fn claim_insurance(env: Env, project_id: u32, recipient: Address, amount: i128) {
+        require_not_paused(&env);
         require_multisig_disabled(&env);
         claim_insurance_internal(env, project_id, recipient, amount);
     }
@@ -847,6 +852,7 @@ impl InvestmentVault {
         amount: i128,
         approvals: Vec<Address>,
     ) {
+        require_not_paused(&env);
         require_admin_approval(&env, approvals);
         claim_insurance_internal(env, project_id, recipient, amount);
     }
@@ -1127,7 +1133,7 @@ impl InvestmentVault {
             .instance()
             .get(&VaultKey::WithdrawalWindowLedgers)
             .unwrap_or(1)
-    // ── Dynamic fee structure (#39) ───────────────────────────────────────────
+    }
 
     /// Configure a two-tier volume-discount fee schedule for deposits (#39).
     ///
@@ -1179,6 +1185,7 @@ impl InvestmentVault {
             .get(&VaultKey::VolumeTierFeeBps)
             .unwrap_or(0);
         (threshold, bps)
+    }
     // ── Per-project investment cap (#32) ──────────────────────────────────────
 
     /// Set the maximum total USDC the vault may invest in any single project. Admin-only.
@@ -1254,6 +1261,7 @@ impl InvestmentVault {
 
     /// Mint HBS shares resulting from an authorized cross-chain bridge transfer (#184).
     pub fn bridge_mint(env: Env, to: Address, amount: i128) {
+        require_not_paused(&env);
         require_current_state(&env);
         let bridge: Address = env
             .storage()
@@ -1271,6 +1279,7 @@ impl InvestmentVault {
 
     /// Burn HBS shares to initiate an outbound cross-chain bridge transfer (#184).
     pub fn bridge_burn(env: Env, from: Address, amount: i128) {
+        require_not_paused(&env);
         require_current_state(&env);
         from.require_auth();
         if amount <= 0 {
@@ -1346,6 +1355,7 @@ impl InvestmentVault {
 
     /// Complete an inbound Wormhole cross-chain bridge transfer using a verified VAA (#184).
     pub fn complete_bridge_transfer(env: Env, vaa: Bytes) {
+        require_not_paused(&env);
         require_current_state(&env);
         let core: Address = env
             .storage()
@@ -1456,6 +1466,7 @@ impl InvestmentVault {
         amount: i128,
         data: Bytes,
     ) {
+        require_not_paused(&env);
         require_current_state(&env);
         if amount <= 0 {
             panic!("amount must be positive");
@@ -1575,6 +1586,7 @@ impl InvestmentVault {
 
     /// Transfer carbon credits between accounts (#184).
     pub fn transfer_carbon_credits(env: Env, from: Address, to: Address, amount: i128) {
+        require_not_paused(&env);
         require_current_state(&env);
         from.require_auth();
 
@@ -2083,14 +2095,25 @@ fn lock_deposit(env: &Env, address: &Address) {
         &VaultKey::LastDeposit(address.clone()),
         &env.ledger().timestamp(),
     );
+    env.storage().persistent().set(
+        &VaultKey::LastDepositSeq(address.clone()),
+        &env.ledger().sequence(),
+    );
 }
 
-/// Reject a withdrawal if the caller's deposit lock has not yet expired (#33).
+/// Reject a withdrawal if the deposit lock has not yet expired (#36).
+///
+/// Enforces the withdrawal sliding window: at least `WithdrawalWindowLedgers`
+/// ledgers must elapse after the most recent deposit (or share receipt) of the
+/// caller before a withdrawal is permitted. The default window of 1 ledger
+/// blocks same-ledger deposit-then-withdraw exits. The older timestamp-based
+/// `MIN_LOCK_PERIOD` cooldown (#33) remains exposed via
+/// `get_deposit_lock_expiry` but is no longer enforced here.
 fn check_deposit_lock(env: &Env, address: &Address) {
-    if let Some(deposited_at) = env
+    if let Some(last_seq) = env
         .storage()
         .persistent()
-        .get::<_, u64>(&VaultKey::LastDeposit(address.clone()))
+        .get::<_, u32>(&VaultKey::LastDepositSeq(address.clone()))
     {
         let window: u32 = env
             .storage()
@@ -2098,7 +2121,6 @@ fn check_deposit_lock(env: &Env, address: &Address) {
             .get(&VaultKey::WithdrawalWindowLedgers)
             .unwrap_or(1);
         if env.ledger().sequence() < last_seq.saturating_add(window) {
-        if env.ledger().timestamp() < deposited_at + MIN_LOCK_PERIOD {
             panic_with_error!(env, VaultError::DepositLocked);
         }
     }
@@ -2106,6 +2128,14 @@ fn check_deposit_lock(env: &Env, address: &Address) {
 
 #[contractimpl]
 impl InvestmentVault {
+    /// Pause all privileged state-mutating entry points (#72).
+    ///
+    /// When paused, every fund-moving and share-minting/burning entry point
+    /// (funding, deposits, withdrawals, yield distribution, insurance payouts,
+    /// bridge mint/burn, flash loans, and carbon-credit transfers) rejects with
+    /// `VaultError::Paused` via `require_not_paused`. Read-only queries and
+    /// `unpause` / `emergency_unpause` remain available so the vault can always
+    /// be resumed.
     #[only_owner]
     pub fn pause(env: Env) {
         env.storage().instance().set(&VaultKey::Paused, &true);
