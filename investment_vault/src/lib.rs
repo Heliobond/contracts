@@ -249,6 +249,7 @@ impl InvestmentVault {
         amount: i128,
         approvals: Vec<Address>,
     ) {
+        require_not_paused(&env);
         require_admin_approval(&env, approvals);
         fund_project_internal(env, project_id, amount);
     }
@@ -257,6 +258,7 @@ impl InvestmentVault {
     ///
     /// Rejects batch requests containing duplicate project IDs to prevent double-funding.
     pub fn batch_fund_projects(env: Env, fundings: Vec<(u32, i128)>, approvals: Vec<Address>) {
+        require_not_paused(&env);
         require_admin_approval(&env, approvals);
         let mut seen = Vec::new(&env);
         for funding in fundings.iter() {
@@ -704,6 +706,7 @@ impl InvestmentVault {
     /// Called by the owner when a project makes a repayment.
     #[only_owner]
     pub fn receive_yield(env: Env, from: Address, amount: i128) {
+        require_not_paused(&env);
         require_multisig_disabled(&env);
         receive_yield_internal(env, from, amount);
     }
@@ -727,6 +730,7 @@ impl InvestmentVault {
 
     /// Claim accumulated yield for `from`. Transfers claimable USDC to `from`.
     pub fn claim_yield(env: Env, from: Address) -> i128 {
+        require_not_paused(&env);
         require_current_state(&env);
         from.require_auth();
         let accum: i128 = env
@@ -835,6 +839,7 @@ impl InvestmentVault {
     /// Transfers `amount` from the insurance fund to `recipient`.
     #[only_owner]
     pub fn claim_insurance(env: Env, project_id: u32, recipient: Address, amount: i128) {
+        require_not_paused(&env);
         require_multisig_disabled(&env);
         claim_insurance_internal(env, project_id, recipient, amount);
     }
@@ -847,6 +852,7 @@ impl InvestmentVault {
         amount: i128,
         approvals: Vec<Address>,
     ) {
+        require_not_paused(&env);
         require_admin_approval(&env, approvals);
         claim_insurance_internal(env, project_id, recipient, amount);
     }
@@ -1255,6 +1261,7 @@ impl InvestmentVault {
 
     /// Mint HBS shares resulting from an authorized cross-chain bridge transfer (#184).
     pub fn bridge_mint(env: Env, to: Address, amount: i128) {
+        require_not_paused(&env);
         require_current_state(&env);
         let bridge: Address = env
             .storage()
@@ -1272,6 +1279,7 @@ impl InvestmentVault {
 
     /// Burn HBS shares to initiate an outbound cross-chain bridge transfer (#184).
     pub fn bridge_burn(env: Env, from: Address, amount: i128) {
+        require_not_paused(&env);
         require_current_state(&env);
         from.require_auth();
         if amount <= 0 {
@@ -1347,6 +1355,7 @@ impl InvestmentVault {
 
     /// Complete an inbound Wormhole cross-chain bridge transfer using a verified VAA (#184).
     pub fn complete_bridge_transfer(env: Env, vaa: Bytes) {
+        require_not_paused(&env);
         require_current_state(&env);
         let core: Address = env
             .storage()
@@ -1457,6 +1466,7 @@ impl InvestmentVault {
         amount: i128,
         data: Bytes,
     ) {
+        require_not_paused(&env);
         require_current_state(&env);
         if amount <= 0 {
             panic!("amount must be positive");
@@ -1576,6 +1586,7 @@ impl InvestmentVault {
 
     /// Transfer carbon credits between accounts (#184).
     pub fn transfer_carbon_credits(env: Env, from: Address, to: Address, amount: i128) {
+        require_not_paused(&env);
         require_current_state(&env);
         from.require_auth();
 
@@ -2117,6 +2128,14 @@ fn check_deposit_lock(env: &Env, address: &Address) {
 
 #[contractimpl]
 impl InvestmentVault {
+    /// Pause all privileged state-mutating entry points (#72).
+    ///
+    /// When paused, every fund-moving and share-minting/burning entry point
+    /// (funding, deposits, withdrawals, yield distribution, insurance payouts,
+    /// bridge mint/burn, flash loans, and carbon-credit transfers) rejects with
+    /// `VaultError::Paused` via `require_not_paused`. Read-only queries and
+    /// `unpause` / `emergency_unpause` remain available so the vault can always
+    /// be resumed.
     #[only_owner]
     pub fn pause(env: Env) {
         env.storage().instance().set(&VaultKey::Paused, &true);
