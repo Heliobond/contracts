@@ -1552,8 +1552,20 @@ impl InvestmentVault {
     }
 
     /// Issue carbon credits to a specified recipient (#184).
+    ///
+    /// Only the carbon credit oracle may mint credits (#312): this closes the
+    /// hole where any caller could credit an arbitrary address with freely
+    /// transferable carbon-credit balances. The authorization gate mirrors
+    /// `set_carbon_credit_price`.
     pub fn issue_carbon_credits(env: Env, to: Address, project_id: u32, amount: i128) -> i128 {
         require_current_state(&env);
+        let oracle: Address = env
+            .storage()
+            .instance()
+            .get(&VaultKey::CarbonOracle)
+            .expect("carbon oracle not set");
+        oracle.require_auth();
+
         let calc = Self::calculate_carbon_credits(env.clone(), project_id, amount);
 
         if calc.credits <= 0 {
@@ -1569,6 +1581,8 @@ impl InvestmentVault {
             &VaultKey::CarbonCreditBalance(to.clone()),
             &(prev + calc.credits),
         );
+
+        events::carbon_credits_issued(&env, &to, project_id, calc.credits);
 
         calc.credits
     }
