@@ -415,6 +415,15 @@ pub struct CarbonCreditsTransferred {
     pub amount: i128,
 }
 
+#[contractevent]
+pub struct CarbonCreditsIssued {
+    #[topic]
+    pub to: Address,
+    #[topic]
+    pub project_id: u32,
+    pub credits: i128,
+}
+
 pub fn carbon_oracle_set(env: &Env, oracle: &Address) {
     CarbonOracleSet {
         oracle: oracle.clone(),
