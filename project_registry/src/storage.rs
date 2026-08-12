@@ -9,6 +9,9 @@ pub fn write_project(env: &Env, id: u32, project: &ProjectData) {
     env.storage()
         .persistent()
         .set(&DataKey::Project(id), project);
+    env.storage()
+        .persistent()
+        .extend_ttl(&DataKey::Project(id), 17280, 518400);
 }
 
 pub fn read_proposal(env: &Env, id: u32) -> Option<Proposal> {
