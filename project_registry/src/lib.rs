@@ -653,6 +653,7 @@ impl ProjectRegistry {
     #[only_owner]
     pub fn update_credit_quality_score(env: Env, project_id: u32, credit_quality: u32) {
         require_not_paused(&env);
+        require_multisig_disabled(&env);
         if credit_quality > 100 {
             panic_with_error!(&env, RegistryError::CreditQualityOutOfRange);
         }
