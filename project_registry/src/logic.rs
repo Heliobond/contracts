@@ -1,6 +1,3 @@
-use crate::types::{CertificationStatus, ProjectData};
-use soroban_sdk::{Address, Env, String};
-
 /// Interest-rate calculation for green-bond projects.
 ///
 /// Heliobond uses a two-dimensional scoring model to determine each project's
