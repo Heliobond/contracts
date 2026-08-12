@@ -2128,6 +2128,276 @@ fn test_withdrawal_rate_limiting_transfer_locked() {
     s.vault_client.withdraw(&investor2, &shares, &0);
 }
 
+// ── #36: withdrawal sliding window with a configured (non-default) window ──────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #36)")]
+fn test_withdrawal_lock_rejects_within_configured_window() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    // Configure a 5-ledger cooldown.
+    s.vault_client.set_withdrawal_window(&5u32);
+    assert_eq!(s.vault_client.get_withdrawal_window(), 5u32);
+
+    // Advance only 3 ledgers — still inside the window.
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 3;
+    });
+
+    // Withdrawal must be rejected while inside the configured window.
+    s.vault_client.withdraw(&investor, &shares, &0);
+}
+
+#[test]
+fn test_withdrawal_lock_allows_after_configured_window() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    s.vault_client.set_withdrawal_window(&5u32);
+
+    // Advance exactly 5 ledgers, exiting the configured window.
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 5;
+    });
+
+    let returned = s.vault_client.withdraw(&investor, &shares, &0);
+    assert!(returned > 0);
+}
+
+// ── #38: funding-round share-transfer block ────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #42)")]
+fn test_funding_round_blocks_share_transfer() {
+    let s = setup();
+    let investor1 = Address::generate(&s.env);
+    let investor2 = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor1, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor1, &1_000_0000000i128);
+
+    // Advance past the deposit-lock window so the transfer itself is what fails.
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+
+    assert!(!s.vault_client.is_funding_round_active());
+    s.vault_client.start_funding_round();
+    assert!(s.vault_client.is_funding_round_active());
+
+    // Share transfer must be rejected while a funding round is active.
+    s.vault_client.transfer(
+        &investor1,
+        &soroban_sdk::MuxedAddress::from(investor2.clone()),
+        &shares,
+    );
+}
+
+#[test]
+fn test_funding_round_transfer_succeeds_after_close() {
+    let s = setup();
+    let investor1 = Address::generate(&s.env);
+    let investor2 = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor1, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor1, &1_000_0000000i128);
+
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 1;
+    });
+
+    s.vault_client.start_funding_round();
+    assert!(s.vault_client.is_funding_round_active());
+    s.vault_client.end_funding_round();
+    assert!(!s.vault_client.is_funding_round_active());
+
+    // Transfer now succeeds once the round has closed.
+    s.vault_client.transfer(
+        &investor1,
+        &soroban_sdk::MuxedAddress::from(investor2.clone()),
+        &shares,
+    );
+    assert_eq!(s.vault_client.balance(&investor2), shares);
+}
+
+// ── #32: per-project investment cap ────────────────────────────────────────────
+
+#[test]
+fn test_investment_cap_respected_and_capacity_tracked() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 10_000_0000000i128);
+    s.vault_client.deposit(&investor, &10_000_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://QmCap"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
+
+    // Set a 100 USDC cap and confirm remaining capacity reflects it.
+    s.vault_client.set_max_investment_per_project(&100_0000000i128);
+    assert_eq!(
+        s.vault_client.investment_capacity(&project_id),
+        100_0000000i128
+    );
+
+    // Funding exactly at the cap succeeds.
+    s.vault_client.fund_project(&project_id, &100_0000000i128);
+    assert_eq!(s.vault_client.investment_capacity(&project_id), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #43)")]
+fn test_investment_cap_exceeded_panics() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    let creator = Address::generate(&s.env);
+
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 10_000_0000000i128);
+    s.vault_client.deposit(&investor, &10_000_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://QmCapOver"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
+
+    s.vault_client.set_max_investment_per_project(&100_0000000i128);
+    s.vault_client.fund_project(&project_id, &100_0000000i128);
+
+    // One stroop over the cap must panic with InvestmentCapExceeded.
+    s.vault_client.fund_project(&project_id, &1i128);
+}
+
+#[test]
+fn test_investment_cap_zero_restores_default() {
+    let s = setup();
+
+    s.vault_client.set_max_investment_per_project(&100_0000000i128);
+    s.vault_client.set_max_investment_per_project(&0i128);
+
+    // Passing 0 restores the compile-time default (5 M USDC), never disables it.
+    assert_eq!(
+        s.vault_client.investment_capacity(&0),
+        MAX_INVESTMENT_PER_PROJECT
+    );
+}
+
+// ── #184: carbon credit unit + integration coverage ────────────────────────────
+
+#[test]
+fn test_carbon_credit_calculation_issuance_and_balance() {
+    let s = setup();
+    let creator = Address::generate(&s.env);
+    let recipient = Address::generate(&s.env);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://QmCarbon"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
+    // green_impact = 100 (max) so credits = amount * 100 / 10^10.
+    registry_client.update_impact_score(&project_id, &100u32, &100u32);
+
+    // 100 USDC * 100 / 10^10 = 10 credits.
+    let calc = s
+        .vault_client
+        .calculate_carbon_credits(&project_id, &100_0000000i128);
+    assert_eq!(calc.credits, 10);
+    assert_eq!(calc.amount_invested, 100_0000000i128);
+
+    let issued = s
+        .vault_client
+        .issue_carbon_credits(&recipient, &project_id, &100_0000000i128);
+    assert_eq!(issued, 10);
+    assert_eq!(s.vault_client.carbon_credit_balance(&recipient), 10);
+}
+
+#[test]
+#[should_panic(expected = "no carbon credits to issue")]
+fn test_carbon_credit_issue_no_credits_panics() {
+    let s = setup();
+    let creator = Address::generate(&s.env);
+    let recipient = Address::generate(&s.env);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://QmCarbonZero"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
+    // green_impact defaults to 0 → zero credits → issuance must panic.
+    s.vault_client
+        .issue_carbon_credits(&recipient, &project_id, &100_0000000i128);
+}
+
+#[test]
+#[should_panic(expected = "insufficient carbon credits")]
+fn test_carbon_credit_transfer_insufficient_balance_panics() {
+    let s = setup();
+    let creator = Address::generate(&s.env);
+    let from = Address::generate(&s.env);
+    let to = Address::generate(&s.env);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://QmCarbonInsuff"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
+    registry_client.update_impact_score(&project_id, &100u32, &100u32);
+
+    // Issue 10 credits to `from`, then attempt to transfer 11.
+    s.vault_client
+        .issue_carbon_credits(&from, &project_id, &100_0000000i128);
+    s.vault_client.transfer_carbon_credits(&from, &to, &11i128);
+}
+
+#[test]
+fn test_carbon_credit_transfer_success() {
+    let s = setup();
+    let creator = Address::generate(&s.env);
+    let from = Address::generate(&s.env);
+    let to = Address::generate(&s.env);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://QmCarbonTransfer"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
+    registry_client.update_impact_score(&project_id, &100u32, &100u32);
+
+    s.vault_client
+        .issue_carbon_credits(&from, &project_id, &100_0000000i128);
+    assert_eq!(s.vault_client.carbon_credit_balance(&from), 10);
+
+    s.vault_client.transfer_carbon_credits(&from, &to, &4i128);
+    assert_eq!(s.vault_client.carbon_credit_balance(&from), 6);
+    assert_eq!(s.vault_client.carbon_credit_balance(&to), 4);
+}
+
 // ── Consolidated admin-only enumeration (#266) ─────────────────────────────────
 //
 // Several admin-only functions already have their own dedicated
@@ -2586,6 +2856,7 @@ fn test_volume_fee_tier_is_admin_only() {
         },
     }]);
     s.vault_client.set_volume_fee_tier(&500_0000000i128, &50u32);
+}
 // ── #179: convert_to_shares() overflow guard on extremely large deposits ──────
 
 /// Verify that `convert_to_shares` panics (rather than silently wrapping) when
