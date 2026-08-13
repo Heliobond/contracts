@@ -8,6 +8,7 @@ pub mod logic {
     /// - `fee_bps`: Basis points representing the fee percentage (where 10,000 bps = 100%, 500 bps = 5%).
     ///
     /// Returns the computed fee amount in USDC units.
+    #[allow(dead_code)]
     pub fn calculate_performance_fee(yield_amount: i128, fee_bps: u32) -> i128 {
         (yield_amount * (fee_bps as i128)) / 10000
     }
