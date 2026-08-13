@@ -1127,6 +1127,8 @@ impl InvestmentVault {
             .instance()
             .get(&VaultKey::WithdrawalWindowLedgers)
             .unwrap_or(1)
+    }
+
     // ── Dynamic fee structure (#39) ───────────────────────────────────────────
 
     /// Configure a two-tier volume-discount fee schedule for deposits (#39).
@@ -1179,6 +1181,8 @@ impl InvestmentVault {
             .get(&VaultKey::VolumeTierFeeBps)
             .unwrap_or(0);
         (threshold, bps)
+    }
+
     // ── Per-project investment cap (#32) ──────────────────────────────────────
 
     /// Set the maximum total USDC the vault may invest in any single project. Admin-only.
@@ -1475,8 +1479,18 @@ impl InvestmentVault {
             panic!("flash loan callback failed");
         }
 
-        Base::transfer(&env, &borrower, &MuxedAddress::from(&vault), amount + fee);
-        Base::burn(&env, &vault, amount);
+        // Repayment (#315): pull `amount + fee` shares back from the borrower.
+        // `Base::transfer` would call `borrower.require_auth()`, which a
+        // *contract* borrower cannot satisfy once its `flash_loan_callback` has
+        // already returned — the repayment therefore failed on a real network
+        // and only passed under `mock_all_auths()`. The borrower's consent is
+        // established by returning `true` from the callback in this same
+        // transaction, so the vault (as the token contract) moves the shares
+        // directly via the unauthenticated `Base::update` primitive.
+        Base::update(&env, Some(&borrower), Some(&vault), amount + fee);
+        // Burn the principal from the vault's own balance, leaving the fee as
+        // the vault's flash-loan revenue.
+        Base::update(&env, Some(&vault), None, amount);
 
         events::flash_loan(&env, &initiator, &borrower, amount, fee);
     }
@@ -2092,12 +2106,6 @@ fn check_deposit_lock(env: &Env, address: &Address) {
         .persistent()
         .get::<_, u64>(&VaultKey::LastDeposit(address.clone()))
     {
-        let window: u32 = env
-            .storage()
-            .instance()
-            .get(&VaultKey::WithdrawalWindowLedgers)
-            .unwrap_or(1);
-        if env.ledger().sequence() < last_seq.saturating_add(window) {
         if env.ledger().timestamp() < deposited_at + MIN_LOCK_PERIOD {
             panic_with_error!(env, VaultError::DepositLocked);
         }
