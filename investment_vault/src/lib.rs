@@ -52,6 +52,13 @@ use stellar_tokens::fungible::{Base, FungibleToken};
 /// in share calculations and caps single-user concentration risk (#112).
 const MAX_DEPOSIT: i128 = 1_000_000_000 * 10_000_000;
 
+/// Persistent-storage TTL management (#317). Soroban's TTL model does not
+/// auto-extend entries on write, so long-idle vaults would otherwise risk
+/// archiving yield/queue/insurance/credit state. Persistent entries are
+/// extended to 30 days whenever their remaining TTL drops below 1 day.
+const PERSISTENT_TTL_THRESHOLD: u32 = 17280; // 1 day in ledgers (5s/ledger)
+const PERSISTENT_TTL_EXTEND_TO: u32 = 518400; // 30 days in ledgers
+
 /// Minimum deposit amount: 100 USDC (7 decimals) — prevents dust attacks that
 /// could manipulate share price via rounding or inflate storage costs (#13).
 const MIN_DEPOSIT: i128 = 100_0000000;
@@ -432,6 +439,9 @@ impl InvestmentVault {
         env.storage()
             .persistent()
             .set(&VaultKey::InsuranceFund, &(ins + premium));
+        env.storage()
+            .persistent()
+            .extend_ttl(&VaultKey::InsuranceFund, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
 
         // Transfer management fee to recipient if non-zero (#7)
         if fee_amount > 0 {
@@ -595,6 +605,9 @@ impl InvestmentVault {
             );
             env.storage()
                 .persistent()
+                .extend_ttl(&VaultKey::QueueEntry(tail), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
+            env.storage()
+                .persistent()
                 .set(&VaultKey::QueueTail, &(tail + 1));
             events::withdraw_queued(&env, &from, shares_amount, usdc_returned);
             return 0;
@@ -750,6 +763,9 @@ impl InvestmentVault {
         env.storage()
             .persistent()
             .set(&VaultKey::YieldDebt(from.clone()), &accum);
+        env.storage()
+            .persistent()
+            .extend_ttl(&VaultKey::YieldDebt(from.clone()), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
 
         let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
         let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
@@ -1127,6 +1143,8 @@ impl InvestmentVault {
             .instance()
             .get(&VaultKey::WithdrawalWindowLedgers)
             .unwrap_or(1)
+    }
+
     // ── Dynamic fee structure (#39) ───────────────────────────────────────────
 
     /// Configure a two-tier volume-discount fee schedule for deposits (#39).
@@ -1179,6 +1197,8 @@ impl InvestmentVault {
             .get(&VaultKey::VolumeTierFeeBps)
             .unwrap_or(0);
         (threshold, bps)
+    }
+
     // ── Per-project investment cap (#32) ──────────────────────────────────────
 
     /// Set the maximum total USDC the vault may invest in any single project. Admin-only.
@@ -1569,6 +1589,9 @@ impl InvestmentVault {
             &VaultKey::CarbonCreditBalance(to.clone()),
             &(prev + calc.credits),
         );
+        env.storage()
+            .persistent()
+            .extend_ttl(&VaultKey::CarbonCreditBalance(to.clone()), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
 
         calc.credits
     }
@@ -1601,10 +1624,16 @@ impl InvestmentVault {
             &VaultKey::CarbonCreditBalance(from.clone()),
             &(prev_from - amount),
         );
+        env.storage()
+            .persistent()
+            .extend_ttl(&VaultKey::CarbonCreditBalance(from.clone()), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
         env.storage().persistent().set(
             &VaultKey::CarbonCreditBalance(to.clone()),
             &(prev_to + amount),
         );
+        env.storage()
+            .persistent()
+            .extend_ttl(&VaultKey::CarbonCreditBalance(to.clone()), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
 
         events::carbon_credits_transferred(&env, &from, &to, amount);
     }
@@ -1668,6 +1697,9 @@ impl InvestmentVault {
         env.storage()
             .persistent()
             .set(&VaultKey::ComplianceEvent(seq), &event);
+        env.storage()
+            .persistent()
+            .extend_ttl(&VaultKey::ComplianceEvent(seq), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
         env.storage()
             .instance()
             .set(&VaultKey::ComplianceEventCounter, &seq);
@@ -1876,6 +1908,9 @@ fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
     env.storage()
         .persistent()
         .set(&VaultKey::ProjectInvestment(project_id), &(prev + amount));
+    env.storage()
+        .persistent()
+        .extend_ttl(&VaultKey::ProjectInvestment(project_id), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
 
     // Record the first funding timestamp for time-weighted returns (#34).
     // Only set once — subsequent fund_project calls don't shift the origin.
@@ -1923,6 +1958,9 @@ fn receive_yield_internal(env: Env, from: Address, amount: i128) {
     env.storage()
         .persistent()
         .set(&VaultKey::YieldPerShareAccum, &(accum + delta));
+    env.storage()
+        .persistent()
+        .extend_ttl(&VaultKey::YieldPerShareAccum, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
 
     events::yield_received(&env, &from, amount);
 }
@@ -1954,6 +1992,9 @@ fn claim_insurance_internal(env: Env, project_id: u32, recipient: Address, amoun
     env.storage()
         .persistent()
         .set(&VaultKey::InsuranceFund, &(fund - amount));
+    env.storage()
+        .persistent()
+        .extend_ttl(&VaultKey::InsuranceFund, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
 
     let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
     soroban_sdk::token::TokenClient::new(&env, &usdc_sac).transfer(
@@ -2083,6 +2124,9 @@ fn lock_deposit(env: &Env, address: &Address) {
         &VaultKey::LastDeposit(address.clone()),
         &env.ledger().timestamp(),
     );
+    env.storage()
+        .persistent()
+        .extend_ttl(&VaultKey::LastDeposit(address.clone()), PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
 }
 
 /// Reject a withdrawal if the caller's deposit lock has not yet expired (#33).
@@ -2092,12 +2136,6 @@ fn check_deposit_lock(env: &Env, address: &Address) {
         .persistent()
         .get::<_, u64>(&VaultKey::LastDeposit(address.clone()))
     {
-        let window: u32 = env
-            .storage()
-            .instance()
-            .get(&VaultKey::WithdrawalWindowLedgers)
-            .unwrap_or(1);
-        if env.ledger().sequence() < last_seq.saturating_add(window) {
         if env.ledger().timestamp() < deposited_at + MIN_LOCK_PERIOD {
             panic_with_error!(env, VaultError::DepositLocked);
         }
