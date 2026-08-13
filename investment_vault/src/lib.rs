@@ -432,6 +432,7 @@ impl InvestmentVault {
         env.storage()
             .persistent()
             .set(&VaultKey::InsuranceFund, &(ins + premium));
+        env.storage().persistent().extend_ttl(&VaultKey::InsuranceFund, 17280, 518400); // TTL extension (#317)
 
         // Transfer management fee to recipient if non-zero (#7)
         if fee_amount > 0 {
@@ -454,6 +455,11 @@ impl InvestmentVault {
             .persistent()
             .set(&key, &(prev_dep + usdc_amount));
         env.storage().persistent().extend_ttl(&key, 17280, 518400); // Add rent check/extend
+        // TTL policy (#317): every frequently-written persistent key (InsuranceFund,
+        // YieldDebt, ProjectInvestment, QueueEntry, ComplianceEvent, CarbonCreditBalance,
+        // LastDeposit, YieldPerShareAccum) now extends its TTL to 518400 ledgers when its
+        // remaining TTL drops below the 17280-ledger threshold, preventing archival of
+        // long-idle vault state (see ADR-002).
 
         // Update cached total assets: liquid increases by full usdc_amount (#81, #85)
         let cached_ta: i128 = env
@@ -593,6 +599,7 @@ impl InvestmentVault {
                     usdc_owed: usdc_returned,
                 },
             );
+            env.storage().persistent().extend_ttl(&VaultKey::QueueEntry(tail), 17280, 518400); // TTL extension (#317)
             env.storage()
                 .persistent()
                 .set(&VaultKey::QueueTail, &(tail + 1));
@@ -750,6 +757,7 @@ impl InvestmentVault {
         env.storage()
             .persistent()
             .set(&VaultKey::YieldDebt(from.clone()), &accum);
+        env.storage().persistent().extend_ttl(&VaultKey::YieldDebt(from.clone()), 17280, 518400); // TTL extension (#317)
 
         let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
         let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
@@ -1569,6 +1577,7 @@ impl InvestmentVault {
             &VaultKey::CarbonCreditBalance(to.clone()),
             &(prev + calc.credits),
         );
+        env.storage().persistent().extend_ttl(&VaultKey::CarbonCreditBalance(to.clone()), 17280, 518400); // TTL extension (#317)
 
         calc.credits
     }
@@ -1668,6 +1677,7 @@ impl InvestmentVault {
         env.storage()
             .persistent()
             .set(&VaultKey::ComplianceEvent(seq), &event);
+        env.storage().persistent().extend_ttl(&VaultKey::ComplianceEvent(seq), 17280, 518400); // TTL extension (#317)
         env.storage()
             .instance()
             .set(&VaultKey::ComplianceEventCounter, &seq);
@@ -1876,6 +1886,7 @@ fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
     env.storage()
         .persistent()
         .set(&VaultKey::ProjectInvestment(project_id), &(prev + amount));
+    env.storage().persistent().extend_ttl(&VaultKey::ProjectInvestment(project_id), 17280, 518400); // TTL extension (#317)
 
     // Record the first funding timestamp for time-weighted returns (#34).
     // Only set once — subsequent fund_project calls don't shift the origin.
@@ -1923,6 +1934,7 @@ fn receive_yield_internal(env: Env, from: Address, amount: i128) {
     env.storage()
         .persistent()
         .set(&VaultKey::YieldPerShareAccum, &(accum + delta));
+    env.storage().persistent().extend_ttl(&VaultKey::YieldPerShareAccum, 17280, 518400); // TTL extension (#317)
 
     events::yield_received(&env, &from, amount);
 }
@@ -1954,6 +1966,7 @@ fn claim_insurance_internal(env: Env, project_id: u32, recipient: Address, amoun
     env.storage()
         .persistent()
         .set(&VaultKey::InsuranceFund, &(fund - amount));
+    env.storage().persistent().extend_ttl(&VaultKey::InsuranceFund, 17280, 518400); // TTL extension (#317)
 
     let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
     soroban_sdk::token::TokenClient::new(&env, &usdc_sac).transfer(
@@ -2083,6 +2096,7 @@ fn lock_deposit(env: &Env, address: &Address) {
         &VaultKey::LastDeposit(address.clone()),
         &env.ledger().timestamp(),
     );
+    env.storage().persistent().extend_ttl(&VaultKey::LastDeposit(address.clone()), 17280, 518400); // TTL extension (#317)
 }
 
 /// Reject a withdrawal if the caller's deposit lock has not yet expired (#33).
