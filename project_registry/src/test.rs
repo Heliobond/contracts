@@ -2178,3 +2178,234 @@ proptest! {
         prop_assert!(result.is_err());
     }
 }
+
+// ── #326: governance proposal system has zero test coverage ───────────────────
+
+#[test]
+fn test_create_proposal_and_get() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let proposal_id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Increase carbon-credit price floor"),
+        &86_400u64,
+    );
+    assert_eq!(proposal_id, 1);
+    let p = client.get_proposal(&proposal_id);
+    assert_eq!(p.proposer, proposer);
+    assert_eq!(p.votes_for, 0);
+    assert_eq!(p.votes_against, 0);
+    assert!(!p.executed);
+}
+
+#[test]
+#[should_panic]
+fn test_create_proposal_voting_period_too_short_panics() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    // Below MIN_VOTING_PERIOD (86_400).
+    client.create_proposal(&proposer, &String::from_str(&env, "too short"), &86_399u64);
+}
+
+#[test]
+fn test_cast_vote_and_tally() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter_for = Address::generate(&env);
+    let voter_against = Address::generate(&env);
+    let pid = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "governance test"),
+        &86_400u64,
+    );
+
+    client.cast_vote(&voter_for, &pid, &true, &100i128);
+    client.cast_vote(&voter_against, &pid, &false, &40i128);
+
+    let p = client.get_proposal(&pid);
+    assert_eq!(p.votes_for, 100);
+    assert_eq!(p.votes_against, 40);
+}
+
+#[test]
+#[should_panic]
+fn test_cast_vote_zero_weight_panics() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter = Address::generate(&env);
+    let pid = client.create_proposal(&proposer, &String::from_str(&env, "v"), &86_400u64);
+    client.cast_vote(&voter, &pid, &true, &0i128);
+}
+
+#[test]
+#[should_panic]
+fn test_cast_vote_twice_panics() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter = Address::generate(&env);
+    let pid = client.create_proposal(&proposer, &String::from_str(&env, "v"), &86_400u64);
+    client.cast_vote(&voter, &pid, &true, &10i128);
+    client.cast_vote(&voter, &pid, &true, &10i128); // AlreadyVoted
+}
+
+#[test]
+#[should_panic]
+fn test_cast_vote_after_period_ended_panics() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter = Address::generate(&env);
+    let pid = client.create_proposal(&proposer, &String::from_str(&env, "v"), &86_400u64);
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + 86_401);
+    client.cast_vote(&voter, &pid, &true, &10i128); // VotingPeriodEnded
+}
+
+#[test]
+#[should_panic]
+fn test_execute_proposal_still_open_panics() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let pid = client.create_proposal(&proposer, &String::from_str(&env, "v"), &86_400u64);
+    client.execute_proposal(&pid); // VotingStillOpen
+}
+
+#[test]
+fn test_execute_proposal_pass_and_fail() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter_for = Address::generate(&env);
+    let voter_against = Address::generate(&env);
+
+    // Pass case: votes_for (100) > votes_against (40).
+    let pid_pass = client.create_proposal(&proposer, &String::from_str(&env, "pass"), &86_400u64);
+    client.cast_vote(&voter_for, &pid_pass, &true, &100i128);
+    client.cast_vote(&voter_against, &pid_pass, &false, &40i128);
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + 86_401);
+    assert!(client.execute_proposal(&pid_pass));
+    assert!(client.get_proposal(&pid_pass).executed);
+
+    // Fail case: votes_for (10) < votes_against (50).
+    let pid_fail = client.create_proposal(&proposer, &String::from_str(&env, "fail"), &86_400u64);
+    client.cast_vote(&voter_for, &pid_fail, &true, &10i128);
+    client.cast_vote(&voter_against, &pid_fail, &false, &50i128);
+    let now2 = env.ledger().timestamp();
+    env.ledger().set_timestamp(now2 + 86_401);
+    assert!(!client.execute_proposal(&pid_fail));
+}
+
+#[test]
+#[should_panic]
+fn test_execute_proposal_twice_panics() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter = Address::generate(&env);
+    let pid = client.create_proposal(&proposer, &String::from_str(&env, "v"), &86_400u64);
+    client.cast_vote(&voter, &pid, &true, &10i128);
+    let now = env.ledger().timestamp();
+    env.ledger().set_timestamp(now + 86_401);
+    client.execute_proposal(&pid);
+    client.execute_proposal(&pid); // ProposalAlreadyExecuted
+}
+
+#[test]
+#[should_panic]
+fn test_get_proposal_not_found_panics() {
+    let (_env, _admin, _whitelister, client) = setup();
+    client.get_proposal(&999u32);
+}
+
+// ── #327: archive/delete/compact lifecycle has no functional coverage ─────────
+
+#[test]
+fn test_archive_project_excludes_from_listings() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    // Present in both listings before archiving.
+    assert_eq!(client.get_all_projects().len(), 1);
+    assert_eq!(client.get_all_projects_with_archived().len(), 1);
+
+    client.archive_project(&id);
+
+    // Status flips to Archived.
+    let project = client.get_project(&id);
+    assert_eq!(project.status, crate::types::ProjectStatus::Archived);
+
+    // Excluded from get_all_projects, still in get_all_projects_with_archived.
+    assert_eq!(client.get_all_projects().len(), 0);
+    assert_eq!(client.get_all_projects_with_archived().len(), 1);
+}
+
+#[test]
+fn test_delete_project_removes_entry() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    client.delete_project(&id);
+
+    // get_project must panic (entry removed).
+    assert!(client.try_get_project(&id).is_err());
+    assert_eq!(client.get_all_projects_with_archived().len(), 0);
+}
+
+#[test]
+fn test_compact_archive_produces_summary_and_removes_full_record() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    // Give the project non-zero scores so the summary has fields to assert.
+    client.update_impact_score(&id, &75u32, &88u32);
+    client.archive_project(&id);
+
+    let before = client.get_project(&id);
+
+    client.compact_archive(&id);
+
+    // Full record removed → get_project panics.
+    assert!(client.try_get_project(&id).is_err());
+
+    // Summary matches the pre-compaction ProjectData fields.
+    let summary = client.get_archive_summary(&id);
+    assert_eq!(summary.owner, before.owner);
+    assert_eq!(summary.final_credit_quality, before.credit_quality);
+    assert_eq!(summary.final_green_impact, before.green_impact);
+    assert_eq!(summary.maturity_date, before.maturity_date);
+    assert_eq!(summary.certification_status, before.certification_status);
+}
+
+#[test]
+#[should_panic]
+fn test_compact_archive_before_archiving_panics() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+    client.compact_archive(&id); // ProjectNotArchived
+}
