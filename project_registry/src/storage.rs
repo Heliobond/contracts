@@ -21,6 +21,7 @@ pub fn write_proposal(env: &Env, id: u32, proposal: &Proposal) {
         .set(&DataKey::Proposal(id), proposal);
 }
 
+#[allow(dead_code)]
 pub fn read_whitelist(env: &Env, account: Address) -> bool {
     env.storage()
         .persistent()
@@ -28,6 +29,7 @@ pub fn read_whitelist(env: &Env, account: Address) -> bool {
         .unwrap_or(false)
 }
 
+#[allow(dead_code)]
 pub fn write_whitelist(env: &Env, account: Address, status: bool) {
     env.storage()
         .persistent()

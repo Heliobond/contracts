@@ -291,8 +291,7 @@ impl InvestmentVault {
                 .unwrap_or(0);
             if investment > 0 {
                 let project = registry.get_project(&i);
-                let score_rate =
-                    project.credit_quality as i128 + project.green_impact as i128;
+                let score_rate = project.credit_quality as i128 + project.green_impact as i128;
 
                 let funded_at: u64 = env
                     .storage()
@@ -303,8 +302,7 @@ impl InvestmentVault {
                 if funded_at > 0 && now > funded_at {
                     // Time-weighted: accrue interest over elapsed time (#34).
                     let elapsed = (now - funded_at) as i128;
-                    expected +=
-                        investment * score_rate * elapsed / (200 * ANNUAL_PERIOD_SECS);
+                    expected += investment * score_rate * elapsed / (200 * ANNUAL_PERIOD_SECS);
                 } else {
                     // Static fallback for pre-existing investments without a timestamp.
                     expected += investment * score_rate / 200;
@@ -1127,6 +1125,8 @@ impl InvestmentVault {
             .instance()
             .get(&VaultKey::WithdrawalWindowLedgers)
             .unwrap_or(1)
+    }
+
     // ── Dynamic fee structure (#39) ───────────────────────────────────────────
 
     /// Configure a two-tier volume-discount fee schedule for deposits (#39).
@@ -1151,9 +1151,7 @@ impl InvestmentVault {
             env.storage()
                 .instance()
                 .remove(&VaultKey::VolumeTierThreshold);
-            env.storage()
-                .instance()
-                .remove(&VaultKey::VolumeTierFeeBps);
+            env.storage().instance().remove(&VaultKey::VolumeTierFeeBps);
             return;
         }
         env.storage()
@@ -1179,6 +1177,8 @@ impl InvestmentVault {
             .get(&VaultKey::VolumeTierFeeBps)
             .unwrap_or(0);
         (threshold, bps)
+    }
+
     // ── Per-project investment cap (#32) ──────────────────────────────────────
 
     /// Set the maximum total USDC the vault may invest in any single project. Admin-only.
@@ -1191,7 +1191,11 @@ impl InvestmentVault {
         if cap < 0 {
             panic_with_error!(&env, VaultError::AmountNotPositive);
         }
-        let stored_cap = if cap == 0 { MAX_INVESTMENT_PER_PROJECT } else { cap };
+        let stored_cap = if cap == 0 {
+            MAX_INVESTMENT_PER_PROJECT
+        } else {
+            cap
+        };
         env.storage()
             .instance()
             .set(&VaultKey::MaxInvestmentPerProject, &stored_cap);
@@ -1215,7 +1219,11 @@ impl InvestmentVault {
             .get(&VaultKey::ProjectInvestment(project_id))
             .unwrap_or(0);
         let remaining = cap - invested;
-        if remaining < 0 { 0 } else { remaining }
+        if remaining < 0 {
+            0
+        } else {
+            remaining
+        }
     }
 
     // ── Deposit lock-up expiry query (#33) ────────────────────────────────────
@@ -1272,7 +1280,7 @@ impl InvestmentVault {
     /// Burn HBS shares to initiate an outbound cross-chain bridge transfer (#184).
     pub fn bridge_burn(env: Env, from: Address, amount: i128) {
         require_current_state(&env);
-        from.require_auth();
+        // Note: from.require_auth() is called inside Base::burn.
         if amount <= 0 {
             panic!("amount must be positive");
         }
@@ -1317,7 +1325,7 @@ impl InvestmentVault {
         nonce: u64,
     ) -> u64 {
         require_current_state(&env);
-        from.require_auth();
+        // Note: from.require_auth() is called inside Base::burn.
         if amount <= 0 {
             panic!("amount must be positive");
         }
@@ -2075,22 +2083,23 @@ fn require_emergency_admin(env: &Env, caller: &Address) {
     }
 }
 
-/// Record the current ledger timestamp as the depositor's lock origin (#33).
-/// The lock prevents withdrawal for MIN_LOCK_PERIOD seconds after each deposit,
-/// blocking flash-deposit-withdraw attacks that could manipulate share pricing.
+/// Record the current ledger sequence as the depositor's lock origin (#36).
+/// The lock prevents withdrawal until `WithdrawalWindowLedgers` ledgers have
+/// elapsed since the deposit, blocking flash-deposit-withdraw attacks that
+/// could manipulate share pricing.
 fn lock_deposit(env: &Env, address: &Address) {
     env.storage().persistent().set(
         &VaultKey::LastDeposit(address.clone()),
-        &env.ledger().timestamp(),
+        &env.ledger().sequence(),
     );
 }
 
-/// Reject a withdrawal if the caller's deposit lock has not yet expired (#33).
+/// Reject a withdrawal if the caller's deposit lock has not yet expired (#36).
 fn check_deposit_lock(env: &Env, address: &Address) {
-    if let Some(deposited_at) = env
+    if let Some(last_seq) = env
         .storage()
         .persistent()
-        .get::<_, u64>(&VaultKey::LastDeposit(address.clone()))
+        .get::<_, u32>(&VaultKey::LastDeposit(address.clone()))
     {
         let window: u32 = env
             .storage()
@@ -2098,7 +2107,6 @@ fn check_deposit_lock(env: &Env, address: &Address) {
             .get(&VaultKey::WithdrawalWindowLedgers)
             .unwrap_or(1);
         if env.ledger().sequence() < last_seq.saturating_add(window) {
-        if env.ledger().timestamp() < deposited_at + MIN_LOCK_PERIOD {
             panic_with_error!(env, VaultError::DepositLocked);
         }
     }
