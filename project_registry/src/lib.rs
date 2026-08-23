@@ -1090,39 +1090,6 @@ fn update_impact_score_internal(env: Env, project_id: u32, credit_quality: u32, 
     append_score_history(&env, project_id, credit_quality, green_impact);
 }
 
-#[allow(dead_code)]
-fn update_credit_quality_score_internal(env: Env, project_id: u32, credit_quality: u32) {
-    if credit_quality > 100 {
-        panic_with_error!(&env, RegistryError::CreditQualityOutOfRange);
-    }
-    let mut project: ProjectData = env
-        .storage()
-        .persistent()
-        .get(&DataKey::Project(project_id))
-        .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
-    let old_cq = project.credit_quality;
-    if old_cq == credit_quality {
-        return;
-    }
-    let old_rate = compute_rate(project.credit_quality, project.green_impact);
-    project.credit_quality = credit_quality;
-    let new_rate = compute_rate(credit_quality, project.green_impact);
-    env.storage()
-        .persistent()
-        .set(&DataKey::Project(project_id), &project);
-    events::credit_quality_updated(&env, project_id, credit_quality);
-    events::score_changed(
-        &env,
-        project_id,
-        old_cq,
-        credit_quality,
-        project.green_impact,
-        project.green_impact,
-        old_rate,
-        new_rate,
-    );
-}
-
 fn liquidate_collateral_internal(env: Env, project_id: u32, token: Address, recipient: Address) {
     let project: ProjectData = env
         .storage()
