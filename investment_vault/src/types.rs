@@ -90,9 +90,9 @@ pub enum VaultError {
     /// batch_deposit received an empty investor list (#178).
     EmptyBatchDeposit = 41,
     /// Share transfers are blocked because a funding round is active (#38).
-    FundingRoundActive = 41,
+    FundingRoundActive = 42,
     /// Funding would push cumulative investment in a project above its per-project cap (#32).
-    InvestmentCapExceeded = 41,
+    InvestmentCapExceeded = 43,
 }
 
 #[contracttype]
