@@ -418,6 +418,7 @@ impl ProjectRegistry {
         status: CertificationStatus,
     ) {
         require_not_paused(&env);
+        require_current_state(&env);
         caller.require_auth();
         let whitelister: Address = env.storage().instance().get(&DataKey::Whitelister).unwrap();
         let owner: Address = stellar_access::ownable::get_owner(&env).unwrap();

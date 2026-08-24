@@ -1285,6 +1285,7 @@ impl InvestmentVault {
     /// Set the Wormhole core contract address (owner-only) (#184).
     #[only_owner]
     pub fn set_wormhole_core(env: Env, core: Address) {
+        require_current_state(&env);
         env.storage()
             .instance()
             .set(&BridgeDataKey::WormholeCore, &core);
@@ -1536,6 +1537,7 @@ impl InvestmentVault {
         project_id: u32,
         amount: i128,
     ) -> CarbonCreditCalculation {
+        require_current_state(&env);
         let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
         let registry = registry_interface::Client::new(&env, &registry_addr);
         let project = registry.get_project(&project_id);
@@ -1780,6 +1782,7 @@ impl InvestmentVault {
 }
 
 fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
+    require_current_state(&env);
     if amount <= 0 {
         panic_with_error!(&env, VaultError::AmountNotPositive);
     }
@@ -1899,6 +1902,7 @@ fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
 }
 
 fn receive_yield_internal(env: Env, from: Address, amount: i128) {
+    require_current_state(&env);
     if amount <= 0 {
         panic_with_error!(&env, VaultError::YieldAmountNotPositive);
     }
@@ -1928,6 +1932,7 @@ fn receive_yield_internal(env: Env, from: Address, amount: i128) {
 }
 
 fn claim_insurance_internal(env: Env, project_id: u32, recipient: Address, amount: i128) {
+    require_current_state(&env);
     if amount <= 0 {
         panic_with_error!(&env, VaultError::ClaimAmountNotPositive);
     }
