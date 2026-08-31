@@ -1,6 +1,7 @@
 import nodemailer from "nodemailer";
 import { ScoreChangedEvent, WebhookPayload, ServiceConfig } from "./types";
 import { Store } from "./db";
+import { Metrics } from "./metrics";
 
 /** Upper bound on tracked dedup keys, so long-running processes don't grow unbounded. */
 const MAX_TRACKED_NOTIFICATIONS = 5000;
@@ -12,6 +13,7 @@ const WEBHOOK_TIMEOUT_MS = 10_000;
 export class Notifier {
   private config: ServiceConfig;
   private store: Store;
+  private metrics?: Metrics;
   private transporter?: nodemailer.Transporter;
   /**
    * Keys of (event, investor) pairs already successfully notified, to guard
@@ -22,9 +24,10 @@ export class Notifier {
    */
   private notifiedRecipients: Set<string> = new Set();
 
-  constructor(config: ServiceConfig, store: Store) {
+  constructor(config: ServiceConfig, store: Store, metrics?: Metrics) {
     this.config = config;
     this.store = store;
+    this.metrics = metrics;
 
     if (config.email_transport) {
       this.transporter = nodemailer.createTransport(config.email_transport);
@@ -82,21 +85,13 @@ export class Notifier {
       try {
         if (hasEmail && this.transporter && pref.email) {
           await this.sendEmail(pref.email, subject, text);
-          this.store.recordNotification(
-            addr,
-            event.project_id,
-            "email",
-            event.ledger,
-          );
+          this.store.recordNotification(addr, event.project_id, "email", event.ledger);
+          this.metrics?.recordNotificationSent();
         }
         if (hasWebhook && pref.webhook_url) {
           await this.sendWebhook(pref.webhook_url, event, addr);
-          this.store.recordNotification(
-            addr,
-            event.project_id,
-            "webhook",
-            event.ledger,
-          );
+          this.store.recordNotification(addr, event.project_id, "webhook", event.ledger);
+          this.metrics?.recordNotificationSent();
         }
         this.rememberRecipient(recipientKey);
       } catch (err) {

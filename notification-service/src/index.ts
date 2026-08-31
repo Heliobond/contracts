@@ -5,6 +5,7 @@ import { Notifier } from "./notifier";
 import { createApi } from "./api";
 import { pollScoreChanges, PollHandle } from "./listener";
 import { ScoreChangedEvent } from "./types";
+import { Metrics } from "./metrics";
 
 /**
  * Builds a signal handler that lets in-flight event processing finish and
@@ -39,10 +40,11 @@ async function main(): Promise<void> {
   const config = loadConfig();
 
   const store = new Store(config.db_path);
-  const notifier = new Notifier(config, store);
+  const metrics = new Metrics();
+  const notifier = new Notifier(config, store, metrics);
 
   // ── REST API ──────────────────────────────────────────────────────────
-  const app = createApi(store);
+  const app = createApi(store, { metrics });
   const httpServer = app.listen(config.api_port, () => {
     console.log(`[api] Listening on port ${config.api_port}`);
   });
@@ -68,6 +70,7 @@ async function main(): Promise<void> {
     }
 
     await notifier.notifyInvestors(event, investors);
+    metrics.recordEventProcessed();
   };
 
   // ── Start event polling ──────────────────────────────────────────────
