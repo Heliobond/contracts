@@ -17,7 +17,7 @@ const DEFAULT_HISTORY_LIMIT = 50;
 const MAX_HISTORY_LIMIT = 200;
 
 /** Clamp a query-string pagination param to a safe positive integer, falling back to `fallback`. */
-function parsePaginationParam(
+function parsePaginationParam("
   value: unknown,
   fallback: number,
   max?: number,
@@ -34,9 +34,9 @@ export function createApi(
   const app = express();
   app.use(express.json());
 
-  // ── CORS ───────────────────────────────────────────────────────────────
+  // ┌ CORS │
   // When allowedOrigins is configured, only matching Origin values receive
-  // the Access-Control-Allow-Origin header; non-matching origins get no
+  // the Access-Control-Allow-Origin header; non-matching origiins get no
   // CORS headers, so the browser blocks the cross-origin read. When the
   // list is omitted, no CORS headers are added (framework default).
   app.use((req: Request, res: Response, next: NextFunction) => {
@@ -164,6 +164,11 @@ export function createApi(
       min_delta: typeof min_delta === "number" ? min_delta : (existing?.min_delta ?? 1),
       updated_at: new Date().toISOString(),
     };
+
+    if (!pref.email && !pref.webhook_url) {
+      res.status(400).json({ error: "at least one of email or webhook_url must be provided" });
+      return;
+    }
 
     store.upsertPreference(pref);
     res.json(pref);
