@@ -25,7 +25,7 @@ vi.mock("@stellar/stellar-sdk", async (importOriginal) => {
 
 // Static imports pick up the mocked module
 import { xdr, nativeToScVal } from "@stellar/stellar-sdk";
-import { decodeScoreChanged, pollScoreChanges } from "./listener";
+import { decodeScoreChanged, pollScoreChanges, decodeVaultEvent, pollVaultEvents } from "./listener";
 
 const LEDGER = 12345;
 const TIMESTAMP = 1_700_000_000;
@@ -90,6 +90,28 @@ function buildDataMap(fields: Record<string, number>): xdr.ScVal {
         }),
     );
   return xdr.ScVal.scvMap(entries);
+}
+
+function buildVaultEvent(
+  eventName: string,
+  projectId: number,
+  investor: string,
+  contractId?: Buffer,
+): xdr.ContractEvent {
+  const topics = [
+    nativeToScVal(eventName, { type: "symbol" }),
+    nativeToScVal(projectId, { type: "u32" }),
+    nativeToScVal(investor, { type: "address" }),
+  ];
+  const v0 = new xdr.ContractEventV0({ topics, data: xdr.ScVal.scvVoid() });
+  const body = unionOf<xdr.ContractEventBody>(xdr.ContractEventBody, 0, v0);
+  const ext = unionOf<xdr.ExtensionPoint>(xdr.ExtensionPoint, 0, undefined);
+  return new xdr.ContractEvent({
+    ext,
+    contractId: contractId ?? null,
+    type: xdr.ContractEventType.contract(),
+    body,
+  });
 }
 
 describe("decodeScoreChanged", () => {
@@ -363,3 +385,161 @@ describe("pollScoreChanges network passphrase check", () => {
     errorSpy.mockRestore();
   });
 });
+
+// ── Issue #? : vault event decoding and polling ────────────────────────────
+
+const TEST_INVESTOR = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+const TEST_VAULT_CONTRACT_ID_HEX = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+
+describe("decodeVaultEvent", () => {
+  const config: ServiceConfig = {
+    rpc_url: "https://example.invalid",
+    network_passphrase: "Test SDF Network ; September 2015",
+    registry_contract_id: "REGISTRY",
+    vault_contract_id: TEST_VAULT_CONTRACT_ID_HEX,
+    db_path: ":memory:",
+    poll_interval_ms: 50,
+    api_port: 3000,
+  };
+
+  it("decodes a Deposit event", () => {
+    const event = buildVaultEvent(
+      "deposit",
+      42,
+      TEST_INVESTOR,
+      Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
+    );
+    const decoded = decodeVaultEvent(event, LEDGER, TIMESTAMP, TEST_VAULT_CONTRACT_ID_HEX);
+    expect(decoded).toEqual({
+      type: "deposit",
+      project_id: 42,
+      investor: TEST_INVESTOR,
+      timestamp: TIMESTAMP,
+      ledger: LEDGER,
+    });
+  });
+
+  it("decodes a ProjectFunded event", () => {
+    const event = buildVaultEvent(
+      "project_funded",
+      42,
+      TEST_INVESTOR,
+      Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
+    );
+    const decoded = decodeVaultEvent(event, LEDGER, TIMESTAMP, TEST_VAULT_CONTRACT_ID_HEX);
+    expect(decoded).toEqual({
+      type: "project_funded",
+      project_id: 42,
+      investor: TEST_INVESTOR,
+      timestamp: TIMESTAMP,
+      ledger: LEDGER,
+    });
+  });
+
+  it("returns null when the event name doesn't match", () => {
+    const event = buildVaultEvent(
+      "something_else",
+      42,
+      TEST_INVESTOR,
+      Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
+    );
+    expect(decodeVaultEvent(event, LEDGER, TIMESTAMP, TEST_VAULT_CONTRACT_ID_HEX)).toBeNull();
+  });
+
+  it("returns null when contractId does not match the expected value", () => {
+    const event = buildVaultEvent(
+      "deposit",
+      42,
+      TEST_INVESTOR,
+      Buffer.alloc(32, 0xab),
+    );
+    expect(
+      decodeVaultEvent(event, LEDGER, TIMESTAMP, TEST_VAULT_CONTRACT_ID_HEX),
+    ).toBeNull();
+  });
+});
+
+describe("pollVaultEvents", () => {
+  const config: ServiceConfig = {
+    rpc_url: "https://example.invalid",
+    network_passphrase: "Test SDF Network ; September 2015",
+    registry_contract_id: "REGISTRY",
+    vault_contract_id: TEST_VAULT_CONTRACT_ID_HEX,
+    db_path: ":memory:",
+    poll_interval_ms: 50,
+    api_port: 3000,
+  };
+
+  beforeEach(() => {
+    getLatestLedgerMock.mockReset();
+    getEventsMock.mockReset();
+    getNetworkMock.mockReset();
+    getLatestLedgerMock.mockResolvedValue({ sequence: 100 });
+    getEventsMock.mockResolvedValue({ events: [] });
+    getNetworkMock.mockResolvedValue({
+      passphrase: config.network_passphrase,
+      protocolVersion: "22",
+    });
+  });
+
+  it("processes Deposit and ProjectFunded events via the callback", async () => {
+    const processed: Array<{
+      type: string;
+      project_id: number;
+      investor: string;
+    }> = [];
+    let ledger = 0;
+
+    getEventsMock.mockResolvedValue({
+      events: [
+        {
+          value: buildVaultEvent(
+            "deposit",
+            42,
+            TEST_INVESTOR,
+            Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
+          ),
+          ledger: 100,
+          timestamp: TIMESTAMP,
+        },
+        {
+          value: buildVaultEvent(
+            "project_funded",
+            43,
+            TEST_INVESTOR,
+            Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
+          ),
+          ledger: 100,
+          timestamp: TIMESTAMP,
+        },
+      ],
+    });
+
+    const handle = await pollVaultEvents(
+      config,
+      async (ev) => {
+        processed.push(ev);
+      },
+      async () => ledger,
+      async (l) => {
+        ledger = l;
+      },
+    );
+
+    await new Promise((r) => setTimeout(r, config.poll_interval_ms * 3));
+    await handle.stop();
+
+    expect(processed).toHaveLength(2);
+    expect(processed[0]).toMatchObject({
+      type: "deposit",
+      project_id: 42,
+      investor: TEST_INVESTOR,
+    });
+    expect(processed[1]).toMatchObject({
+      type: "project_funded",
+      project_id: 43,
+      investor: TEST_INVESTOR,
+    });
+  });
+});
+
