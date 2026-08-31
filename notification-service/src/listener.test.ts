@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ServiceConfig, ScoreChangedEvent } from "./types";
+import { Store } from "./db";
 
 // Hoisted mock references — accessible before module evaluation
 const { getLatestLedgerMock, getEventsMock, getNetworkMock } = vi.hoisted(() => ({
@@ -539,6 +540,88 @@ describe("pollVaultEvents", () => {
       type: "project_funded",
       project_id: 43,
       investor: TEST_INVESTOR,
+    });
+  });
+
+  it("seeds the Store via vault events and uses the stored investors for ScoreChanged notifications", async () => {
+    const store = new Store(config.db_path);
+    const scoreConfig: ServiceConfig = {
+      ...config,
+      registry_contract_id: TEST_REGISTRY_CONTRACT_ID_HEX,
+    };
+    const notifyInvestors = vi.fn();
+
+    getEventsMock.mockResolvedValueOnce({
+      events: [
+        {
+          value: buildVaultEvent(
+            "deposit",
+            42,
+            TEST_INVESTOR,
+            Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
+          ),
+          ledger: 100,
+          timestamp: TIMESTAMP,
+        },
+        {
+          value: buildVaultEvent(
+            "project_funded",
+            43,
+            TEST_INVESTOR,
+            Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
+          ),
+          ledger: 100,
+          timestamp: TIMESTAMP,
+        },
+      ],
+    });
+
+    const vaultHandle = await pollVaultEvents(
+      config,
+      async (ev) => {
+        await store.recordInvestment(ev.investor, ev.project_id);
+      },
+      async () => 0,
+      async () => {},
+    );
+    await new Promise((r) => setTimeout(r, config.poll_interval_ms * 3));
+    await vaultHandle.stop();
+
+    expect(await store.getInvestorsForProject(42)).toContain(TEST_INVESTOR);
+    expect(await store.getInvestorsForProject(43)).toContain(TEST_INVESTOR);
+
+    getEventsMock.mockResolvedValueOnce({
+      events: [
+        {
+          value: buildScoreChangedEvent(
+            ["score_changed", 42],
+            buildDataMap(FULL_SCORES),
+            Buffer.from(TEST_REGISTRY_CONTRACT_ID_HEX, "hex"),
+          ),
+          ledger: 101,
+          timestamp: TIMESTAMP,
+        },
+      ],
+    });
+
+    const scoreHandle = await pollScoreChanges(
+      scoreConfig,
+      async (ev) => {
+        const investors = await store.getInvestorsForProject(ev.project_id);
+        await notifyInvestors(investors, ev);
+      },
+      async () => 0,
+      async () => {},
+    );
+    await new Promise((r) => setTimeout(r, config.poll_interval_ms * 3));
+    await scoreHandle.stop();
+
+    expect(notifyInvestors).toHaveBeenCalledTimes(1);
+    expect(notifyInvestors.mock.calls[0][0]).toEqual(
+      expect.arrayContaining([TEST_INVESTOR]),
+    );
+    expect(notifyInvestors.mock.calls[0][1]).toMatchObject({
+      project_id: 42,
     });
   });
 });
