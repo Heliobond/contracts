@@ -102,9 +102,9 @@ pub enum RegistryError {
     /// set_project_status was called with the project's current status (#329).
     ProjectStatusUnchanged = 42,
     /// compact_storage input exceeds the maximum allowed batch size (#332).
-    CompactStorageTooLarge = 41,
+    CompactStorageTooLarge = 43,
     /// create_proposal voting_duration_secs exceeds the maximum allowed period (#332).
-    VotingPeriodTooLong = 42,
+    VotingPeriodTooLong = 44,
 }
 
 /// Certification state for a green project (#130).

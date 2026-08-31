@@ -186,10 +186,7 @@ fn test_update_scores_batch_approved_after_multisig_enabled() {
     let updates = soroban_sdk::vec![&env, (id, 80u32, 90u32)];
     assert!(client.try_update_impact_scores_batch(&updates).is_err());
 
-    client.update_scores_batch_approved(
-        &updates,
-        &soroban_sdk::vec![&env, signer1, signer2],
-    );
+    client.update_scores_batch_approved(&updates, &soroban_sdk::vec![&env, signer1, signer2]);
 
     let project = client.get_project(&id);
     assert_eq!(project.credit_quality, 80);
@@ -2480,10 +2477,7 @@ fn test_clear_multisig_admin_resets_to_defaults() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
 
-    client.set_multisig_admin(
-        &soroban_sdk::vec![&env, signer1, signer2],
-        &2u32,
-    );
+    client.set_multisig_admin(&soroban_sdk::vec![&env, signer1, signer2], &2u32);
 
     // Confirm set worked
     let (_, threshold_before) = client.get_multisig_admin();

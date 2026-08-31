@@ -100,14 +100,6 @@ const MIN_LOCK_PERIOD: u64 = 86_400;
 /// Seconds in one year, used for time-weighted expected-returns (#34).
 const ANNUAL_PERIOD_SECS: i128 = 31_536_000;
 
-/// Minimum remaining TTL in ledgers before extending persistent storage rent (#388).
-/// At 5 s/ledger this equals ~1 day (17 280 ledgers).
-const TTL_EXTEND_THRESHOLD_LEDGERS: u32 = 17_280;
-
-/// Target TTL in ledgers after extension (#388).
-/// At 5 s/ledger this equals ~30 days (518 400 ledgers).
-const TTL_EXTEND_TO_LEDGERS: u32 = 518_400;
-
 mod composability;
 mod events;
 mod logic;
@@ -202,9 +194,7 @@ impl InvestmentVault {
             .set(&VaultKey::StateVersion, &STATE_VERSION);
         env.storage().instance().set(&VaultKey::UsdcSac, &usdc_sac);
         env.storage().instance().set(&VaultKey::Registry, &registry);
-        env.storage()
-            .persistent()
-            .set(&VaultKey::TotalInvestments, &0i128);
+        storage::set_persistent(&env, &VaultKey::TotalInvestments, &0i128);
         // CachedTotalAssets lives in instance storage: read on almost every call,
         // auto-bumped with the instance TTL, no separate rent needed (#85).
         env.storage()
@@ -325,8 +315,7 @@ impl InvestmentVault {
                 .unwrap_or(0);
             if investment > 0 {
                 let project = registry.get_project(&i);
-                let score_rate =
-                    project.credit_quality as i128 + project.green_impact as i128;
+                let score_rate = project.credit_quality as i128 + project.green_impact as i128;
 
                 let funded_at: u64 = env
                     .storage()
@@ -337,8 +326,7 @@ impl InvestmentVault {
                 if funded_at > 0 && now > funded_at {
                     // Time-weighted: accrue interest over elapsed time (#34).
                     let elapsed = (now - funded_at) as i128;
-                    expected +=
-                        investment * score_rate * elapsed / (200 * ANNUAL_PERIOD_SECS);
+                    expected += investment * score_rate * elapsed / (200 * ANNUAL_PERIOD_SECS);
                 } else {
                     // Static fallback for pre-existing investments without a timestamp.
                     expected += investment * score_rate / 200;
@@ -463,9 +451,7 @@ impl InvestmentVault {
             .persistent()
             .get(&VaultKey::InsuranceFund)
             .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&VaultKey::InsuranceFund, &(ins + premium));
+        storage::set_persistent(&env, &VaultKey::InsuranceFund, &(ins + premium));
 
         // Transfer management fee to recipient if non-zero (#7)
         if fee_amount > 0 {
@@ -483,11 +469,11 @@ impl InvestmentVault {
             .persistent()
             .get(&VaultKey::TotalDeposited(from.clone()))
             .unwrap_or(0);
-        let key = VaultKey::TotalDeposited(from.clone());
-        env.storage()
-            .persistent()
-            .set(&key, &(prev_dep + usdc_amount));
-        env.storage().persistent().extend_ttl(&key, TTL_EXTEND_THRESHOLD_LEDGERS, TTL_EXTEND_TO_LEDGERS); // Add rent check/extend
+        storage::set_persistent(
+            &env,
+            &VaultKey::TotalDeposited(from.clone()),
+            &(prev_dep + usdc_amount),
+        );
 
         // Update cached total assets: liquid increases by full usdc_amount (#81, #85)
         let cached_ta: i128 = env
@@ -627,16 +613,15 @@ impl InvestmentVault {
                 .persistent()
                 .get(&VaultKey::QueueTail)
                 .unwrap_or(0);
-            env.storage().persistent().set(
+            storage::set_persistent(
+                &env,
                 &VaultKey::QueueEntry(tail),
                 &QueuedClaim {
                     from: from.clone(),
                     usdc_owed: usdc_returned,
                 },
             );
-            env.storage()
-                .persistent()
-                .set(&VaultKey::QueueTail, &(tail + 1));
+            storage::set_persistent(&env, &VaultKey::QueueTail, &(tail + 1));
             events::withdraw_queued(&env, &from, shares_amount, usdc_returned);
             return 0;
         }
@@ -721,7 +706,7 @@ impl InvestmentVault {
         }
 
         if idx != head {
-            env.storage().persistent().set(&VaultKey::QueueHead, &idx);
+            storage::set_persistent(&env, &VaultKey::QueueHead, &idx);
         }
 
         // Update cached total assets: liquid decreased by total_paid (#81, #85)
@@ -804,9 +789,7 @@ impl InvestmentVault {
         }
 
         // Update debt checkpoint before transfer (CEI)
-        env.storage()
-            .persistent()
-            .set(&VaultKey::YieldDebt(from.clone()), &accum);
+        storage::set_persistent(&env, &VaultKey::YieldDebt(from.clone()), &accum);
 
         let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
         let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
@@ -1216,9 +1199,7 @@ impl InvestmentVault {
             env.storage()
                 .instance()
                 .remove(&VaultKey::VolumeTierThreshold);
-            env.storage()
-                .instance()
-                .remove(&VaultKey::VolumeTierFeeBps);
+            env.storage().instance().remove(&VaultKey::VolumeTierFeeBps);
             return;
         }
         env.storage()
@@ -1259,7 +1240,11 @@ impl InvestmentVault {
         if cap < 0 {
             panic_with_error!(&env, VaultError::AmountNotPositive);
         }
-        let stored_cap = if cap == 0 { MAX_INVESTMENT_PER_PROJECT } else { cap };
+        let stored_cap = if cap == 0 {
+            MAX_INVESTMENT_PER_PROJECT
+        } else {
+            cap
+        };
         env.storage()
             .instance()
             .set(&VaultKey::MaxInvestmentPerProject, &stored_cap);
@@ -1283,7 +1268,11 @@ impl InvestmentVault {
             .get(&VaultKey::ProjectInvestment(project_id))
             .unwrap_or(0);
         let remaining = cap - invested;
-        if remaining < 0 { 0 } else { remaining }
+        if remaining < 0 {
+            0
+        } else {
+            remaining
+        }
     }
 
     // ── Deposit lock-up expiry query (#33) ────────────────────────────────────
@@ -1376,7 +1365,8 @@ impl InvestmentVault {
     ) {
         require_not_paused(&env);
         require_current_state(&env);
-        env.storage().persistent().set(
+        storage::set_persistent(
+            &env,
             &BridgeDataKey::TrustedEmitter(chain_id, emitter_address.clone()),
             &trusted,
         );
@@ -1455,7 +1445,8 @@ impl InvestmentVault {
         // than silently ignored — otherwise a VAA about a different asset would
         // be accepted and minted as HBS anyway if the emitter is ever reused for
         // a multi-asset bridge.
-        if transfer.token_address != wormhole::address_to_bytes32(&env, &env.current_contract_address())
+        if transfer.token_address
+            != wormhole::address_to_bytes32(&env, &env.current_contract_address())
         {
             panic_with_error!(&env, VaultError::BridgeTokenMismatch);
         }
@@ -1467,9 +1458,7 @@ impl InvestmentVault {
         {
             panic_with_error!(&env, VaultError::VaaAlreadyConsumed);
         }
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::ConsumedVaa(digest), &true);
+        storage::set_persistent(&env, &BridgeDataKey::ConsumedVaa(digest), &true);
 
         let to = wormhole::bytes32_to_address(&env, &transfer.recipient);
         if Base::total_supply(&env) + transfer.amount > MAX_HBS_SUPPLY {
@@ -1689,7 +1678,8 @@ impl InvestmentVault {
             .persistent()
             .get(&VaultKey::CarbonCreditBalance(to.clone()))
             .unwrap_or(0);
-        env.storage().persistent().set(
+        storage::set_persistent(
+            &env,
             &VaultKey::CarbonCreditBalance(to.clone()),
             &(prev + calc.credits),
         );
@@ -1721,11 +1711,13 @@ impl InvestmentVault {
             .get(&VaultKey::CarbonCreditBalance(to.clone()))
             .unwrap_or(0);
 
-        env.storage().persistent().set(
+        storage::set_persistent(
+            &env,
             &VaultKey::CarbonCreditBalance(from.clone()),
             &(prev_from - amount),
         );
-        env.storage().persistent().set(
+        storage::set_persistent(
+            &env,
             &VaultKey::CarbonCreditBalance(to.clone()),
             &(prev_to + amount),
         );
@@ -1790,9 +1782,7 @@ impl InvestmentVault {
             data,
         };
 
-        env.storage()
-            .persistent()
-            .set(&VaultKey::ComplianceEvent(seq), &event);
+        storage::set_persistent(&env, &VaultKey::ComplianceEvent(seq), &event);
         env.storage()
             .instance()
             .set(&VaultKey::ComplianceEventCounter, &seq);
@@ -2000,17 +1990,17 @@ fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
         .persistent()
         .get(&VaultKey::ProjectInvestment(project_id))
         .unwrap_or(0);
-    env.storage()
-        .persistent()
-        .set(&VaultKey::ProjectInvestment(project_id), &(prev + amount));
+    storage::set_persistent(
+        &env,
+        &VaultKey::ProjectInvestment(project_id),
+        &(prev + amount),
+    );
 
     // Record the first funding timestamp for time-weighted returns (#34).
     // Only set once — subsequent fund_project calls don't shift the origin.
     let ts_key = VaultKey::InvestmentTimestamp(project_id);
     if !env.storage().persistent().has(&ts_key) {
-        env.storage()
-            .persistent()
-            .set(&ts_key, &env.ledger().timestamp());
+        storage::set_persistent(&env, &ts_key, &env.ledger().timestamp());
     }
 
     let total_inv: i128 = env
@@ -2018,9 +2008,7 @@ fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
         .persistent()
         .get(&VaultKey::TotalInvestments)
         .unwrap_or(0);
-    env.storage()
-        .persistent()
-        .set(&VaultKey::TotalInvestments, &(total_inv + amount));
+    storage::set_persistent(&env, &VaultKey::TotalInvestments, &(total_inv + amount));
 
     events::project_funded(&env, project_id, amount, &project.owner);
 }
@@ -2048,9 +2036,7 @@ fn receive_yield_internal(env: Env, from: Address, amount: i128) {
         .persistent()
         .get(&VaultKey::YieldPerShareAccum)
         .unwrap_or(0);
-    env.storage()
-        .persistent()
-        .set(&VaultKey::YieldPerShareAccum, &(accum + delta));
+    storage::set_persistent(&env, &VaultKey::YieldPerShareAccum, &(accum + delta));
 
     events::yield_received(&env, &from, amount);
 }
@@ -2078,12 +2064,8 @@ fn claim_insurance_internal(env: Env, project_id: u32, recipient: Address, amoun
         panic_with_error!(&env, VaultError::InsufficientInsurance);
     }
 
-    env.storage()
-        .persistent()
-        .set(&VaultKey::InsuranceClaimed(project_id), &true);
-    env.storage()
-        .persistent()
-        .set(&VaultKey::InsuranceFund, &(fund - amount));
+    storage::set_persistent(&env, &VaultKey::InsuranceClaimed(project_id), &true);
+    storage::set_persistent(&env, &VaultKey::InsuranceFund, &(fund - amount));
 
     let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
     soroban_sdk::token::TokenClient::new(&env, &usdc_sac).transfer(
@@ -2204,7 +2186,8 @@ fn require_emergency_admin(env: &Env, caller: &Address) {
 /// The lock prevents withdrawal for MIN_LOCK_PERIOD seconds after each deposit,
 /// blocking flash-deposit-withdraw attacks that could manipulate share pricing.
 fn lock_deposit(env: &Env, address: &Address) {
-    env.storage().persistent().set(
+    storage::set_persistent(
+        env,
         &VaultKey::LastDeposit(address.clone()),
         &env.ledger().timestamp(),
     );
