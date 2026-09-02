@@ -56,6 +56,11 @@ jobs:
       - name: Test
         run: cargo test --all --quiet
 
+      - name: Test TotalDeposited lifetime TTL regression
+        run: |
+          cargo test --all --quiet -- --list | grep -q total_deposited_ttl_lifetime
+          cargo test --all --quiet total_deposited_ttl_lifetime -- --include-ignored
+
       - name: Test check_gas_budgets.py (#250)
         run: make test-gas-budget-check
 
