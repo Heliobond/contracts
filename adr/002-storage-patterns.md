@@ -30,7 +30,7 @@ Rationale: instance storage is bumped automatically when any function is invoked
 - `VaultKey::ProjectInvestment(id)` — USDC invested per project
 - `VaultKey::TotalInvestments` — aggregate investment counter
 
-Rationale: project records and investment ledgers must survive indefinitely. Rent is implicitly paid when the entries are read or written during normal operation; the CI enforces that contract size stays small so deployment + rent costs remain low.
+Rationale: project records and investment ledgers must survive indefinitely. Writes do **not** auto-extend TTL beyond the network minimum; each persistent write must call `extend_ttl` (vault: `storage::set_persistent`; registry: `write_project`). The CI enforces that contract size stays small so deployment + rent costs remain low.
 
 **Temporary storage** is not currently used. It would be appropriate for short-lived proof-of-intent or nonce entries if added in future.
 
@@ -41,5 +41,5 @@ Rationale: project records and investment ledgers must survive indefinitely. Ren
 - Clean separation: adding a new config value → instance; adding a new per-entity record → persistent.
 
 **Negative / trade-offs:**
-- Persistent entries can be evicted if a project is never touched for a long time. Operators must either invoke the contract periodically or monitor for approaching TTL expiry.
+- Persistent entries can still be evicted if a key is never rewritten for longer than its remaining TTL (~30 days after the last write under the current policy). Operators must invoke a state-changing entrypoint that rewrites the relevant keys, or restore archived entries.
 - `ProjectCounter` in instance storage means it is trivially readable but also updated on every project creation, slightly increasing instance storage cost over time (Soroban charges for updated bytes).

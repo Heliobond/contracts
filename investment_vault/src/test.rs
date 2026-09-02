@@ -10,6 +10,7 @@ use soroban_sdk::{
     xdr::ToXdr,
     Address, BytesN, Env, IntoVal, String,
 };
+use std::format;
 
 mod registry_contract {
     soroban_sdk::contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm");
@@ -62,6 +63,24 @@ fn setup() -> TestSetup {
 fn mint_usdc(env: &Env, usdc_sac: &Address, to: &Address, amount: i128) {
     let asset_client = StellarAssetClient::new(env, usdc_sac);
     asset_client.mint(to, &amount);
+}
+
+/// Register a project scored with `green_impact` (credit quality 50).
+/// `green_impact == 0` leaves the registry default (also 0).
+fn create_project_with_green_impact(s: &TestSetup, green_impact: u32) -> u32 {
+    let creator = Address::generate(&s.env);
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://QmCarbon"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
+    if green_impact > 0 {
+        registry_client.update_impact_score(&project_id, &50u32, &green_impact);
+    }
+    project_id
 }
 
 #[test]
@@ -200,7 +219,8 @@ fn test_withdraw_rejects_when_min_usdc_return_exceeds_actual() {
         li.timestamp += MIN_LOCK_PERIOD + 1;
     });
     // Fresh 1:1 vault: convert_to_assets(shares) == 1_000_0000000. Ask for 1 stroop more.
-    s.vault_client.withdraw(&investor, &shares, &(1_000_0000000i128 + 1));
+    s.vault_client
+        .withdraw(&investor, &shares, &(1_000_0000000i128 + 1));
 }
 
 #[test]
@@ -214,7 +234,9 @@ fn test_withdraw_succeeds_when_min_usdc_return_exactly_equals_actual() {
         li.timestamp += MIN_LOCK_PERIOD + 1;
     });
     // Boundary: usdc_returned == min_usdc_return should succeed (guard is `<`, not `<=`).
-    let returned = s.vault_client.withdraw(&investor, &shares, &1_000_0000000i128);
+    let returned = s
+        .vault_client
+        .withdraw(&investor, &shares, &1_000_0000000i128);
 
     assert_eq!(returned, 1_000_0000000i128);
 }
@@ -269,7 +291,10 @@ fn test_receive_yield_with_approvals_after_multisig_enabled() {
     );
 
     // receive_yield itself is now permanently blocked; only the approvals path works.
-    assert!(s.vault_client.try_receive_yield(&yield_source, &10_0000000i128).is_err());
+    assert!(s
+        .vault_client
+        .try_receive_yield(&yield_source, &10_0000000i128)
+        .is_err());
 
     mint_usdc(&s.env, &s.usdc_sac, &yield_source, 10_0000000i128);
     s.env.mock_all_auths_allowing_non_root_auth();
@@ -1817,11 +1842,7 @@ fn test_address_to_bytes32_keeps_trailing_bytes_when_source_exceeds_32() {
     );
 }
 
-// ── Issue #429: set_carbon_oracle()/set_max_transaction_amount() success-path coverage ─
-
-#[test]
 // ── Issue #403: calculate_carbon_credits must reject non-positive amounts ──────
-
 #[test]
 #[should_panic(expected = "Error(Contract, #1)")]
 fn test_calculate_carbon_credits_rejects_non_positive_amount() {
@@ -1877,7 +1898,8 @@ fn test_set_carbon_oracle_persists_emits_event_and_is_idempotent() {
 fn test_set_max_transaction_amount_persists_emits_event_and_is_idempotent() {
     let s = setup();
 
-    s.vault_client.set_max_transaction_amount(&1_000_0000000i128);
+    s.vault_client
+        .set_max_transaction_amount(&1_000_0000000i128);
 
     // env.events().all() only reflects the most recent contract invocation,
     // so check events before making any further calls (including reads).
@@ -1891,7 +1913,8 @@ fn test_set_max_transaction_amount_persists_emits_event_and_is_idempotent() {
 
     // Calling again with the same value hits the no-op early return
     // (lib.rs:1625-1639) and must not re-emit an event.
-    s.vault_client.set_max_transaction_amount(&1_000_0000000i128);
+    s.vault_client
+        .set_max_transaction_amount(&1_000_0000000i128);
     let events = s.env.events().all().filter_by_contract(&s.vault_address);
     assert!(
         events.events().is_empty(),
@@ -2542,7 +2565,7 @@ fn test_all_only_owner_functions_reject_non_admin_caller() {
         s.vault_client
             .try_set_trusted_emitter(&1u32, &hash32, &true)
             .is_err(),
-        s.vault_client.try_set_flash_loan_fee(&1i128).is_err(),
+        s.vault_client.try_set_flash_loan_fee(&1u32).is_err(),
         s.vault_client.try_set_carbon_oracle(&addr()).is_err(),
         s.vault_client
             .try_set_max_transaction_amount(&1i128)
@@ -3066,7 +3089,7 @@ fn test_flash_loan_succeeds_with_valid_same_transaction_repayment() {
     let initiator = Address::generate(&s.env);
 
     // Set a 10 bps flash-loan fee so the fee path is exercised.
-    s.vault_client.set_flash_loan_fee(&10i128);
+    s.vault_client.set_flash_loan_fee(&10u32);
 
     let loan_amount = 1_000_0000000i128;
 
@@ -3227,7 +3250,10 @@ fn test_insurance_fund_accumulates_across_deposits() {
     s.vault_client.deposit(&bob, &amount_b);
 
     let premium_b = amount_b * 50 / 10_000;
-    assert_eq!(s.vault_client.insurance_fund_balance(), premium_a + premium_b);
+    assert_eq!(
+        s.vault_client.insurance_fund_balance(),
+        premium_a + premium_b
+    );
 }
 
 // ── get_multisig_admin tests (#384) ───────────────────────────────────────────
@@ -3307,23 +3333,17 @@ fn test_claim_yield_transfers_usdc_and_resets_debt() {
     mint_usdc(&s.env, &s.usdc_sac, &yield_source, yield_amount);
     s.vault_client.receive_yield(&yield_source, &yield_amount);
 
-    let balance_before = s
-        .env
-        .as_contract(&s.vault_address, || {
-            soroban_sdk::token::TokenClient::new(&s.env, &s.usdc_sac)
-                .balance(&s.vault_address)
-        });
+    let balance_before = s.env.as_contract(&s.vault_address, || {
+        soroban_sdk::token::TokenClient::new(&s.env, &s.usdc_sac).balance(&s.vault_address)
+    });
 
     let claimed = s.vault_client.claim_yield(&investor);
     assert_eq!(claimed, yield_amount);
 
     // Vault liquid USDC should have decreased by the claimed amount.
-    let balance_after = s
-        .env
-        .as_contract(&s.vault_address, || {
-            soroban_sdk::token::TokenClient::new(&s.env, &s.usdc_sac)
-                .balance(&s.vault_address)
-        });
+    let balance_after = s.env.as_contract(&s.vault_address, || {
+        soroban_sdk::token::TokenClient::new(&s.env, &s.usdc_sac).balance(&s.vault_address)
+    });
     assert_eq!(balance_before - balance_after, yield_amount);
 
     // Second claim returns 0 — debt is now equal to accumulator.
@@ -3366,7 +3386,8 @@ fn test_receive_yield_panics_with_no_shares_outstanding() {
     let yield_source = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &yield_source, 100_0000000i128);
-    s.vault_client.receive_yield(&yield_source, &100_0000000i128);
+    s.vault_client
+        .receive_yield(&yield_source, &100_0000000i128);
 }
 
 /// claim_yield panics when the vault has insufficient liquid USDC (#9).
@@ -3397,15 +3418,17 @@ fn test_claim_yield_panics_on_insufficient_liquid() {
         &test_metadata_hash(&s.env),
     );
     let admin = stellar_access::ownable::get_owner(&s.env).unwrap();
-    s.env.mock_auths(&[soroban_sdk::testutils::AuthMock {
+    s.env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &admin,
-        invoke: &soroban_sdk::testutils::AuthInvocation {
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
             contract: &s.vault_address,
             fn_name: "fund_project",
             args: (&project_id, &(1_000_0000000i128 - yield_amount)).into_val(&s.env),
+            sub_invokes: &[],
         },
     }]);
-    s.vault_client.fund_project(&project_id, &(1_000_0000000i128 - yield_amount));
+    s.vault_client
+        .fund_project(&project_id, &(1_000_0000000i128 - yield_amount));
 
     // Now vault has yield_amount USDC but investor's claimable is yield_amount.
     // The investable deduction means claimable > vault liquid. Try to claim.
@@ -3435,7 +3458,8 @@ fn test_claimable_yield_zero_for_non_depositor() {
     s.vault_client.deposit(&investor, &1_000_0000000i128);
 
     mint_usdc(&s.env, &s.usdc_sac, &yield_source, 100_0000000i128);
-    s.vault_client.receive_yield(&yield_source, &100_0000000i128);
+    s.vault_client
+        .receive_yield(&yield_source, &100_0000000i128);
 
     assert_eq!(s.vault_client.claimable_yield(&stranger), 0);
 }
@@ -3459,7 +3483,8 @@ fn test_health_check_default_state() {
 fn test_health_check_reflects_paused_state() {
     let s = setup();
     let emergency_admin = Address::generate(&s.env);
-    s.vault_client.set_emergency_admin(&Some(emergency_admin.clone()));
+    s.vault_client
+        .set_emergency_admin(&Some(emergency_admin.clone()));
 
     s.vault_client.emergency_pause(&emergency_admin);
 
@@ -3703,10 +3728,10 @@ fn test_bridge_mint_happy_path() {
     let recipient = Address::generate(&s.env);
 
     s.vault_client.set_bridge(&bridge);
-    s.env.mock_auths(&[soroban_sdk::testutils::AuthMock {
+    s.env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &bridge,
-        invoke: &soroban_sdk::testutils::AuthInvocation {
-            contract: s.vault_address.clone(),
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &s.vault_address,
             fn_name: "bridge_mint",
             args: (&recipient, &100_0000000i128).into_val(&s.env),
             sub_invokes: &[],
@@ -3727,10 +3752,10 @@ fn test_bridge_mint_rejects_non_positive_amount() {
     let recipient = Address::generate(&s.env);
 
     s.vault_client.set_bridge(&bridge);
-    s.env.mock_auths(&[soroban_sdk::testutils::AuthMock {
+    s.env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &bridge,
-        invoke: &soroban_sdk::testutils::AuthInvocation {
-            contract: s.vault_address.clone(),
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &s.vault_address,
             fn_name: "bridge_mint",
             args: (&recipient, &0i128).into_val(&s.env),
             sub_invokes: &[],
@@ -3800,9 +3825,10 @@ impl MockWormholeCore {
 fn register_mock_core(env: &Env, return_vaa: wormhole::ParsedVaa) -> Address {
     let mock_id = env.register(MockWormholeCore, ());
     env.as_contract(&mock_id, || {
-        env.storage()
-            .instance()
-            .set(&soroban_sdk::String::from_str(env, "return_vaa"), &return_vaa);
+        env.storage().instance().set(
+            &soroban_sdk::String::from_str(env, "return_vaa"),
+            &return_vaa,
+        );
     });
     mock_id
 }
@@ -3845,6 +3871,7 @@ fn test_initiate_bridge_transfer_happy_path() {
     assert_eq!(s.vault_client.total_supply(), supply_before - amount);
 }
 
+#[test]
 fn test_complete_bridge_transfer_happy_path() {
     let s = setup();
     let bridge = Address::generate(&s.env);
@@ -3879,11 +3906,8 @@ fn test_complete_bridge_transfer_happy_path() {
     // Configure vault: set bridge, Wormhole core, and trusted emitter.
     s.vault_client.set_bridge(&bridge);
     s.vault_client.set_wormhole_core(&mock_core);
-    s.vault_client.set_trusted_emitter(
-        &wormhole::chain_id::ETHEREUM,
-        &emitter_bytes,
-        &true,
-    );
+    s.vault_client
+        .set_trusted_emitter(&wormhole::chain_id::ETHEREUM, &emitter_bytes, &true);
 
     // Call with any bytes — the mock ignores them and returns the stored VAA.
     let dummy_vaa = soroban_sdk::Bytes::from_array(&s.env, &[0u8; 64]);
@@ -3918,7 +3942,7 @@ fn test_complete_bridge_transfer_rejects_untrusted_emitter() {
     let emitter_bytes = wormhole::address_to_bytes32(&s.env, &emitter);
     let return_vaa = wormhole::ParsedVaa {
         emitter_chain: wormhole::chain_id::ETHEREUM,
-        emitter_address: emitter_bytes,
+        emitter_address: emitter_bytes.clone(),
         payload,
     };
 
@@ -3957,7 +3981,7 @@ fn test_complete_bridge_transfer_rejects_replayed_vaa() {
     let emitter_bytes = wormhole::address_to_bytes32(&s.env, &emitter);
     let return_vaa = wormhole::ParsedVaa {
         emitter_chain: wormhole::chain_id::ETHEREUM,
-        emitter_address: emitter_bytes,
+        emitter_address: emitter_bytes.clone(),
         payload,
     };
 
@@ -3965,11 +3989,8 @@ fn test_complete_bridge_transfer_rejects_replayed_vaa() {
 
     s.vault_client.set_bridge(&bridge);
     s.vault_client.set_wormhole_core(&mock_core);
-    s.vault_client.set_trusted_emitter(
-        &wormhole::chain_id::ETHEREUM,
-        &emitter_bytes,
-        &true,
-    );
+    s.vault_client
+        .set_trusted_emitter(&wormhole::chain_id::ETHEREUM, &emitter_bytes, &true);
 
     let dummy_vaa = soroban_sdk::Bytes::from_array(&s.env, &[0u8; 64]);
 
@@ -3983,17 +4004,267 @@ fn test_complete_bridge_transfer_rejects_replayed_vaa() {
 #[test]
 fn test_enable_secondary_trading_allowed_while_paused() {
     let s = setup();
-    
+
     // Pause the vault
     s.vault_client.pause();
     assert_eq!(s.vault_client.is_paused(), true);
-    
+
     // Verify trading is not enabled initially
     assert_eq!(s.vault_client.is_trading_enabled(), false);
-    
+
     // Enable secondary trading while the vault is paused
     s.vault_client.enable_secondary_trading();
-    
+
     // Verify it succeeded
     assert_eq!(s.vault_client.is_trading_enabled(), true);
+}
+
+// ── Persistent TTL extension on write (#317) ─────────────────────────────────
+
+/// Idle window used to prove a persistent key survives without being touched.
+/// Well below `TTL_EXTEND_TO_LEDGERS` (518_400) so the entry is not archived.
+const TTL_IDLE_LEDGERS: u32 = 100_000;
+
+#[test]
+fn test_persistent_key_survives_n_idle_ledgers() {
+    use soroban_sdk::testutils::storage::Persistent as _;
+
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let key = VaultKey::InsuranceFund;
+    let ttl_after_write = s.env.as_contract(&s.vault_address, || {
+        s.env.storage().persistent().get_ttl(&key)
+    });
+    assert_eq!(
+        ttl_after_write,
+        crate::storage::TTL_EXTEND_TO_LEDGERS,
+        "deposit must extend InsuranceFund TTL to the documented 30-day target"
+    );
+
+    // Advance N ledgers without any further writes to this key.
+    s.env.ledger().with_mut(|l| {
+        l.sequence_number += TTL_IDLE_LEDGERS;
+    });
+
+    let ttl_after_idle = s.env.as_contract(&s.vault_address, || {
+        s.env.storage().persistent().get_ttl(&key)
+    });
+    assert_eq!(
+        ttl_after_idle,
+        crate::storage::TTL_EXTEND_TO_LEDGERS - TTL_IDLE_LEDGERS,
+        "TTL should decay by exactly the idle ledger count when the key is untouched"
+    );
+
+    // Value is still readable after N idle ledgers — archival did not occur.
+    let expected_premium = 1_000_0000000i128 * 50 / 10_000;
+    assert_eq!(s.vault_client.insurance_fund_balance(), expected_premium);
+}
+
+#[test]
+fn test_persistent_write_reextends_ttl_after_decay() {
+    use soroban_sdk::testutils::storage::Persistent as _;
+
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 2_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let key = VaultKey::LastDeposit(investor.clone());
+    let ttl_after_first = s.env.as_contract(&s.vault_address, || {
+        s.env.storage().persistent().get_ttl(&key)
+    });
+    assert_eq!(ttl_after_first, crate::storage::TTL_EXTEND_TO_LEDGERS);
+
+    // Decay remaining TTL below the extension threshold so the next write
+    // is guaranteed to trigger a real re-extension rather than a no-op.
+    let advance =
+        crate::storage::TTL_EXTEND_TO_LEDGERS - crate::storage::TTL_EXTEND_THRESHOLD_LEDGERS + 1;
+    s.env.ledger().with_mut(|l| {
+        l.sequence_number += advance;
+        l.timestamp += MIN_LOCK_PERIOD + 1;
+    });
+    let ttl_before_rewrite = s.env.as_contract(&s.vault_address, || {
+        s.env.storage().persistent().get_ttl(&key)
+    });
+    assert!(ttl_before_rewrite < crate::storage::TTL_EXTEND_THRESHOLD_LEDGERS);
+
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let ttl_after_rewrite = s.env.as_contract(&s.vault_address, || {
+        s.env.storage().persistent().get_ttl(&key)
+    });
+    assert_eq!(
+        ttl_after_rewrite,
+        crate::storage::TTL_EXTEND_TO_LEDGERS,
+        "rewriting LastDeposit should re-extend its TTL, not just at first write"
+    );
+}
+
+// ── Carbon credit feature coverage (#318) ─────────────────────────────────────
+
+/// credits = amount * green_impact / CARBON_UNIT (10_000_000_000).
+const CARBON_UNIT: i128 = 10_000_000_000;
+
+#[test]
+fn test_calculate_carbon_credits_scales_with_green_impact() {
+    let s = setup();
+    let project_id = create_project_with_green_impact(&s, 80);
+    let amount = 10_000_000_000i128; // 1000 USDC
+
+    let calc = s
+        .vault_client
+        .calculate_carbon_credits(&project_id, &amount);
+
+    assert_eq!(calc.project_id, project_id);
+    assert_eq!(calc.amount_invested, amount);
+    assert_eq!(calc.credits, amount * 80 / CARBON_UNIT); // 80
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #7)")]
+fn test_calculate_carbon_credits_rejects_unknown_project() {
+    let s = setup();
+    s.vault_client
+        .calculate_carbon_credits(&99u32, &1_000_0000000i128);
+}
+
+#[test]
+fn test_issue_carbon_credits_credits_recipient_balance() {
+    let s = setup();
+    let recipient = Address::generate(&s.env);
+    let project_id = create_project_with_green_impact(&s, 50);
+    let amount = 10_000_000_000i128;
+    let expected = amount * 50 / CARBON_UNIT; // 50
+
+    let issued = s
+        .vault_client
+        .issue_carbon_credits(&recipient, &project_id, &amount);
+
+    assert_eq!(issued, expected);
+    assert_eq!(s.vault_client.carbon_credit_balance(&recipient), expected);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #53)")]
+fn test_issue_carbon_credits_rejects_zero_credits() {
+    let s = setup();
+    let recipient = Address::generate(&s.env);
+    // Default green_impact is 0 → credits = 0.
+    let project_id = create_project_with_green_impact(&s, 0);
+    s.vault_client
+        .issue_carbon_credits(&recipient, &project_id, &1_000_0000000i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_issue_carbon_credits_rejects_non_positive_amount() {
+    let s = setup();
+    let recipient = Address::generate(&s.env);
+    let project_id = create_project_with_green_impact(&s, 80);
+    s.vault_client
+        .issue_carbon_credits(&recipient, &project_id, &0i128);
+}
+
+#[test]
+fn test_transfer_carbon_credits_moves_balance() {
+    let s = setup();
+    let holder = Address::generate(&s.env);
+    let recipient = Address::generate(&s.env);
+    let project_id = create_project_with_green_impact(&s, 80);
+    let amount = 10_000_000_000i128;
+    let issued = s
+        .vault_client
+        .issue_carbon_credits(&holder, &project_id, &amount);
+    assert_eq!(issued, 80);
+
+    s.vault_client
+        .transfer_carbon_credits(&holder, &recipient, &30i128);
+
+    assert_eq!(s.vault_client.carbon_credit_balance(&holder), 50);
+    assert_eq!(s.vault_client.carbon_credit_balance(&recipient), 30);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #54)")]
+fn test_transfer_carbon_credits_rejects_insufficient_balance() {
+    let s = setup();
+    let holder = Address::generate(&s.env);
+    let recipient = Address::generate(&s.env);
+    let project_id = create_project_with_green_impact(&s, 80);
+    s.vault_client
+        .issue_carbon_credits(&holder, &project_id, &10_000_000_000i128);
+    // Holder has 80 credits; transferring 81 must panic InsufficientCarbonCredits.
+    s.vault_client
+        .transfer_carbon_credits(&holder, &recipient, &81i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_transfer_carbon_credits_rejects_non_positive_amount() {
+    let s = setup();
+    let holder = Address::generate(&s.env);
+    let recipient = Address::generate(&s.env);
+    s.vault_client
+        .transfer_carbon_credits(&holder, &recipient, &0i128);
+}
+
+#[test]
+fn test_transfer_carbon_credits_requires_from_auth() {
+    let s = setup();
+    let holder = Address::generate(&s.env);
+    let recipient = Address::generate(&s.env);
+    let project_id = create_project_with_green_impact(&s, 80);
+    s.vault_client
+        .issue_carbon_credits(&holder, &project_id, &10_000_000_000i128);
+
+    // Drop the blanket mock so missing `from.require_auth()` would be visible.
+    s.env.mock_auths(&[]);
+    assert!(
+        s.vault_client
+            .try_transfer_carbon_credits(&holder, &recipient, &1i128)
+            .is_err(),
+        "transfer_carbon_credits must require from.require_auth()"
+    );
+}
+
+#[test]
+fn test_carbon_credit_balance_defaults_to_zero() {
+    let s = setup();
+    let nobody = Address::generate(&s.env);
+    assert_eq!(s.vault_client.carbon_credit_balance(&nobody), 0);
+}
+
+#[test]
+fn test_set_carbon_credit_price_persists_when_oracle_authorized() {
+    let s = setup();
+    let oracle = Address::generate(&s.env);
+    s.vault_client.set_carbon_oracle(&oracle);
+
+    s.vault_client.set_carbon_credit_price(&1_000i128);
+    assert_eq!(s.vault_client.carbon_credit_price(), 1_000i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #51)")]
+fn test_set_carbon_credit_price_rejects_when_oracle_unset() {
+    let s = setup();
+    s.vault_client.set_carbon_credit_price(&1_000i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #52)")]
+fn test_set_carbon_credit_price_rejects_non_positive() {
+    let s = setup();
+    let oracle = Address::generate(&s.env);
+    s.vault_client.set_carbon_oracle(&oracle);
+    s.vault_client.set_carbon_credit_price(&0i128);
+}
+
+#[test]
+fn test_carbon_credit_price_defaults_to_zero() {
+    let s = setup();
+    assert_eq!(s.vault_client.carbon_credit_price(), 0);
 }

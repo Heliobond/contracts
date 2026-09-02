@@ -215,6 +215,9 @@ All configuration and global aggregate caches are in instance storage.
 
 ### Persistent storage
 
+Writes go through `storage::set_persistent`, which calls `extend_ttl` so rent is
+refreshed on every write. See [TTL policy](#persistent-ttl-policy-317) below.
+
 | Key | Rust type | Key bytes | Value bytes | Description |
 |-----|-----------|-----------|-------------|-------------|
 | `VaultKey::TotalInvestments` | `i128` | ~21 | 16 | Cumulative USDC sent to projects |
@@ -229,7 +232,45 @@ All configuration and global aggregate caches are in instance storage.
 | `VaultKey::QueueEntry(u64)` | `QueuedClaim` | ~15 | ~48 | A queued redemption by index |
 | `VaultKey::CarbonCreditBalance(Address)` | `i128` | ~30 | 16 | Carbon credit balance per address |
 | `VaultKey::ComplianceEvent(u64)` | `ComplianceEventData` | ~22 | ~100+ | A compliance event record |
-| `VaultKey::InsuranceClaimed(u32)` | `bool` | ~23 | 1 | One-time insurance claim flag per project |
+| `VaultKey::LastDeposit(Address)` | `u64` | ~24 | 8 | Timestamp of the investor's last deposit (#33) |
+| `VaultKey::InvestmentTimestamp(u32)` | `u64` | ~28 | 8 | Ledger timestamp of first funding for a project (#34) |
+| `BridgeDataKey::TrustedEmitter(u32, BytesN<32>)` | `bool` | ~50 | 1 | Trusted Wormhole emitter flag |
+| `BridgeDataKey::ConsumedVaa(BytesN<32>)` | `bool` | ~40 | 1 | Replay-guard flag for a consumed VAA |
+
+### Persistent TTL policy (#317)
+
+Soroban does **not** auto-extend persistent TTL on read or write beyond the
+network's default minimum. A write that only calls `.set()` leaves the entry at
+that minimum; a vault left idle for weeks can archive yield, queue, insurance,
+and carbon-credit state, and the next access then requires an explicit restore.
+
+Every persistent write in `investment_vault` therefore goes through
+`storage::set_persistent`, which sets the value and then calls `extend_ttl`
+with the policy below. Instance storage is unchanged — it is bumped
+automatically on any contract invocation.
+
+| Constant | Value (ledgers) | Wall-clock at 5 s/ledger | Meaning |
+|----------|-----------------|--------------------------|---------|
+| `TTL_EXTEND_THRESHOLD_LEDGERS` | 17 280 | ~1 day | Remaining TTL below which a write re-extends |
+| `TTL_EXTEND_TO_LEDGERS` | 518 400 | ~30 days | Target live window after each write |
+
+| Key | Why it must stay live | Refresh trigger |
+|-----|----------------------|-----------------|
+| `YieldPerShareAccum` | Global yield accounting; archival would strand unclaimed yield | `receive_yield` |
+| `YieldDebt(Address)` | Per-investor claim checkpoint | `claim_yield` |
+| `ProjectInvestment(u32)` | Per-project deployed capital | `fund_project` |
+| `InsuranceFund` | Premium reserve for default claims | `deposit`, `claim_insurance` |
+| `InsuranceClaimed(u32)` | Prevents double-paying a default | `claim_insurance` |
+| `QueueEntry(u64)` / `QueueHead` / `QueueTail` | FIFO redemption claims | `withdraw` (enqueue), `claim` (dequeue) |
+| `ComplianceEvent(u64)` | Audit trail | `record_compliance_event` |
+| `CarbonCreditBalance(Address)` | Issued credit balances | `issue_carbon_credits`, `transfer_carbon_credits` |
+| `LastDeposit(Address)` | Withdrawal lock origin | `deposit`, `bridge_mint`, share `transfer` |
+| `TotalInvestments` / `TotalDeposited(Address)` / `InvestmentTimestamp(u32)` | Portfolio / returns accounting | `fund_project` / `deposit` |
+| `TrustedEmitter` / `ConsumedVaa` | Bridge trust + replay guard | `set_trusted_emitter` / `complete_bridge_transfer` |
+
+Reads do **not** extend TTL. An operator whose vault is idle for approaching
+30 days should invoke a state-changing entrypoint that rewrites the relevant
+keys so rent is paid before archival.
 
 ---
 

@@ -790,7 +790,9 @@ impl ProjectRegistry {
                 panic_with_error!(&env, RegistryError::ProjectNotMature);
             }
         } else {
-            if project.status != types::ProjectStatus::Completed && project.status != types::ProjectStatus::Pending {
+            if project.status != types::ProjectStatus::Completed
+                && project.status != types::ProjectStatus::Pending
+            {
                 panic_with_error!(&env, RegistryError::ProjectNotMature);
             }
         }
