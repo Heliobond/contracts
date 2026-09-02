@@ -794,6 +794,10 @@ impl ProjectRegistry {
                 panic_with_error!(&env, RegistryError::ProjectNotMature);
             }
         }
+        // Open-ended projects (maturity_date == 0) must be archived before collateral release.
+        if project.maturity_date == 0 && project.status != types::ProjectStatus::Archived {
+            panic_with_error!(&env, RegistryError::ProjectNotArchived);
+        }
 
         let key = DataKey::Collateral(project_id, token.clone());
         let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
