@@ -63,6 +63,7 @@ function makeEvent(
 function makeStore(): Store {
   return {
     getPreference: vi.fn(() => preference),
+    hasBeenNotified: vi.fn(() => false),
     recordNotification: vi.fn(),
   } as unknown as Store;
 }
@@ -119,6 +120,7 @@ describe("Notifier.notifyInvestors deduplication", () => {
       getPreference: vi.fn((addr: string) =>
         addr === other.investor_address ? other : preference,
       ),
+      hasBeenNotified: vi.fn(() => false),
       recordNotification: vi.fn(),
     } as unknown as Store;
 
@@ -187,6 +189,7 @@ describe("Notifier retry behavior on a failed delivery", () => {
     };
     const store = {
       getPreference: vi.fn(() => withBoth),
+      hasBeenNotified: vi.fn(() => false),
       recordNotification: vi.fn(),
     } as unknown as Store;
 
@@ -235,6 +238,7 @@ describe("Notifier email channel", () => {
     };
     const store = {
       getPreference: vi.fn(() => withEmail),
+      hasBeenNotified: vi.fn(() => false),
       recordNotification: vi.fn(),
     } as unknown as Store;
 
@@ -263,6 +267,7 @@ describe("Notifier email channel", () => {
     };
     const store = {
       getPreference: vi.fn(() => withEmail),
+      hasBeenNotified: vi.fn(() => false),
       recordNotification: vi.fn(),
     } as unknown as Store;
 
@@ -284,9 +289,6 @@ describe("Notifier email channel", () => {
 // ── Issue #395: min_delta threshold filtering ────────────────────────────────
 
 describe("Notifier min_delta threshold filtering", () => {
-// ── Issue #396: MAX_TRACKED_NOTIFICATIONS bounded-eviction behavior ────────
-
-describe("Notifier bounded-eviction (#396)", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -297,15 +299,16 @@ describe("Notifier bounded-eviction (#396)", () => {
   it("suppresses notification when min_delta exceeds the event's maxDelta", async () => {
     const highDelta: NotificationPreference = {
       ...preference,
-      min_delta: 20, // default event has maxDelta = 10
+      min_delta: 30, // default event has maxDelta = 20 (rate delta)
     };
     const store = {
       getPreference: vi.fn(() => highDelta),
+      hasBeenNotified: vi.fn(() => false),
       recordNotification: vi.fn(),
     } as unknown as Store;
 
     const notifier = new Notifier(config, store);
-    const event = makeEvent(); // maxDelta = 10
+    const event = makeEvent(); // maxDelta = 20 (rate delta)
 
     await notifier.notifyInvestors(event, [preference.investor_address]);
 
@@ -316,20 +319,91 @@ describe("Notifier bounded-eviction (#396)", () => {
   it("sends notification when maxDelta equals min_delta (boundary: < not <=)", async () => {
     const boundaryPref: NotificationPreference = {
       ...preference,
-      min_delta: 10, // default event has maxDelta = 10
+      min_delta: 20, // default event has maxDelta = 20 (rate delta)
     };
     const store = {
       getPreference: vi.fn(() => boundaryPref),
+      hasBeenNotified: vi.fn(() => false),
       recordNotification: vi.fn(),
     } as unknown as Store;
 
     const notifier = new Notifier(config, store);
-    const event = makeEvent(); // maxDelta = 10
+    const event = makeEvent(); // maxDelta = 20 (rate delta)
 
     await notifier.notifyInvestors(event, [preference.investor_address]);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(store.recordNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("considers rate_bps delta in maxDelta calculation", async () => {
+    // Event with no credit_quality/green_impact change but large rate change
+    const rateOnlyEvent = makeEvent({
+      old_credit_quality: 50,
+      new_credit_quality: 50, // no change
+      old_green_impact: 40,
+      new_green_impact: 40, // no change
+      old_rate_bps: 500,
+      new_rate_bps: 2000, // 1500 bps change
+    });
+    const midDeltaPref: NotificationPreference = {
+      ...preference,
+      min_delta: 100, // would filter out if only CQ/GI were checked (delta=0)
+    };
+    const store = {
+      getPreference: vi.fn(() => midDeltaPref),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn(),
+    } as unknown as Store;
+
+    const notifier = new Notifier(config, store);
+
+    await notifier.notifyInvestors(rateOnlyEvent, [preference.investor_address]);
+
+    // Should notify because rate delta (1500) exceeds min_delta (100)
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(store.recordNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses notification when rate delta is below min_delta", async () => {
+    const rateOnlyEvent = makeEvent({
+      old_credit_quality: 50,
+      new_credit_quality: 50, // no change
+      old_green_impact: 40,
+      new_green_impact: 40, // no change
+      old_rate_bps: 500,
+      new_rate_bps: 510, // only 10 bps change
+    });
+    const highDeltaPref: NotificationPreference = {
+      ...preference,
+      min_delta: 20, // exceeds rate delta of 10
+    };
+    const store = {
+      getPreference: vi.fn(() => highDeltaPref),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn(),
+    } as unknown as Store;
+
+    const notifier = new Notifier(config, store);
+
+    await notifier.notifyInvestors(rateOnlyEvent, [preference.investor_address]);
+
+    // Should NOT notify because rate delta (10) < min_delta (20)
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(store.recordNotification).not.toHaveBeenCalled();
+  });
+});
+
+// ── Issue #396: MAX_TRACKED_NOTIFICATIONS bounded-eviction behavior ────────
+
+describe("Notifier bounded-eviction (#396)", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
   it("keeps notifiedRecipients at or below MAX_TRACKED_NOTIFICATIONS after many unique events", async () => {
     const notifier = new Notifier(config, makeStore());
 

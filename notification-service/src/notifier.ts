@@ -46,43 +46,44 @@ export class Notifier {
       event.new_credit_quality - event.old_credit_quality,
     );
     const deltaGi = Math.abs(event.new_green_impact - event.old_green_impact);
-    const maxDelta = Math.max(deltaCq, deltaGi);
+    const deltaRate = Math.abs(event.new_rate_bps - event.old_rate_bps);
+    const maxDelta = Math.max(deltaCq, deltaGi, deltaRate);
 
     for (const addr of investorAddresses) {
-      const pref = this.store.getPreference(addr);
-      if (!pref || !pref.enabled) continue;
-      if (maxDelta < pref.min_delta) continue;
-
-      const hasEmail = !!(pref.email && this.transporter);
-      const hasWebhook = !!pref.webhook_url;
-
-      if (!hasEmail && !hasWebhook) continue;
-
-      const recipientKey = this.recipientKey(event, addr);
-      if (this.notifiedRecipients.has(recipientKey)) {
-        console.log(
-          `[notifier] Skipping duplicate notification to ${addr} for project #${event.project_id} at ledger ${event.ledger}`,
-        );
-        continue;
-      }
-
-      // Cross-restart dedup: check the persistent DB in case the in-memory
-      // Set was cleared by a process restart (#335).
-      if (
-        this.store.hasBeenNotified(
-          addr,
-          event.project_id,
-          event.ledger,
-        )
-      ) {
-        this.rememberRecipient(recipientKey);
-        continue;
-      }
-
-      const subject = `[Heliobond] Score change for project #${event.project_id}`;
-      const text = this.formatEmailText(event, addr);
-
       try {
+        const pref = this.store.getPreference(addr);
+        if (!pref || !pref.enabled) continue;
+        if (maxDelta < pref.min_delta) continue;
+
+        const hasEmail = !!(pref.email && this.transporter);
+        const hasWebhook = !!pref.webhook_url;
+
+        if (!hasEmail && !hasWebhook) continue;
+
+        const recipientKey = this.recipientKey(event, addr);
+        if (this.notifiedRecipients.has(recipientKey)) {
+          console.log(
+            `[notifier] Skipping duplicate notification to ${addr} for project #${event.project_id} at ledger ${event.ledger}`,
+          );
+          continue;
+        }
+
+        // Cross-restart dedup: check the persistent DB in case the in-memory
+        // Set was cleared by a process restart (#335).
+        if (
+          this.store.hasBeenNotified(
+            addr,
+            event.project_id,
+            event.ledger,
+          )
+        ) {
+          this.rememberRecipient(recipientKey);
+          continue;
+        }
+
+        const subject = `[Heliobond] Score change for project #${event.project_id}`;
+        const text = this.formatEmailText(event, addr);
+
         if (hasEmail && this.transporter && pref.email) {
           await this.sendEmail(pref.email, subject, text);
           this.store.recordNotification(addr, event.project_id, "email", event.ledger);
