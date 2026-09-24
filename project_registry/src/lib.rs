@@ -31,9 +31,14 @@ const MAX_SCORE_HISTORY: u32 = 50;
 /// Prevents excessively large transactions that could exceed ledger resource limits.
 const MAX_BATCH_SCORE_SIZE: u32 = 20;
 
-/// Maximum number of entries in a single compact_storage call (#332).
-/// Mirrors MAX_BATCH_SCORE_SIZE to prevent unbounded O(n*m) iteration.
+/// Maximum length of each of compact_storage's `project_ids` / `tokens` inputs (#332).
 const MAX_COMPACT_STORAGE_SIZE: u32 = 20;
+
+/// Maximum number of (project_id, token) pairs compact_storage will inspect in
+/// one call (#549). The loop is a Cartesian product, so the per-input cap alone
+/// still allowed 20 x 20 = 400 storage reads/removes; this bounds the actual
+/// work at the same scale as MAX_BATCH_SCORE_SIZE.
+const MAX_COMPACT_STORAGE_PAIRS: u64 = 20;
 
 /// Maximum voting duration in seconds — 30 days (#332).
 /// Prevents overflow in voting_ends_at computation and rejects unreasonably long proposals.
@@ -1054,11 +1059,18 @@ impl ProjectRegistry {
     /// Currently removes collateral keys that were set to zero before the lazy-cleanup
     /// fix (release_collateral and liquidate_collateral now call remove instead of
     /// set-to-zero). Pass the `project_ids` to inspect and a `tokens` list for each.
-    /// Returns the number of entries removed.
+    /// Every (project_id, token) pair is inspected, so the product of the two
+    /// lengths must not exceed `MAX_COMPACT_STORAGE_PAIRS` (#549); split larger
+    /// cleanups across multiple calls. Returns the number of entries removed.
     #[only_owner]
     pub fn compact_storage(env: Env, project_ids: Vec<u32>, tokens: Vec<Address>) -> u32 {
         require_current_state(&env);
         if project_ids.len() > MAX_COMPACT_STORAGE_SIZE || tokens.len() > MAX_COMPACT_STORAGE_SIZE {
+            panic_with_error!(&env, RegistryError::CompactStorageTooLarge);
+        }
+        // Bound the product, not just each dimension (#549).
+        let total_pairs = (project_ids.len() as u64) * (tokens.len() as u64);
+        if total_pairs > MAX_COMPACT_STORAGE_PAIRS {
             panic_with_error!(&env, RegistryError::CompactStorageTooLarge);
         }
         let mut removed: u32 = 0;
