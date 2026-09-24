@@ -176,7 +176,7 @@ Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 | `set_carbon_credit_price(price: i128)` | oracle | none | Price positive. |
 | `carbon_credit_price()` | none | `i128` | Defaults to 0. |
 | `calculate_carbon_credits(project_id: u32, amount: i128)` | none | `CarbonCreditCalculation` | Uses project green impact. |
-| `issue_carbon_credits(to: Address, project_id: u32, amount: i128)` | none | `i128` | Issues calculated credits when positive. |
+| `issue_carbon_credits(to: Address, project_id: u32, amount: i128)` | owner | `i128` | Issues calculated credits when positive. |
 | `transfer_carbon_credits(from: Address, to: Address, amount: i128)` | `from` | none | Balance must cover amount. |
 | `carbon_credit_balance(address: Address)` | none | `i128` | Defaults to 0. |
 | `set_max_transaction_amount(amount: i128)` | owner | none | Compliance cap; 0 disables. |

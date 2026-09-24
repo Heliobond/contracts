@@ -1693,6 +1693,10 @@ impl InvestmentVault {
     }
 
     /// Issue carbon credits to a specified recipient (#184).
+    ///
+    /// Owner-only (#563): credits are a transferable, priced balance and
+    /// `amount` is caller-supplied, so an ungated call was an unlimited mint.
+    #[only_owner]
     pub fn issue_carbon_credits(env: Env, to: Address, project_id: u32, amount: i128) -> i128 {
         require_current_state(&env);
         let calc = Self::calculate_carbon_credits(env.clone(), project_id, amount);
