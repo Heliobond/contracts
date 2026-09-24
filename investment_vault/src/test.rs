@@ -2320,6 +2320,30 @@ fn test_vault_stale_stored_version_blocks_normal_calls() {
 }
 
 #[test]
+fn test_set_flash_loan_fee_blocked_on_stale_state_version() {
+    // #572: set_flash_loan_fee must enforce require_current_state like every
+    // sibling admin setter, so the fee cannot change pre-migration.
+    let s = setup();
+    s.env.as_contract(&s.vault_address, || {
+        s.env
+            .storage()
+            .instance()
+            .set(&crate::types::VaultKey::StateVersion, &0u32);
+    });
+
+    assert!(s.vault_client.try_set_flash_loan_fee(&50u32).is_err());
+
+    // Restore the current version; the rejected call must not have persisted.
+    s.env.as_contract(&s.vault_address, || {
+        s.env
+            .storage()
+            .instance()
+            .set(&crate::types::VaultKey::StateVersion, &1u32);
+    });
+    assert_eq!(s.vault_client.flash_loan_fee(), 30u32);
+}
+
+#[test]
 #[should_panic]
 fn test_vault_migrate_state_rejects_wrong_version() {
     let s = setup();
