@@ -1193,6 +1193,7 @@ impl InvestmentVault {
         events::withdrawal_window_set(&env, ledgers);
     }
 
+
     /// Return the currently configured withdrawal window in ledgers (#36).
     /// Returns 1 when no explicit window has been set (same-ledger protection).
     pub fn get_withdrawal_window(env: Env) -> u32 {
