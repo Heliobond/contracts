@@ -1408,6 +1408,11 @@ impl InvestmentVault {
         if amount <= 0 {
             panic_with_error!(&env, VaultError::AmountNotPositive);
         }
+        // Reject targets no guardian will relay to before burning, otherwise
+        // the shares are destroyed with no inbound mint ever arriving (#568).
+        if target_chain == 0 || target_chain == wormhole::chain_id::STELLAR {
+            panic_with_error!(&env, VaultError::BridgeWrongTargetChain);
+        }
         Base::burn(&env, &from, amount);
 
         let token_address = wormhole::address_to_bytes32(&env, &env.current_contract_address());
