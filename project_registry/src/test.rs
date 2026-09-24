@@ -2051,6 +2051,43 @@ fn test_compact_storage_removes_zero_collateral() {
     assert_eq!(removed, 0u32);
 }
 
+// ── compact_storage pair-count cap (#549) ─────────────────────────────────────
+
+fn ids_and_tokens(env: &Env, n_ids: u32, n_tokens: u32) -> (soroban_sdk::Vec<u32>, soroban_sdk::Vec<Address>) {
+    let mut ids = soroban_sdk::Vec::new(env);
+    for i in 0..n_ids {
+        ids.push_back(i + 1);
+    }
+    let mut tokens = soroban_sdk::Vec::new(env);
+    for _ in 0..n_tokens {
+        tokens.push_back(Address::generate(env));
+    }
+    (ids, tokens)
+}
+
+/// Two lists that each pass the per-list cap (20) but whose product (400)
+/// exceeds MAX_COMPACT_STORAGE_PAIRS must be rejected.
+#[test]
+fn test_compact_storage_rejects_large_pair_product() {
+    let (env, _admin, _whitelister, client) = setup();
+    let (ids, tokens) = ids_and_tokens(&env, 20, 20);
+    assert!(client.try_compact_storage(&ids, &tokens).is_err());
+
+    // Just over the pair cap with small lists is rejected too.
+    let (ids, tokens) = ids_and_tokens(&env, 3, 7);
+    assert!(client.try_compact_storage(&ids, &tokens).is_err());
+}
+
+/// Inputs whose product is at the cap are accepted, whatever the shape.
+#[test]
+fn test_compact_storage_accepts_pairs_within_cap() {
+    let (env, _admin, _whitelister, client) = setup();
+    for (n_ids, n_tokens) in [(1u32, 20u32), (20, 1), (4, 5)] {
+        let (ids, tokens) = ids_and_tokens(&env, n_ids, n_tokens);
+        assert_eq!(client.compact_storage(&ids, &tokens), 0u32);
+    }
+}
+
 // ── Project status transitions (#329) ──────────────────────────────────────────
 
 #[test]

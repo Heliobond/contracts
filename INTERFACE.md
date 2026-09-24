@@ -94,7 +94,7 @@ Multi-sig errors:
 | `get_all_projects_with_archived()` | none | `Vec<(u32, ProjectData)>` | Like `get_all_projects` but includes archived projects. |
 | `compact_archive(project_id: u32)` | owner | none | Replaces a full `ProjectData` with a minimal `ArchiveSummary` (#73). Project must already be archived. |
 | `get_archive_summary(project_id: u32)` | none | `ArchiveSummary` | Panics if the project hasn't been compacted. |
-| `compact_storage(project_ids: Vec<u32>, tokens: Vec<Address>)` | owner | `u32` | Removes zero-value collateral storage entries; returns count removed. |
+| `compact_storage(project_ids: Vec<u32>, tokens: Vec<Address>)` | owner | `u32` | Removes zero-value collateral storage entries; returns count removed. Each list ≤ 20 and `project_ids.len() * tokens.len()` ≤ 20 pairs, else `CompactStorageTooLarge`. |
 | `pause()` | owner | none | Blocks state-mutating operations; getters remain available (#72). |
 | `unpause()` | owner | none | Reverses `pause()`. |
 | `is_paused()` | none | `bool` | Circuit-breaker status. |
