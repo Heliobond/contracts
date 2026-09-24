@@ -2557,3 +2557,86 @@ fn test_health_check_reflects_emergency_admin() {
     let status = client.health_check();
     assert_eq!(status.has_emergency_admin, true);
 }
+
+// ── Persistent TTL on non-Project keys (#552) ──────────────────────────────────
+
+fn persistent_ttl(env: &Env, client: &ProjectRegistryClient, key: &crate::types::DataKey) -> u32 {
+    use soroban_sdk::testutils::storage::Persistent as _;
+    env.as_contract(&client.address, || env.storage().persistent().get_ttl(key))
+}
+
+/// The shared helper used for the compacted `Arch` summary and the
+/// `HasVoted` double-vote guard must leave each entry at the extension target.
+#[test]
+fn test_write_persistent_extends_arch_and_has_voted_ttl() {
+    let (env, _admin, _whitelister, client) = setup();
+    let voter = Address::generate(&env);
+    let arch_key = crate::types::DataKey::Arch(1);
+    let voted_key = crate::types::DataKey::HasVoted(1, voter.clone());
+
+    env.as_contract(&client.address, || {
+        crate::storage::write_persistent(
+            &env,
+            &arch_key,
+            &ArchiveSummary {
+                owner: voter.clone(),
+                final_credit_quality: 0,
+                final_green_impact: 0,
+                maturity_date: 0,
+                certification_status: CertificationStatus::None,
+                metadata_hash: test_metadata_hash(&env),
+            },
+        );
+        crate::storage::write_persistent(&env, &voted_key, &true);
+    });
+
+    assert_eq!(
+        persistent_ttl(&env, &client, &arch_key),
+        crate::storage::TTL_EXTEND_TO_LEDGERS
+    );
+    assert_eq!(
+        persistent_ttl(&env, &client, &voted_key),
+        crate::storage::TTL_EXTEND_TO_LEDGERS
+    );
+}
+
+/// set_creator_reputation must extend the reputation entry's TTL.
+#[test]
+fn test_creator_reputation_write_extends_ttl() {
+    let (env, _admin, whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_creator_reputation(&whitelister, &creator, &75u32);
+
+    let key = crate::types::DataKey::CreatorReputation(creator);
+    assert_eq!(
+        persistent_ttl(&env, &client, &key),
+        crate::storage::TTL_EXTEND_TO_LEDGERS
+    );
+}
+
+/// A score update appends to the history ring buffer; both the slot and the
+/// running total must be TTL-extended so the buffer can't reset to slot 0.
+#[test]
+fn test_score_history_write_extends_ttl() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmHistTtl"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+    client.update_credit_quality_score(&id, &42u32);
+
+    let total_key = crate::types::DataKey::ScoreHistoryTotal(id);
+    let slot_key = crate::types::DataKey::ScoreHistorySlot(id, 0);
+    assert_eq!(
+        persistent_ttl(&env, &client, &total_key),
+        crate::storage::TTL_EXTEND_TO_LEDGERS
+    );
+    assert_eq!(
+        persistent_ttl(&env, &client, &slot_key),
+        crate::storage::TTL_EXTEND_TO_LEDGERS
+    );
+}
