@@ -306,9 +306,7 @@ impl ProjectRegistry {
             certification_status: project.certification_status,
             metadata_hash: project.metadata_hash,
         };
-        env.storage()
-            .persistent()
-            .set(&DataKey::Arch(project_id), &summary);
+        storage::write_persistent(&env, &DataKey::Arch(project_id), &summary);
         env.storage()
             .persistent()
             .remove(&DataKey::Project(project_id));
@@ -643,9 +641,7 @@ impl ProjectRegistry {
             proposal.votes_against += weight;
         }
         storage::write_proposal(&env, proposal_id, &proposal);
-        env.storage()
-            .persistent()
-            .set(&DataKey::HasVoted(proposal_id, voter.clone()), &true);
+        storage::write_persistent(&env, &DataKey::HasVoted(proposal_id, voter.clone()), &true);
         events::vote_cast(&env, proposal_id, &voter, support, weight);
     }
 
@@ -894,9 +890,7 @@ impl ProjectRegistry {
         if caller != whitelister && caller != owner {
             panic_with_error!(&env, RegistryError::NotAuthorizedReputation);
         }
-        env.storage()
-            .persistent()
-            .set(&DataKey::CreatorReputation(creator.clone()), &score);
+        storage::write_persistent(&env, &DataKey::CreatorReputation(creator.clone()), &score);
         events::reputation_updated(&env, &creator, score);
     }
 
@@ -1273,7 +1267,8 @@ fn append_score_history(env: &Env, project_id: u32, credit_quality: u32, green_i
         .get(&DataKey::ScoreHistoryTotal(project_id))
         .unwrap_or(0);
     let slot = total % MAX_SCORE_HISTORY;
-    env.storage().persistent().set(
+    storage::write_persistent(
+        env,
         &DataKey::ScoreHistorySlot(project_id, slot),
         &ScoreHistoryEntry {
             timestamp: env.ledger().timestamp(),
@@ -1281,9 +1276,7 @@ fn append_score_history(env: &Env, project_id: u32, credit_quality: u32, green_i
             green_impact,
         },
     );
-    env.storage()
-        .persistent()
-        .set(&DataKey::ScoreHistoryTotal(project_id), &(total + 1));
+    storage::write_persistent(env, &DataKey::ScoreHistoryTotal(project_id), &(total + 1));
 }
 
 #[contractimpl(contracttrait)]

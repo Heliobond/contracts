@@ -1,5 +1,5 @@
 use crate::types::{DataKey, ProjectData, Proposal};
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{Address, Env, IntoVal, Val};
 
 /// Minimum remaining TTL in ledgers before extending persistent storage rent (#388).
 pub(crate) const TTL_EXTEND_THRESHOLD_LEDGERS: u32 = 17_280;
@@ -14,13 +14,18 @@ pub fn read_project(env: &Env, id: u32) -> Option<ProjectData> {
 /// mutating call site goes through this so rent is refreshed on each write,
 /// not just at creation.
 pub fn write_project(env: &Env, id: u32, project: &ProjectData) {
-    let key = DataKey::Project(id);
-    env.storage().persistent().set(&key, project);
-    env.storage().persistent().extend_ttl(
-        &key,
-        TTL_EXTEND_THRESHOLD_LEDGERS,
-        TTL_EXTEND_TO_LEDGERS,
-    );
+    write_persistent(env, &DataKey::Project(id), project);
+}
+
+/// Writes any persistent `key` and re-extends its TTL (#552). Persistent
+/// writes should go through this (or a typed wrapper like `write_project`)
+/// rather than an inline `.persistent().set(..)`, so no key is left to
+/// silently expire — e.g. the compacted `Arch` record or `HasVoted` guards.
+pub fn write_persistent<V: IntoVal<Env, Val>>(env: &Env, key: &DataKey, val: &V) {
+    env.storage().persistent().set(key, val);
+    env.storage()
+        .persistent()
+        .extend_ttl(key, TTL_EXTEND_THRESHOLD_LEDGERS, TTL_EXTEND_TO_LEDGERS);
 }
 
 pub fn read_proposal(env: &Env, id: u32) -> Option<Proposal> {
