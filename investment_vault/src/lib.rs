@@ -1505,6 +1505,7 @@ impl InvestmentVault {
     #[only_owner]
     pub fn set_flash_loan_fee(env: Env, fee_bps: u32) {
         require_not_paused(&env);
+        require_current_state(&env);
         if !(0..=1000).contains(&fee_bps) {
             panic_with_error!(&env, VaultError::FlashLoanFeeOutOfRange);
         }
