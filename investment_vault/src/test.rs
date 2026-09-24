@@ -1872,6 +1872,54 @@ fn test_calculate_carbon_credits_rejects_non_positive_amount() {
     s.vault_client.calculate_carbon_credits(&project_id, &0i128);
 }
 
+// ── Issue #564: transfer_carbon_credits self-transfer must not double the
+// caller's balance ──────────────────────────────────────────────────────────
+
+fn set_carbon_credit_balance(s: &TestSetup, who: &Address, amount: i128) {
+    s.env.as_contract(&s.vault_address, || {
+        s.env
+            .storage()
+            .persistent()
+            .set(&crate::types::VaultKey::CarbonCreditBalance(who.clone()), &amount);
+    });
+}
+
+fn carbon_credit_balance(s: &TestSetup, who: &Address) -> i128 {
+    s.env.as_contract(&s.vault_address, || {
+        s.env
+            .storage()
+            .persistent()
+            .get(&crate::types::VaultKey::CarbonCreditBalance(who.clone()))
+            .unwrap_or(0)
+    })
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #59)")]
+fn test_transfer_carbon_credits_rejects_self_transfer() {
+    let s = setup();
+    let holder = Address::generate(&s.env);
+    set_carbon_credit_balance(&s, &holder, 1);
+
+    // Before the fix: this would double the balance (1 -> 2) instead of
+    // panicking, letting a holder mint unbounded credits via self-transfers.
+    s.vault_client.transfer_carbon_credits(&holder, &holder, &1);
+}
+
+#[test]
+fn test_transfer_carbon_credits_moves_balance_between_different_accounts() {
+    let s = setup();
+    let sender = Address::generate(&s.env);
+    let receiver = Address::generate(&s.env);
+    set_carbon_credit_balance(&s, &sender, 10);
+    set_carbon_credit_balance(&s, &receiver, 3);
+
+    s.vault_client.transfer_carbon_credits(&sender, &receiver, &4);
+
+    assert_eq!(carbon_credit_balance(&s, &sender), 6);
+    assert_eq!(carbon_credit_balance(&s, &receiver), 7);
+}
+
 #[test]
 fn test_set_carbon_oracle_persists_emits_event_and_is_idempotent() {
     let s = setup();
