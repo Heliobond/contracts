@@ -126,6 +126,11 @@ pub enum VaultError {
     NoSnapshotTaken = 57,
     /// transfer_ownership: no owner is currently set on the contract (#402).
     OwnerNotSet = 58,
+    /// transfer_carbon_credits: from and to must be different addresses —
+    /// a self-transfer previously let both balance reads snapshot the same
+    /// pre-write value, and the second .set() overwrote the first, doubling
+    /// (or worse) the caller's balance for free (#564).
+    SelfTransferNotAllowed = 59,
 }
 
 #[contracttype]

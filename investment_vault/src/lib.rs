@@ -1723,6 +1723,14 @@ impl InvestmentVault {
             panic_with_error!(&env, VaultError::AmountNotPositive);
         }
 
+        // #564: from == to reads both balances as the same pre-write snapshot,
+        // and the second .set() below would overwrite the first — doubling
+        // the caller's balance for free instead of no-op'ing. Reject outright,
+        // since a self-transfer has no legitimate purpose.
+        if from == to {
+            panic_with_error!(&env, VaultError::SelfTransferNotAllowed);
+        }
+
         let prev_from: i128 = env
             .storage()
             .persistent()
