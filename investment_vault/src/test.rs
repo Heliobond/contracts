@@ -3902,6 +3902,44 @@ fn test_initiate_bridge_transfer_happy_path() {
     assert_eq!(s.vault_client.total_supply(), supply_before - amount);
 }
 
+/// #568: an unset (0) or same-chain (Stellar) target must be rejected before
+/// any shares are burned.
+#[test]
+fn test_initiate_bridge_transfer_rejects_invalid_target_chain() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let return_vaa = wormhole::ParsedVaa {
+        emitter_chain: wormhole::chain_id::ETHEREUM,
+        emitter_address: soroban_sdk::BytesN::from_array(&s.env, &[0u8; 32]),
+        payload: soroban_sdk::Bytes::new(&s.env),
+    };
+    let mock_core = register_mock_core(&s.env, return_vaa);
+    s.vault_client.set_wormhole_core(&mock_core);
+
+    let recipient = soroban_sdk::BytesN::from_array(&s.env, &[1u8; 32]);
+    let balance_before = s.vault_client.balance(&investor);
+    let supply_before = s.vault_client.total_supply();
+
+    for target_chain in [0u32, wormhole::chain_id::STELLAR] {
+        assert!(s
+            .vault_client
+            .try_initiate_bridge_transfer(
+                &investor,
+                &200_0000000i128,
+                &target_chain,
+                &recipient,
+                &1u64,
+            )
+            .is_err());
+    }
+
+    assert_eq!(s.vault_client.balance(&investor), balance_before);
+    assert_eq!(s.vault_client.total_supply(), supply_before);
+}
+
 fn test_complete_bridge_transfer_happy_path() {
     let s = setup();
     let bridge = Address::generate(&s.env);
