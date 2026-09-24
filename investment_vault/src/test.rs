@@ -1771,6 +1771,36 @@ fn test_set_registry_is_admin_only() {
     s.vault_client.set_registry(&new_registry);
 }
 
+// ── Issue #563: issue_carbon_credits() must be owner-only ────────────────────
+
+/// A stranger minting credits to themselves must fail the owner auth check
+/// and leave their carbon credit balance untouched.
+#[test]
+fn test_issue_carbon_credits_rejects_non_owner() {
+    let s = setup();
+    let stranger = Address::generate(&s.env);
+    s.env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &stranger,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &s.vault_address,
+            fn_name: "issue_carbon_credits",
+            args: soroban_sdk::vec![
+                &s.env,
+                stranger.clone().into_val(&s.env),
+                1u32.into_val(&s.env),
+                100_000_000_000_000_000_000i128.into_val(&s.env),
+            ],
+            sub_invokes: &[],
+        },
+    }]);
+
+    assert!(s
+        .vault_client
+        .try_issue_carbon_credits(&stranger, &1u32, &100_000_000_000_000_000_000i128)
+        .is_err());
+    assert_eq!(s.vault_client.carbon_credit_balance(&stranger), 0);
+}
+
 // ── Issue #428: set_bridge()/set_wormhole_core() success-path coverage ────────
 
 #[test]
@@ -2666,6 +2696,9 @@ fn test_all_only_owner_functions_reject_non_admin_caller() {
         s.vault_client.try_upgrade(&hash32).is_err(),
         s.vault_client
             .try_set_volume_fee_tier(&500_0000000i128, &50u32)
+            .is_err(),
+        s.vault_client
+            .try_issue_carbon_credits(&addr(), &1u32, &1i128)
             .is_err(),
     ];
 
