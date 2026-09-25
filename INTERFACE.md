@@ -64,6 +64,8 @@ Multi-sig errors:
 | `verify_metadata_hash(project_id: u32, candidate_hash: BytesN<32>)` | none | `bool` | True if `candidate_hash` matches the hash recorded at creation (#44). |
 | `update_impact_score(project_id: u32, credit_quality: u32, green_impact: u32)` | owner, or disabled when multi-sig is enabled | none | Scores 0..100. Use approval variant after enabling multi-sig. |
 | `update_impact_score_approved(project_id: u32, credit_quality: u32, green_impact: u32, approvals: Vec<Address>)` | multi-sig signers | none | Critical operation. |
+| `update_impact_scores_batch(updates: Vec<(u32, u32, u32)>)` | owner, or disabled when multi-sig is enabled | none | Each entry is `(project_id, credit_quality, green_impact)`; the batch is rejected as a whole if one entry is out of range, and an empty batch panics with `EmptyBatchUpdate` (#445). |
+| `update_scores_batch_approved(updates: Vec<(u32, u32, u32)>, approvals: Vec<Address>)` | multi-sig signers | none | Batch equivalent of `update_impact_score_approved`; the usable batch path once multi-sig is enabled (#437). |
 | `update_credit_quality_score(project_id: u32, credit_quality: u32)` | owner, or disabled when multi-sig is enabled | none | Updates credit score only. No multi-sig-approved variant currently exists. |
 | `get_score_history(project_id: u32)` | none | `Vec<ScoreHistoryEntry>` | Chronological ring buffer of past score updates (#123). |
 | `certify_project(caller: Address, project_id: u32, status: CertificationStatus)` | `caller` | none | Caller must be whitelister or owner. |
@@ -131,13 +133,20 @@ Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 | `deposit(from: Address, usdc_amount: i128)` | `from` | `i128` | Transfers USDC, deducts insurance premium and optional fee, mints shares. |
 | `batch_deposit(deposits: Vec<(Address, i128)>)` | each depositor | `Vec<i128>` | Runs multiple deposits in order; keep batches small enough for Soroban resource limits. |
 | `withdraw(from: Address, shares_amount: i128, min_usdc_return: i128)` | `from` via burn | `i128` | Burns shares; may enqueue if liquid USDC is insufficient. Panics if the actual USDC return is below `min_usdc_return` (slippage protection). |
+| `get_deposit_lock_expiry(account: Address)` | none | `u64` | Unix timestamp (seconds) at which `account`'s deposit lock expires; 0 when no lock is in force — while it is in the future, `withdraw` rejects with `DepositLocked`. |
+| `set_withdrawal_window(ledgers: u32)` | owner | none | Minimum ledgers between a deposit and a withdrawal by the same address (#36); the default 1 only forbids same-ledger round trips. |
+| `get_withdrawal_window()` | none | `u32` | Configured window in ledgers; 1 when never set. |
 | `claim()` | none | `i128` | Settles queued withdrawals FIFO. |
 | `fund_project(project_id: u32, amount: i128)` | owner, or disabled when multi-sig is enabled | none | Critical operation; checks score thresholds and insurance reserve. |
 | `fund_project_with_approvals(project_id: u32, amount: i128, approvals: Vec<Address>)` | multi-sig signers | none | Critical operation. |
 | `batch_fund_projects(fundings: Vec<(u32, i128)>, approvals: Vec<Address>)` | owner when multi-sig disabled, otherwise multi-sig signers | none | Common batch funding path. |
-| `receive_yield(from: Address, amount: i128)` | owner, or disabled when multi-sig is enabled | none | Transfers repayment USDC and updates yield accumulator. No multi-sig-approved variant currently exists. |
+| `receive_yield(from: Address, amount: i128)` | owner, or disabled when multi-sig is enabled | none | Transfers repayment USDC and updates yield accumulator; use `receive_yield_with_approvals` after enabling multi-sig. |
+| `receive_yield_with_approvals(from: Address, amount: i128, approvals: Vec<Address>)` | multi-sig signers | none | Critical operation; the usable path into the yield accumulator once multi-sig is enabled (#436). |
 | `claim_yield(from: Address)` | `from` | `i128` | Pays accrued yield when liquid. |
 | `get_project_investment(project_id: u32)` | none | `i128` | Cumulative USDC funded into `project_id`; 0 if never funded. |
+| `get_project_investments_batch(project_ids: Vec<u32>)` | none | `Vec<i128>` | One call instead of one cross-contract call per project; results keep the input order and unknown/unfunded ids return 0 (#35). |
+| `get_all_project_investments()` | none | `Vec<(u32, i128)>` | `(project_id, invested_usdc)` for projects 1..=`total_projects()`; unfunded projects are present with 0 (#35). |
+| `investment_capacity(project_id: u32)` | none | `i128` | Remaining USDC the vault may still invest in `project_id`; 0 means further funding fails with `InvestmentCapExceeded`. |
 | `max_hbs_supply()` | none | `i128` | Hard cap on total HBS share supply enforced by `deposit` (#20). |
 | `claim_insurance(project_id: u32, recipient: Address, amount: i128)` | owner, or disabled when multi-sig is enabled | none | Critical operation; one claim per project. |
 | `claim_insurance_with_approvals(project_id: u32, recipient: Address, amount: i128, approvals: Vec<Address>)` | multi-sig signers | none | Critical operation. |
@@ -154,11 +163,17 @@ Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 | `accepted_asset()` | none | `Address` | USDC SAC address. |
 | `set_management_fee(fee_bps: u32, recipient: Address)` | owner | none | Fee capped at 500 bps. |
 | `get_management_fee_bps()` | none | `u32` | Defaults to 0. |
+| `set_volume_fee_tier(threshold: i128, discounted_bps: u32)` | owner | none | Two-tier volume discount on deposits; `threshold = 0` disables the tier and restores the flat rate (#39). |
+| `get_volume_fee_tier()` | none | `(i128, u32)` | `(threshold, discounted_bps)`; `(0, 0)` when no tier is active. |
 | `enable_secondary_trading()` | owner | none | Sets HBS trading flag. |
 | `is_trading_enabled()` | none | `bool` | Trading flag. |
 | `set_funding_thresholds(min_credit_quality: u32, min_green_impact: u32)` | owner | none | Scores must be 0..100. |
+| `set_max_investment_per_project(cap: i128)` | owner | none | Cap on total USDC the vault may invest in any single project; `0` restores the `MAX_INVESTMENT_PER_PROJECT` default (5 M USDC). |
 | `get_min_credit_quality()` | none | `u32` | Defaults to 0. |
 | `get_min_green_impact()` | none | `u32` | Defaults to 0. |
+| `start_funding_round()` | owner | none | Opens a funding round and blocks share transfers until it is closed (#38). |
+| `end_funding_round()` | owner | none | Closes the active funding round and re-enables share transfers (#38). |
+| `is_funding_round_active()` | none | `bool` | Whether a funding round is currently open (#38). |
 | `set_registry(new_registry: Address)` | owner | none | Validates registry and replaces dependency. |
 | `get_registry()` | none | `Address` | Registry address. |
 | `get_hbs_token_info()` | none | `HBSTokenInfo` | HBS metadata and trading flag. |
