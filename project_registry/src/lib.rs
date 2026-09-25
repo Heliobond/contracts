@@ -60,6 +60,12 @@ const MIN_VOTING_PERIOD: u64 = 86_400;
 /// Minimum oracle update interval in seconds (1 hour).
 const MIN_UPDATE_INTERVAL: u64 = 3600;
 
+/// Tolerance subtracted from `MIN_UPDATE_INTERVAL` (#628). `last_update_timestamp`
+/// is the *close* time of the ledger that carried the previous update, so an hourly
+/// oracle whose next inclusion lands a few seconds early would be rejected with
+/// `UpdateTooFrequent` — wasting fees and silently dropping score updates.
+const UPDATE_INTERVAL_TOLERANCE: u64 = 60;
+
 pub const CONTRACT_NAME: &str = "Project Registry";
 pub const CONTRACT_DESCRIPTION: &str = "Heliobond Project Registry";
 pub const CONTRACT_VERSION: &str = "1.0.0";
@@ -687,11 +693,7 @@ impl ProjectRegistry {
         }
 
         // Rate-limit oracle updates: reject if too soon since the last update.
-        if project.last_update_timestamp > 0
-            && env.ledger().timestamp() < project.last_update_timestamp + MIN_UPDATE_INTERVAL
-        {
-            panic_with_error!(&env, RegistryError::UpdateTooFrequent);
-        }
+        require_update_window_elapsed(&env, &project);
 
         let old_cq = project.credit_quality;
         if old_cq == credit_quality {
@@ -1088,6 +1090,16 @@ impl ProjectRegistry {
         }
         removed
     }
+
+    /// Earliest ledger timestamp at which the next score update for `project_id`
+    /// will be accepted, or 0 when the project has never been scored (#628).
+    /// Oracles can read this to skip an update instead of paying for a revert.
+    pub fn next_update_allowed_at(env: Env, project_id: u32) -> u64 {
+        let project: ProjectData = storage::read_project(&env, project_id)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+        next_update_allowed_at_for(&project)
+    }
+
 }
 
 fn update_impact_scores_batch_internal(env: Env, updates: Vec<(u32, u32, u32)>) {
@@ -1103,6 +1115,25 @@ fn update_impact_scores_batch_internal(env: Env, updates: Vec<(u32, u32, u32)>) 
     }
 }
 
+/// Earliest ledger timestamp at which the next score update is accepted for a
+/// project; 0 when the project has never been scored (nothing to rate-limit yet).
+fn next_update_allowed_at_for(project: &ProjectData) -> u64 {
+    if project.last_update_timestamp == 0 {
+        0
+    } else {
+        project.last_update_timestamp + MIN_UPDATE_INTERVAL - UPDATE_INTERVAL_TOLERANCE
+    }
+}
+
+/// Rate-limit oracle updates: reject if too soon since the last update, allowing
+/// `UPDATE_INTERVAL_TOLERANCE` of ledger-inclusion jitter (#628).
+fn require_update_window_elapsed(env: &Env, project: &ProjectData) {
+    let allowed_at = next_update_allowed_at_for(project);
+    if allowed_at > 0 && env.ledger().timestamp() < allowed_at {
+        panic_with_error!(env, RegistryError::UpdateTooFrequent);
+    }
+}
+
 fn update_impact_score_internal(env: Env, project_id: u32, credit_quality: u32, green_impact: u32) {
     if credit_quality > MAX_SCORE || green_impact > MAX_SCORE {
         panic_with_error!(&env, RegistryError::ScoresOutOfRange);
@@ -1115,11 +1146,7 @@ fn update_impact_score_internal(env: Env, project_id: u32, credit_quality: u32, 
     }
 
     // Rate-limit oracle updates: reject if too soon since the last update.
-    if project.last_update_timestamp > 0
-        && env.ledger().timestamp() < project.last_update_timestamp + MIN_UPDATE_INTERVAL
-    {
-        panic_with_error!(&env, RegistryError::UpdateTooFrequent);
-    }
+    require_update_window_elapsed(&env, &project);
 
     if project.credit_quality == credit_quality && project.green_impact == green_impact {
         return;
