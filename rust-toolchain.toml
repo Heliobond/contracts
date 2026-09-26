@@ -1,10 +1,18 @@
 [toolchain]
-# Pinned for reproducible WASM builds. Raised from 1.84.0 because Cargo below
-# ~1.85 cannot parse the manifest of some of this workspace's dependencies
-# (for example enum-ordinalize-derive 4.4.1 and indexmap 2.14.0), which made the
-# `docs` and `security` jobs fail with "failed to parse manifest" before any
-# check ran.
-channel = "1.90.0"
+# Pinned for reproducible WASM builds. Raised from 1.84.0 for two separate
+# reasons, and the higher of the two wins:
+#
+#   1. Cargo below ~1.85 cannot parse the manifest of some of this workspace's
+#      dependencies (for example enum-ordinalize-derive 4.4.1 and indexmap
+#      2.14.0), which made the `docs` and `security` jobs fail with "failed to
+#      parse manifest" before any check ran.
+#   2. The locked `soroban-sdk` 26.1.0 declares `rust-version = "1.91.0"`, so
+#      anything below that cannot build the workspace at all: cargo stops with
+#      "rustc 1.90.0 is not supported by the following packages" instead of
+#      compiling. The parse fix above only needs 1.85, which is why a pin of
+#      1.90.0 looked sufficient from the failing `security` job alone — it is
+#      not, it just moves the failure to the build jobs.
+channel = "1.91.0"
 # rustup installs these with the pinned toolchain, so `cargo fmt` and
 # `cargo clippy` exist in CI instead of failing with "not installed for the
 # toolchain".
