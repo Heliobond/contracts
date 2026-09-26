@@ -4356,3 +4356,55 @@ fn test_617_views_cost_estimate() {
     let f = s.env.cost_estimate().fee();
     std::println!("gas_budget investment_vault.max_withdraw instructions={} fee={}", r.instructions, f.total);
 }
+
+// ── Issue #613: queued redemptions are a NAV liability ───────────────────────
+
+#[test]
+fn test_queued_withdrawal_liability_and_claim_keep_price_fair() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let other = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &other, 100_0000000i128);
+    s.vault_client.deposit(&other, &100_0000000i128);
+
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    let creator = Address::generate(&s.env);
+    registry_client.set_whitelist(&creator, &true);
+    let project_id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://test"),
+        &0u64,
+        &test_metadata_hash(&s.env),
+    );
+    // ~49% utilization of 1100 USDC.
+    s.vault_client.fund_project(&project_id, &535_0000000i128);
+    s.env.ledger().with_mut(|li| li.sequence_number += 1);
+
+    let price_before = s.vault_client.convert_to_assets(&1_0000000i128);
+    let nav_before = s.vault_client.total_assets();
+    let owed = s.vault_client.convert_to_assets(&shares);
+
+    // ~1000 USDC owed but only ~565 liquid -> queued.
+    assert_eq!(s.vault_client.withdraw(&investor, &shares, &0), 0);
+
+    // NAV drops by exactly the liability; the remaining holder's price is unchanged.
+    assert_eq!(s.vault_client.total_assets(), nav_before - owed);
+    // (±1 stroop for integer rounding of the burned shares' value.)
+    assert!((s.vault_client.convert_to_assets(&1_0000000i128) - price_before).abs() <= 1);
+
+    // A new depositor buys in at the fair (unchanged) price.
+    let newcomer = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &newcomer, 1_000_0000000i128);
+    s.vault_client.deposit(&newcomer, &1_000_0000000i128);
+    let price_mid = s.vault_client.convert_to_assets(&1_0000000i128);
+    assert!((price_mid - price_before).abs() <= 1);
+
+    // Paying the queue moves liquid and liabilities together: price is unchanged.
+    let paid = s.vault_client.claim();
+    assert_eq!(paid, owed);
+    let price_after = s.vault_client.convert_to_assets(&1_0000000i128);
+    assert!((price_after - price_mid).abs() <= 1);
+}

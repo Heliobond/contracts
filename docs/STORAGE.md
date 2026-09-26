@@ -74,6 +74,7 @@ per-contract sections below for field-level detail, size estimates, and access p
 | `QueueHead` | `u64` | Persistent | `investment_vault` |
 | `QueueTail` | `u64` | Persistent | `investment_vault` |
 | `QueueEntry(u64)` | `QueuedClaim` | Persistent | `investment_vault` |
+| `QueuedLiabilities` | `i128` | Persistent | `investment_vault` |
 | `CarbonCreditBalance(Address)` | `i128` | Persistent | `investment_vault` |
 | `ComplianceEvent(u64)` | `ComplianceEventData` | Persistent | `investment_vault` |
 | `LastDeposit(Address)` | `u32` | Persistent | `investment_vault` |
@@ -227,6 +228,7 @@ All configuration and global aggregate caches are in instance storage.
 | `VaultKey::QueueHead` | `u64` | ~14 | 8 | Oldest unprocessed redemption queue entry |
 | `VaultKey::QueueTail` | `u64` | ~14 | 8 | Next free redemption queue index |
 | `VaultKey::QueueEntry(u64)` | `QueuedClaim` | ~15 | ~48 | A queued redemption by index |
+| `VaultKey::QueuedLiabilities` | `i128` | ~17 | 16 | Sum of unpaid `usdc_owed` in the redemption queue; subtracted from `total_assets` (#613) |
 | `VaultKey::CarbonCreditBalance(Address)` | `i128` | ~30 | 16 | Carbon credit balance per address |
 | `VaultKey::ComplianceEvent(u64)` | `ComplianceEventData` | ~22 | ~100+ | A compliance event record |
 | `VaultKey::InsuranceClaimed(u32)` | `bool` | ~23 | 1 | One-time insurance claim flag per project |
