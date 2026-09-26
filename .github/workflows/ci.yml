@@ -208,20 +208,8 @@ jobs:
           stellar contract inspect --wasm /tmp/base-target/wasm32v1-none/release/investment_vault.wasm > .abi/base/investment_vault.txt 2>&1
 
       - name: Check for breaking ABI changes
-        run: |
-          failed=false
-          for contract in project_registry investment_vault; do
-            if ! diff -u .abi/base/${contract}.txt .abi/pr/${contract}.txt > /dev/null 2>&1; then
-              echo "ABI changed for ${contract}:"
-              diff -u .abi/base/${contract}.txt .abi/pr/${contract}.txt || true
-              failed=true
-            fi
-          done
-          if [ "$failed" = "true" ]; then
-            echo "::error::Breaking ABI changes detected. Review the diff above and update integrations accordingly."
-            exit 1
-          fi
-          echo "No ABI changes detected."
+        # Removed/changed ABI lines fail; purely additive changes only emit a notice.
+        run: bash scripts/check_abi_diff.sh .abi/base .abi/pr project_registry investment_vault
 
       - name: Upload ABI artifacts
         if: always()
