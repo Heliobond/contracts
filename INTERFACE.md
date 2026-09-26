@@ -136,6 +136,9 @@ Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 | `fund_project(project_id: u32, amount: i128)` | owner, or disabled when multi-sig is enabled | none | Critical operation; checks score thresholds and insurance reserve. |
 | `fund_project_with_approvals(project_id: u32, amount: i128, approvals: Vec<Address>)` | multi-sig signers | none | Critical operation. |
 | `batch_fund_projects(fundings: Vec<(u32, i128)>, approvals: Vec<Address>)` | owner when multi-sig disabled, otherwise multi-sig signers | none | Common batch funding path. |
+| `repay_principal(from: Address, project_id: u32, amount: i128)` | `from` | none | Returns project principal to the vault and reduces its outstanding investment; any excess over the outstanding balance stays liquid. `ProjectAlreadySettled` after settlement. Emits `PrincipalRepaid` (#631). |
+| `settle_project(project_id: u32)` | owner | none | Requires registry `is_mature`, else `ProjectNotMature`. Writes remaining outstanding principal off as impairment, then blocks further funding/repayment (`ProjectAlreadySettled`). Emits `ProjectSettled`. The registry owner then sets `Completed` via `set_project_status` (#631). |
+| `get_project_position(project_id: u32)` | none | `ProjectPosition` | `{ funded, repaid, outstanding, impairment, mature, settled }`; `funded = outstanding + repaid + impairment` (#631). |
 | `receive_yield(from: Address, amount: i128)` | owner, or disabled when multi-sig is enabled | none | Transfers repayment USDC and updates yield accumulator. No multi-sig-approved variant currently exists. |
 | `claim_yield(from: Address)` | `from` | `i128` | Pays accrued yield when liquid. |
 | `get_project_investment(project_id: u32)` | none | `i128` | Cumulative USDC funded into `project_id`; 0 if never funded. |

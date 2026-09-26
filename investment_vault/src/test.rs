@@ -4173,3 +4173,103 @@ fn test_enable_secondary_trading_allowed_while_paused() {
     // Verify it succeeded
     assert_eq!(s.vault_client.is_trading_enabled(), true);
 }
+
+// ── Issue #631: maturity-based bond lifecycle ────────────────────────────────
+
+/// Create a whitelisted project maturing at `maturity`, returning (id, owner).
+fn create_maturing_project(s: &TestSetup, maturity: u64) -> (u32, Address) {
+    let creator = Address::generate(&s.env);
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
+    registry_client.set_whitelist(&creator, &true);
+    let id = registry_client.create_project(
+        &creator,
+        &String::from_str(&s.env, "ipfs://QmLifecycle"),
+        &maturity,
+        &test_metadata_hash(&s.env),
+    );
+    (id, creator)
+}
+
+#[test]
+fn test_full_bond_lifecycle_create_fund_yield_mature_repay_settle() {
+    let s = setup();
+    s.env.ledger().with_mut(|l| l.timestamp = 1_000);
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    // create → fund
+    let maturity = 1_000 + 365 * 24 * 3600;
+    let (id, owner) = create_maturing_project(&s, maturity);
+    s.vault_client.fund_project(&id, &400_0000000i128);
+    let pos = s.vault_client.get_project_position(&id);
+    assert_eq!(pos.funded, 400_0000000);
+    assert_eq!(pos.outstanding, 400_0000000);
+    assert!(!pos.mature);
+    assert!(!pos.settled);
+
+    // yield
+    mint_usdc(&s.env, &s.usdc_sac, &owner, 20_0000000i128);
+    s.vault_client.receive_yield(&owner, &20_0000000i128);
+
+    // settling before maturity is rejected
+    assert!(s.vault_client.try_settle_project(&id).is_err());
+
+    // mature
+    s.env.ledger().with_mut(|l| l.timestamp = maturity);
+    assert!(s.vault_client.get_project_position(&id).mature);
+
+    // repay 300 of the 400 principal
+    mint_usdc(&s.env, &s.usdc_sac, &owner, 300_0000000i128);
+    s.vault_client.repay_principal(&owner, &id, &300_0000000i128);
+    let pos = s.vault_client.get_project_position(&id);
+    assert_eq!(pos.repaid, 300_0000000);
+    assert_eq!(pos.outstanding, 100_0000000);
+    assert_eq!(s.vault_client.get_project_investment(&id), 100_0000000);
+
+    // settle: remaining 100 is written off as impairment
+    s.vault_client.settle_project(&id);
+    let pos = s.vault_client.get_project_position(&id);
+    assert_eq!(pos.funded, 400_0000000);
+    assert_eq!(pos.repaid, 300_0000000);
+    assert_eq!(pos.impairment, 100_0000000);
+    assert_eq!(pos.outstanding, 0);
+    assert!(pos.settled);
+    assert_eq!(s.vault_client.get_project_investment(&id), 0);
+
+    // books are closed: no more funding, repayment or re-settlement
+    assert!(s.vault_client.try_fund_project(&id, &1_0000000i128).is_err());
+    mint_usdc(&s.env, &s.usdc_sac, &owner, 1_0000000i128);
+    assert!(s
+        .vault_client
+        .try_repay_principal(&owner, &id, &1_0000000i128)
+        .is_err());
+    assert!(s.vault_client.try_settle_project(&id).is_err());
+}
+
+#[test]
+fn test_repay_principal_keeps_nav_and_caps_at_outstanding() {
+    let s = setup();
+    s.env.ledger().with_mut(|l| l.timestamp = 1_000);
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    let (id, owner) = create_maturing_project(&s, 1_000 + 3600);
+    s.vault_client.fund_project(&id, &200_0000000i128);
+
+    // Overpaying principal only reduces outstanding to zero; the excess stays liquid.
+    mint_usdc(&s.env, &s.usdc_sac, &owner, 250_0000000i128);
+    s.vault_client.repay_principal(&owner, &id, &250_0000000i128);
+    let pos = s.vault_client.get_project_position(&id);
+    assert_eq!(pos.outstanding, 0);
+    assert_eq!(pos.repaid, 200_0000000);
+    assert_eq!(pos.funded, 200_0000000);
+
+    // Fully repaid project settles with no impairment.
+    s.env.ledger().with_mut(|l| l.timestamp = 1_000 + 3600);
+    s.vault_client.settle_project(&id);
+    let pos = s.vault_client.get_project_position(&id);
+    assert_eq!(pos.impairment, 0);
+    assert!(pos.settled);
+}
