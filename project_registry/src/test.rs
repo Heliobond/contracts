@@ -2677,3 +2677,71 @@ fn test_score_history_write_extends_ttl() {
         crate::storage::TTL_EXTEND_TO_LEDGERS
     );
 }
+
+// ── Issue #628: MIN_UPDATE_INTERVAL tolerates ledger-close jitter ─────────────
+
+fn scored_project_at(env: &Env, client: &ProjectRegistryClient, t0: u64) -> u32 {
+    let creator = Address::generate(env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(env),
+    );
+    env.ledger().with_mut(|l| l.timestamp = t0);
+    client.update_impact_score(&id, &50u32, &50u32);
+    id
+}
+
+#[test]
+fn test_update_interval_allows_small_jitter() {
+    let (env, _admin, _whitelister, client) = setup();
+    let t0 = 1_000_000u64;
+    let id = scored_project_at(&env, &client, t0);
+
+    // An hourly oracle landing a few seconds "early" must still succeed.
+    env.ledger().with_mut(|l| l.timestamp = t0 + 3590);
+    client.update_impact_score(&id, &60u32, &60u32);
+    assert_eq!(client.get_project(&id).credit_quality, 60);
+}
+
+#[test]
+fn test_update_interval_rejects_half_hour_update() {
+    let (env, _admin, _whitelister, client) = setup();
+    let t0 = 1_000_000u64;
+    let id = scored_project_at(&env, &client, t0);
+
+    env.ledger().with_mut(|l| l.timestamp = t0 + 1800);
+    let result = client.try_update_impact_score(&id, &60u32, &60u32);
+    assert_eq!(
+        result,
+        Err(Ok(soroban_sdk::Error::from_contract_error(
+            RegistryError::UpdateTooFrequent as u32
+        )))
+    );
+}
+
+#[test]
+fn test_next_update_allowed_at() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let fresh = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+    assert_eq!(client.next_update_allowed_at(&fresh), 0);
+
+    let t0 = 1_000_000u64;
+    let id = scored_project_at(&env, &client, t0);
+    let allowed = client.next_update_allowed_at(&id);
+    assert_eq!(allowed, t0 + MIN_UPDATE_INTERVAL - UPDATE_INTERVAL_TOLERANCE);
+
+    env.ledger().with_mut(|l| l.timestamp = allowed - 1);
+    assert!(client.try_update_impact_score(&id, &70u32, &70u32).is_err());
+    env.ledger().with_mut(|l| l.timestamp = allowed);
+    client.update_impact_score(&id, &70u32, &70u32);
+}

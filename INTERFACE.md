@@ -62,9 +62,10 @@ Multi-sig errors:
 | `get_project(id: u32)` | none | `ProjectData` | `ProjectNotFound`. |
 | `total_projects()` | none | `u32` | Highest assigned project id. |
 | `verify_metadata_hash(project_id: u32, candidate_hash: BytesN<32>)` | none | `bool` | True if `candidate_hash` matches the hash recorded at creation (#44). |
-| `update_impact_score(project_id: u32, credit_quality: u32, green_impact: u32)` | owner, or disabled when multi-sig is enabled | none | Scores 0..100. Use approval variant after enabling multi-sig. |
+| `update_impact_score(project_id: u32, credit_quality: u32, green_impact: u32)` | owner, or disabled when multi-sig is enabled | none | Scores 0..100. Rate-limited to one update per ~hour, see `next_update_allowed_at`. Use approval variant after enabling multi-sig. |
 | `update_impact_score_approved(project_id: u32, credit_quality: u32, green_impact: u32, approvals: Vec<Address>)` | multi-sig signers | none | Critical operation. |
 | `update_credit_quality_score(project_id: u32, credit_quality: u32)` | owner, or disabled when multi-sig is enabled | none | Updates credit score only. No multi-sig-approved variant currently exists. |
+| `next_update_allowed_at(project_id: u32)` | none | `u64` | Earliest ledger timestamp for the next oracle score update: `last_update_timestamp + 3600 - 60` (`MIN_UPDATE_INTERVAL` minus a 60 s `UPDATE_INTERVAL_TOLERANCE` for ledger-close jitter), or `0` if never updated. Earlier updates fail with `UpdateTooFrequent` (#628). `ProjectNotFound`. |
 | `get_score_history(project_id: u32)` | none | `Vec<ScoreHistoryEntry>` | Chronological ring buffer of past score updates (#123). |
 | `certify_project(caller: Address, project_id: u32, status: CertificationStatus)` | `caller` | none | Caller must be whitelister or owner. |
 | `is_mature(project_id: u32)` | none | `bool` | False for open-ended projects. |

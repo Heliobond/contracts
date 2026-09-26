@@ -60,6 +60,10 @@ const MIN_VOTING_PERIOD: u64 = 86_400;
 /// Minimum oracle update interval in seconds (1 hour).
 const MIN_UPDATE_INTERVAL: u64 = 3600;
 
+/// Slack subtracted from `MIN_UPDATE_INTERVAL` so an hourly oracle is not
+/// rejected by a few seconds of ledger-close jitter (#628).
+const UPDATE_INTERVAL_TOLERANCE: u64 = 60;
+
 pub const CONTRACT_NAME: &str = "Project Registry";
 pub const CONTRACT_DESCRIPTION: &str = "Heliobond Project Registry";
 pub const CONTRACT_VERSION: &str = "1.0.0";
@@ -333,6 +337,18 @@ impl ProjectRegistry {
         require_current_state(&env);
         storage::read_project(&env, id)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound))
+    }
+
+    /// Earliest ledger timestamp at which `project_id` accepts another oracle
+    /// score update (`last_update_timestamp + MIN_UPDATE_INTERVAL - UPDATE_INTERVAL_TOLERANCE`),
+    /// or `0` if it has never been updated. Lets oracles skip a too-early
+    /// submission instead of paying for an `UpdateTooFrequent` failure (#628).
+    /// Panics with `ProjectNotFound` if the ID is unknown.
+    pub fn next_update_allowed_at(env: Env, project_id: u32) -> u64 {
+        require_current_state(&env);
+        let project = storage::read_project(&env, project_id)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+        next_update_allowed_at_for(&project)
     }
 
     /// Return true if `candidate_hash` matches the metadata hash recorded for
@@ -687,9 +703,7 @@ impl ProjectRegistry {
         }
 
         // Rate-limit oracle updates: reject if too soon since the last update.
-        if project.last_update_timestamp > 0
-            && env.ledger().timestamp() < project.last_update_timestamp + MIN_UPDATE_INTERVAL
-        {
+        if env.ledger().timestamp() < next_update_allowed_at_for(&project) {
             panic_with_error!(&env, RegistryError::UpdateTooFrequent);
         }
 
@@ -1103,6 +1117,17 @@ fn update_impact_scores_batch_internal(env: Env, updates: Vec<(u32, u32, u32)>) 
     }
 }
 
+/// Earliest ledger timestamp at which `project` may receive another oracle
+/// score update. `0` when it has never been updated (#628).
+fn next_update_allowed_at_for(project: &ProjectData) -> u64 {
+    if project.last_update_timestamp == 0 {
+        return 0;
+    }
+    project
+        .last_update_timestamp
+        .saturating_add(MIN_UPDATE_INTERVAL - UPDATE_INTERVAL_TOLERANCE)
+}
+
 fn update_impact_score_internal(env: Env, project_id: u32, credit_quality: u32, green_impact: u32) {
     if credit_quality > MAX_SCORE || green_impact > MAX_SCORE {
         panic_with_error!(&env, RegistryError::ScoresOutOfRange);
@@ -1115,9 +1140,7 @@ fn update_impact_score_internal(env: Env, project_id: u32, credit_quality: u32, 
     }
 
     // Rate-limit oracle updates: reject if too soon since the last update.
-    if project.last_update_timestamp > 0
-        && env.ledger().timestamp() < project.last_update_timestamp + MIN_UPDATE_INTERVAL
-    {
+    if env.ledger().timestamp() < next_update_allowed_at_for(&project) {
         panic_with_error!(&env, RegistryError::UpdateTooFrequent);
     }
 
