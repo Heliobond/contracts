@@ -260,8 +260,8 @@ The command builds both contracts, deploys `ProjectRegistry` first, captures its
   "network": "testnet",
   "project_registry": "C...",
   "investment_vault": "C...",
-  "project_registry_wasm_hash": "",
-  "investment_vault_wasm_hash": ""
+  "project_registry_wasm_hash": "<sha256 of project_registry.wasm>",
+  "investment_vault_wasm_hash": "<sha256 of investment_vault.wasm>"
 }
 ```
 

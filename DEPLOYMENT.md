@@ -70,6 +70,8 @@ The command deploys `ProjectRegistry` first, then deploys `InvestmentVault` with
 deploy/testnet.json
 ```
 
+It then runs `scripts/check_deploy_wasm_hash.py update` on that manifest (the same step `deploy.yml` runs), so `project_registry_wasm_hash` / `investment_vault_wasm_hash` are recorded too. Without them, a later `check_deploy_wasm_hash.py check` (e.g. `network-tests.yml`) would skip verification for both contracts instead of catching drift (#534).
+
 ## Manual Deployment
 
 For testnet:
