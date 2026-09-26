@@ -148,9 +148,14 @@ Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 | `set_multisig_admin(signers: Vec<Address>, threshold: u32)` | owner | none | Configures 1..10 unique signers. |
 | `get_multisig_admin()` | none | `(Vec<Address>, u32)` | Returns signers and threshold. InvestmentVault has no `clear_multisig_admin()`. |
 | `get_expected_returns()` | none | `i128` | O(n) over registry projects. |
-| `total_assets()` | none | `i128` | Liquid USDC + investments + expected returns. |
+| `total_assets()` | none | `i128` | Liquid USDC + investments + expected returns. Also refreshes the cached NAV (writes storage); the #617 views read NAV without writing. |
 | `convert_to_shares(usdc_amount: i128)` | none | `i128` | ERC-4626-style conversion. |
 | `convert_to_assets(shares_amount: i128)` | none | `i128` | ERC-4626-style conversion. |
+| `share_price()` | none | `i128` | USDC per whole share, scaled by 10^7; 10^7 (1:1) when no shares exist. Read-only (#617). |
+| `preview_deposit(usdc_amount: i128)` | none | `i128` | Exact shares `deposit` would mint now, after the 50 bps insurance premium and management / volume-tier fee. Panics with the same errors as `deposit`. Read-only (#617). |
+| `preview_withdraw(shares_amount: i128)` | none | `(i128, i128)` | `(usdc_now, usdc_queued)` that `withdraw` would produce now; panics with `WithdrawalExceedsLimit` under the graduated utilization limit. Ignores the per-account deposit lock (see `max_withdraw`). Read-only (#617). |
+| `max_withdraw(account: Address)` | none | `i128` | Max USDC `account` can withdraw now: balance value capped by the utilization tier limit and max-transaction cap; 0 while paused, deposit-locked, or below the minimum. Read-only (#617). |
+| `max_deposit(account: Address)` | none | `i128` | Max USDC depositable now: `MAX_DEPOSIT` capped by the max-transaction cap and remaining HBS supply headroom; 0 while paused. Funding rounds don't affect deposits. Read-only (#617). |
 | `get_utilization_bps()` | none | `u32` | Investments over liquid plus investments. |
 | `claimable_yield(account: Address)` | none | `i128` | View-only accrued yield. |
 | `get_portfolio(account: Address)` | none | `PortfolioInfo` | Investor analytics snapshot. |
