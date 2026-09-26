@@ -2604,6 +2604,12 @@ fn lock_deposit(env: &Env, address: &Address) {
         &VaultKey::LastDeposit(address.clone()),
         &env.ledger().timestamp(),
     );
+    // Also record the ledger sequence for the configurable withdrawal
+    // window (#530).
+    env.storage().persistent().set(
+        &VaultKey::LastDepositLedger(address.clone()),
+        &env.ledger().sequence(),
+    );
 }
 
 /// Reject a withdrawal if the caller's deposit lock has not yet expired (#33).
@@ -2615,6 +2621,26 @@ fn check_deposit_lock(env: &Env, address: &Address) {
     {
         if env.ledger().timestamp() < deposited_at + MIN_LOCK_PERIOD {
             panic_with_error!(env, VaultError::DepositLocked);
+        }
+    }
+
+    // Configurable ledger-based withdrawal window (#36, #530). Enforced in
+    // addition to the time-based MIN_LOCK_PERIOD, so set_withdrawal_window
+    // actually changes how soon an investor can exit after depositing.
+    let window: u32 = env
+        .storage()
+        .instance()
+        .get(&VaultKey::WithdrawalWindowLedgers)
+        .unwrap_or(1);
+    if window > 0 {
+        if let Some(deposit_ledger) = env
+            .storage()
+            .persistent()
+            .get::<_, u32>(&VaultKey::LastDepositLedger(address.clone()))
+        {
+            if env.ledger().sequence() < deposit_ledger.saturating_add(window) {
+                panic_with_error!(env, VaultError::DepositLocked);
+            }
         }
     }
 }
