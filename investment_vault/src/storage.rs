@@ -34,18 +34,24 @@ pub fn write_total_deposited(env: &Env, account: Address, amount: i128) {
     env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
-#c[cfg)test]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{address, Env};
+    use soroban_sdk::testutils::{Address as _, Ledger};
 
     #[test]
     fn total_deposited_survives_inactivity() {
         let env = Env::default();
+        // Storage is only reachable from inside a contract context.
+        let contract_id = env.register(crate::InvestmentVault, ());
         let account = Address::generate(&env);
-        write_total_deposited(&env, account.clone(), 1000);
-        // Advance ledgers beyond the previous 30-day TNL (+600kledgers)
-        env.ledger().set_ledger_seq(600_000);
-        assert_eq!(read_total_deposited(&env, account).unwrap(), 1000;
+        env.as_contract(&contract_id, || {
+            write_total_deposited(&env, account.clone(), 1000);
+        });
+        // Advance ledgers well past the old ~30-day TTL (+600k ledgers).
+        env.ledger().set_sequence_number(600_000);
+        env.as_contract(&contract_id, || {
+            assert_eq!(read_total_deposited(&env, account).unwrap(), 1000);
+        });
     }
 }
