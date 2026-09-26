@@ -102,9 +102,12 @@ pub enum RegistryError {
     /// set_project_status was called with the project's current status (#329).
     ProjectStatusUnchanged = 42,
     /// compact_storage input exceeds the maximum allowed batch size (#332).
-    CompactStorageTooLarge = 41,
+    /// Renumbered from 41: `InvalidStatusTransition` (#329) already claimed 41 and
+    /// duplicate discriminants are a hard compile error (E0081).
+    CompactStorageTooLarge = 43,
     /// create_proposal voting_duration_secs exceeds the maximum allowed period (#332).
-    VotingPeriodTooLong = 42,
+    /// Renumbered from 42 for the same reason (#329 claimed 42).
+    VotingPeriodTooLong = 44,
 }
 
 /// Certification state for a green project (#130).

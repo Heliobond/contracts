@@ -2677,3 +2677,89 @@ fn test_score_history_write_extends_ttl() {
         crate::storage::TTL_EXTEND_TO_LEDGERS
     );
 }
+
+// ── #628: hourly-update jitter tolerance ────────────────────────────────────
+
+#[test]
+fn test_next_update_allowed_at_is_zero_before_first_update() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    assert_eq!(client.next_update_allowed_at(&id), 0);
+}
+
+#[test]
+fn test_jittered_hourly_update_is_accepted() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    let first_update = 10_000u64;
+    env.ledger().set_timestamp(first_update);
+    client.update_impact_score(&id, &80u32, &90u32);
+
+    // 1 hour minus the 60 s tolerance: an hourly oracle whose inclusion landed
+    // 10 s early must still be accepted (#628).
+    assert_eq!(client.next_update_allowed_at(&id), first_update + 3600 - 60);
+    env.ledger().set_timestamp(first_update + 3590);
+    client.update_impact_score(&id, &81u32, &91u32);
+
+    let project = client.get_project(&id);
+    assert_eq!(project.credit_quality, 81);
+    assert_eq!(project.green_impact, 91);
+    assert_eq!(project.last_update_timestamp, first_update + 3590);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #33)")]
+fn test_update_inside_the_interval_is_rejected() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    env.ledger().set_timestamp(10_000);
+    client.update_impact_score(&id, &80u32, &90u32);
+
+    // Half an hour later is well inside the window: UpdateTooFrequent (#33).
+    env.ledger().set_timestamp(10_000 + 1800);
+    client.update_impact_score(&id, &81u32, &91u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #33)")]
+fn test_credit_quality_update_inside_the_interval_is_rejected() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    env.ledger().set_timestamp(10_000);
+    client.update_credit_quality_score(&id, &70u32);
+
+    env.ledger().set_timestamp(10_000 + 1800);
+    client.update_credit_quality_score(&id, &71u32);
+}
