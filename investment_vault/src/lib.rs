@@ -719,7 +719,21 @@ impl InvestmentVault {
             env.storage()
                 .persistent()
                 .set(&VaultKey::QueueTail, &(tail + 1));
-            events::withdraw_queued(&env, &from, shares_amount, usdc_returned);
+
+            // Record the liability so NAV (and the share price of remaining
+            // holders) is unchanged by this burn (#613).
+            let liabilities = queued_liabilities(&env) + usdc_returned;
+            set_queued_liabilities(&env, liabilities);
+            let cached_ta: i128 = env
+                .storage()
+                .instance()
+                .get(&VaultKey::CachedTotalAssets)
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&VaultKey::CachedTotalAssets, &(cached_ta - usdc_returned));
+
+            events::withdraw_queued(&env, &from, shares_amount, usdc_returned, liabilities);
             return 0;
         }
 
@@ -793,30 +807,24 @@ impl InvestmentVault {
             liquid -= entry.usdc_owed;
             total_paid += entry.usdc_owed;
             idx += 1;
+            let liabilities = queued_liabilities(&env) - entry.usdc_owed;
+            set_queued_liabilities(&env, liabilities);
 
             soroban_sdk::token::TokenClient::new(&env, &usdc_sac).transfer(
                 &env.current_contract_address(),
                 &entry.from,
                 &entry.usdc_owed,
             );
-            events::withdraw_claimed(&env, &entry.from, entry.usdc_owed, idx - 1);
+            events::withdraw_claimed(&env, &entry.from, entry.usdc_owed, idx - 1, liabilities);
         }
 
         if idx != head {
             env.storage().persistent().set(&VaultKey::QueueHead, &idx);
         }
 
-        // Update cached total assets: liquid decreased by total_paid (#81, #85)
-        if total_paid > 0 {
-            let cached_ta: i128 = env
-                .storage()
-                .instance()
-                .get(&VaultKey::CachedTotalAssets)
-                .unwrap_or(0);
-            env.storage()
-                .instance()
-                .set(&VaultKey::CachedTotalAssets, &(cached_ta - total_paid));
-        }
+        // CachedTotalAssets is unchanged: liquid USDC and QueuedLiabilities
+        // both fell by total_paid, so NAV is the same (#613). The liability was
+        // already deducted from NAV when each entry was enqueued.
 
         total_paid
     }
@@ -2416,7 +2424,22 @@ fn read_total_assets(env: &Env) -> i128 {
         .get(&VaultKey::TotalInvestments)
         .unwrap_or(0);
     let expected = InvestmentVault::get_expected_returns(env.clone());
-    liquid_usdc(env) + investments + expected
+    // Queued redemptions are already owed to burned shares; they are a
+    // liability of the vault, not an asset of the remaining holders (#613).
+    liquid_usdc(env) + investments + expected - queued_liabilities(env)
+}
+
+fn queued_liabilities(env: &Env) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&VaultKey::QueuedLiabilities)
+        .unwrap_or(0)
+}
+
+fn set_queued_liabilities(env: &Env, value: i128) {
+    env.storage()
+        .persistent()
+        .set(&VaultKey::QueuedLiabilities, &value);
 }
 
 fn liquid_usdc(env: &Env) -> i128 {

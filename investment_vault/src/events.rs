@@ -68,6 +68,8 @@ pub struct WithdrawQueued {
     pub from: Address,
     pub shares_burned: i128,
     pub usdc_owed: i128,
+    /// Total unpaid queue liabilities after this entry was added (#613).
+    pub queued_liabilities: i128,
 }
 
 /// Emitted when a queued redemption claim is settled by claim() (#3).
@@ -77,6 +79,8 @@ pub struct WithdrawClaimed {
     pub to: Address,
     pub usdc_paid: i128,
     pub claim_index: u64,
+    /// Total unpaid queue liabilities after this entry was paid (#613).
+    pub queued_liabilities: i128,
 }
 
 pub fn deposit(env: &Env, from: &Address, usdc_amount: i128, shares_minted: i128) {
@@ -193,20 +197,34 @@ pub fn insurance_claimed(env: &Env, project_id: u32, recipient: &Address, amount
     .publish(env);
 }
 
-pub fn withdraw_queued(env: &Env, from: &Address, shares_burned: i128, usdc_owed: i128) {
+pub fn withdraw_queued(
+    env: &Env,
+    from: &Address,
+    shares_burned: i128,
+    usdc_owed: i128,
+    queued_liabilities: i128,
+) {
     WithdrawQueued {
         from: from.clone(),
         shares_burned,
         usdc_owed,
+        queued_liabilities,
     }
     .publish(env);
 }
 
-pub fn withdraw_claimed(env: &Env, to: &Address, usdc_paid: i128, claim_index: u64) {
+pub fn withdraw_claimed(
+    env: &Env,
+    to: &Address,
+    usdc_paid: i128,
+    claim_index: u64,
+    queued_liabilities: i128,
+) {
     WithdrawClaimed {
         to: to.clone(),
         usdc_paid,
         claim_index,
+        queued_liabilities,
     }
     .publish(env);
 }

@@ -230,6 +230,10 @@ pub enum VaultKey {
     /// Set once `settle_project` closes a project's books; blocks further
     /// funding and repayment for that ID (#631).
     ProjectSettled(u32),
+    /// Sum of `usdc_owed` across unpaid redemption queue entries (#613).
+    /// Deducted from `total_assets` so burned-but-unpaid shares don't inflate
+    /// the share price for remaining holders.
+    QueuedLiabilities,
 }
 
 /// Container for wormhole bridge data keys.
