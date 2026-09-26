@@ -118,6 +118,47 @@ pub fn emergency_admin_changed(env: &Env, new_emergency_admin: Option<Address>) 
     .publish(env);
 }
 
+/// Emitted when a project returns principal to the vault (#631).
+#[contractevent]
+pub struct PrincipalRepaid {
+    #[topic]
+    pub project_id: u32,
+    pub from: Address,
+    pub amount: i128,
+    pub outstanding: i128,
+}
+
+pub fn principal_repaid(env: &Env, project_id: u32, from: &Address, amount: i128, outstanding: i128) {
+    PrincipalRepaid {
+        project_id,
+        from: from.clone(),
+        amount,
+        outstanding,
+    }
+    .publish(env);
+}
+
+/// Emitted when a matured project's books are closed (#631). `impairment` is
+/// the principal that was still outstanding and has been written off.
+#[contractevent]
+pub struct ProjectSettled {
+    #[topic]
+    pub project_id: u32,
+    pub funded: i128,
+    pub repaid: i128,
+    pub impairment: i128,
+}
+
+pub fn project_settled(env: &Env, project_id: u32, funded: i128, repaid: i128, impairment: i128) {
+    ProjectSettled {
+        project_id,
+        funded,
+        repaid,
+        impairment,
+    }
+    .publish(env);
+}
+
 pub fn project_funded(env: &Env, project_id: u32, amount: i128, recipient: &Address) {
     ProjectFunded {
         project_id,

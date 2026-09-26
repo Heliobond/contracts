@@ -188,6 +188,18 @@ Each event lists the public [`INTERFACE.md`](INTERFACE.md) function(s) that emit
 - **Description**: Emitted when the vault transfers USDC from the vault to a project's owner.
 - **Emitted by**: [`fund_project`](INTERFACE.md#investmentvault), [`fund_project_with_approvals`](INTERFACE.md#investmentvault), [`batch_fund_projects`](INTERFACE.md#investmentvault)
 
+### `principal_repaid`
+- **Topics**: `["principal_repaid", project_id: u32]`
+- **Data**: `(from: Address, amount: i128, outstanding: i128)`
+- **Description**: Emitted when a project returns principal to the vault. `outstanding` is the project's remaining deployed principal after this repayment (#631).
+- **Emitted by**: [`repay_principal`](INTERFACE.md#investmentvault)
+
+### `project_settled`
+- **Topics**: `["project_settled", project_id: u32]`
+- **Data**: `(funded: i128, repaid: i128, impairment: i128)`
+- **Description**: Emitted when a matured project's books are closed. `impairment` is the principal that was never repaid and has been written off from `total_assets`; the project can no longer be funded or repaid. Frontends can use this (or `get_project_position`) to show the project as matured/settled (#631).
+- **Emitted by**: [`settle_project`](INTERFACE.md#investmentvault)
+
 ### `yield_received`
 - **Topics**: `["vault", "yield_received"]`
 - **Data**: `(from: Address, amount: i128)`

@@ -131,6 +131,12 @@ pub enum VaultError {
     /// pre-write value, and the second .set() overwrote the first, doubling
     /// (or worse) the caller's balance for free (#564).
     SelfTransferNotAllowed = 59,
+    /// fund_project / repay_principal / settle_project: the project has
+    /// already been settled at maturity and its books are closed (#631).
+    ProjectAlreadySettled = 60,
+    /// settle_project: the registry does not report the project as mature
+    /// yet (or it has no maturity date) (#631).
+    ProjectNotMature = 61,
 }
 
 #[contracttype]
@@ -216,6 +222,14 @@ pub enum VaultKey {
     /// Ledger timestamp (seconds) at which a project was first funded (#34).
     /// Used for time-weighted expected-returns calculation.
     InvestmentTimestamp(u32),
+    /// Principal returned by a project and applied against its outstanding
+    /// investment via `repay_principal` (#631).
+    ProjectRepaid(u32),
+    /// Outstanding principal written off as impairment by `settle_project` (#631).
+    ProjectImpairment(u32),
+    /// Set once `settle_project` closes a project's books; blocks further
+    /// funding and repayment for that ID (#631).
+    ProjectSettled(u32),
 }
 
 /// Container for wormhole bridge data keys.
@@ -297,6 +311,26 @@ pub struct QueuedClaim {
     pub from: Address,
     /// USDC amount owed, fixed at the share price when the withdrawal was requested.
     pub usdc_owed: i128,
+}
+
+/// Vault-side lifecycle position of a single project (#631).
+///
+/// `funded = outstanding + repaid + impairment` always holds.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProjectPosition {
+    /// Total principal ever deployed to the project.
+    pub funded: i128,
+    /// Principal returned via `repay_principal`.
+    pub repaid: i128,
+    /// Principal still deployed (counted in `total_assets`).
+    pub outstanding: i128,
+    /// Principal written off at settlement because it was never repaid.
+    pub impairment: i128,
+    /// Registry reports the project's maturity date has passed.
+    pub mature: bool,
+    /// `settle_project` has closed the project's books.
+    pub settled: bool,
 }
 
 /// On-chain portfolio snapshot for a single investor (#132).
