@@ -4273,3 +4273,86 @@ fn test_repay_principal_keeps_nav_and_caps_at_outstanding() {
     assert_eq!(pos.impairment, 0);
     assert!(pos.settled);
 }
+
+// ── #617: ERC-4626-style read views ───────────────────────────────────────────
+
+#[test]
+fn test_617_preview_deposit_matches_deposit() {
+    let s = setup();
+    let fee_recipient = Address::generate(&s.env);
+    s.vault_client.set_management_fee(&100u32, &fee_recipient);
+    let first = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &first, 1_000_0000000i128);
+    s.vault_client.deposit(&first, &1_000_0000000i128);
+
+    let investor = Address::generate(&s.env);
+    let amount = 500_0000000i128;
+    mint_usdc(&s.env, &s.usdc_sac, &investor, amount);
+    let preview = s.vault_client.preview_deposit(&amount);
+    let minted = s.vault_client.deposit(&investor, &amount);
+    assert_eq!(preview, minted);
+}
+
+#[test]
+fn test_617_share_price_is_one_to_one_when_empty_and_tracks_nav() {
+    let s = setup();
+    assert_eq!(s.vault_client.share_price(), 10_000_000);
+
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let expected = s.vault_client.total_assets() * 10_000_000 / s.vault_client.total_supply();
+    assert_eq!(s.vault_client.share_price(), expected);
+}
+
+#[test]
+fn test_617_preview_withdraw_and_max_withdraw_match_withdraw() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    // Deposit lock active: nothing withdrawable yet.
+    assert_eq!(s.vault_client.max_withdraw(&investor), 0);
+    s.env.ledger().with_mut(|li| li.timestamp += MIN_LOCK_PERIOD + 1);
+
+    let max = s.vault_client.max_withdraw(&investor);
+    let (now, queued) = s.vault_client.preview_withdraw(&shares);
+    assert_eq!(queued, 0);
+    assert_eq!(max, now);
+    let paid = s.vault_client.withdraw(&investor, &shares, &0);
+    assert_eq!(paid, now);
+}
+
+#[test]
+fn test_617_max_deposit_is_zero_when_paused() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    assert!(s.vault_client.max_deposit(&investor) >= 100_0000000i128);
+    s.vault_client.pause();
+    assert_eq!(s.vault_client.max_deposit(&investor), 0);
+    assert_eq!(s.vault_client.max_withdraw(&investor), 0);
+}
+
+#[test]
+fn test_617_views_cost_estimate() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    s.vault_client.share_price();
+    let r = s.env.cost_estimate().resources();
+    let f = s.env.cost_estimate().fee();
+    std::println!("gas_budget investment_vault.share_price instructions={} fee={}", r.instructions, f.total);
+
+    s.vault_client.preview_deposit(&500_0000000i128);
+    let r = s.env.cost_estimate().resources();
+    let f = s.env.cost_estimate().fee();
+    std::println!("gas_budget investment_vault.preview_deposit instructions={} fee={}", r.instructions, f.total);
+
+    s.vault_client.max_withdraw(&investor);
+    let r = s.env.cost_estimate().resources();
+    let f = s.env.cost_estimate().fee();
+    std::println!("gas_budget investment_vault.max_withdraw instructions={} fee={}", r.instructions, f.total);
+}

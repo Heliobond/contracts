@@ -13,6 +13,21 @@
     "instructions": 2000000,
     "fee": 4000000
   },
+  "investment_vault.share_price": {
+    "note": "Read-only ERC-4626-style view (#617): same NAV reads as deposit, no storage writes.",
+    "instructions": 1500000,
+    "fee": 3000000
+  },
+  "investment_vault.preview_deposit": {
+    "note": "Read-only ERC-4626-style view (#617): same NAV reads as deposit, no storage writes.",
+    "instructions": 1500000,
+    "fee": 3000000
+  },
+  "investment_vault.max_withdraw": {
+    "note": "Read-only ERC-4626-style view (#617): same NAV reads as deposit, no storage writes.",
+    "instructions": 1500000,
+    "fee": 3000000
+  },
   "storage_key_sizes": {
     "note": "Key bytes are XDR Symbol overhead + variant name length (#82). Shorter names reduce per-entry rent.",
     "project_registry.Project(u32)": { "key_bytes": 12, "value_bytes_typical": 132, "value_bytes_max": 580 },
