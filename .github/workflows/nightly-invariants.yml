@@ -1,0 +1,68 @@
+name: Nightly Vault Invariants
+
+# The invariant suite in `investment_vault/tests/invariants.rs` runs in the
+# regular CI with a bounded case count (its own default), because a fuzz suite
+# that takes minutes on every push stops being useful. This job runs the same
+# suite with far more cases, once a night, which is where a rare sequence is
+# actually going to show up.
+#
+# It is deliberately NOT part of `ci.yml`: nothing here should block a PR, and a
+# nightly job that fails on a genuine counterexample should be information, not a
+# red X on someone's unrelated change.
+
+on:
+  schedule:
+    # 03:17 UTC — off the hour so it does not queue behind the jobs that all
+    # start on the hour.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: "Number of proptest cases to run"
+        required: false
+        default: "2000"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  invariants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-nightly-invariants-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-nightly-invariants-
+
+      # The suite imports the compiled registry wasm (`contractimport!`), so the
+      # contracts have to be built before the tests can compile at all.
+      - name: Build contracts (wasm)
+        run: cargo build --target wasm32v1-none --release --workspace
+
+      - name: Vault invariants (long run)
+        env:
+          PROPTEST_CASES: ${{ github.event.inputs.cases || '2000' }}
+        run: cargo test --test invariants -- --nocapture
+
+      # The queue-liability counterexample is `#[ignore]`d so it cannot break
+      # anyone's build before the contract is fixed. Run it here anyway: its job
+      # is to say, loudly, when the fix lands and the test should stop being
+      # ignored.
+      - name: Queue-liability counterexample (expected to fail until fixed)
+        continue-on-error: true
+        run: cargo test --test invariants -- --ignored
