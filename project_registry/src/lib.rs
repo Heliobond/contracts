@@ -1,12 +1,21 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, panic_with_error, token::Client as TokenClient, Address, BytesN, Env,
-    String, Vec,
+    contract, contractclient, contractimpl, panic_with_error, token::Client as TokenClient,
+    Address, BytesN, Env, String, Vec,
 };
 use stellar_access::ownable::{
     get_owner, set_owner, transfer_ownership as ownable_transfer_ownership, Ownable,
 };
 use stellar_macros::only_owner;
+
+/// The slice of the investment vault's interface `delete_project` needs (#526).
+/// Declared here rather than importing the vault crate, which would create a
+/// dependency cycle (the vault already imports this registry's WASM).
+#[allow(dead_code)]
+#[contractclient(name = "VaultInvestmentClient")]
+trait VaultInvestmentQuery {
+    fn get_project_investment(env: Env, project_id: u32) -> i128;
+}
 
 /// Maximum URI length in bytes. Prevents excessively large ledger entries (#119).
 const MAX_URI_LEN: u32 = 512;
@@ -274,8 +283,13 @@ impl ProjectRegistry {
         events::project_status_changed(&env, project_id, old_status, status);
     }
 
-    /// Delete a project. Admin-only. Can only delete if no investments exist (#26).
-    /// This is a placeholder - actual implementation requires cross-contract call to vault.
+    /// Delete a project. Owner-only. Rejects deletion while the project has
+    /// active investments in the vault (#26, #526).
+    ///
+    /// Queries `vault.get_project_investment(project_id)` on the vault set via
+    /// `set_vault`, panicking with `ProjectHasInvestments` if it is non-zero.
+    /// Fails closed with `VaultNotConfigured` when no vault is set, so a
+    /// missing configuration can never silently skip the check.
     #[only_owner]
     pub fn delete_project(env: Env, project_id: u32) {
         require_current_state(&env);
@@ -283,8 +297,15 @@ impl ProjectRegistry {
         let _project: ProjectData = storage::read_project(&env, project_id)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
 
-        // NOTE: In production, should verify no investments via vault.get_project_investment(project_id)
-        // For now, we allow deletion assuming caller has verified no active investments
+        let vault: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Vault)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::VaultNotConfigured));
+        let invested = VaultInvestmentClient::new(&env, &vault).get_project_investment(&project_id);
+        if invested != 0 {
+            panic_with_error!(&env, RegistryError::ProjectHasInvestments);
+        }
 
         env.storage()
             .persistent()
@@ -1002,6 +1023,18 @@ impl ProjectRegistry {
             None => env.storage().instance().remove(&DataKey::EmergencyAdmin),
         }
         events::emergency_admin_changed(&env, emergency_admin);
+    }
+
+    /// Set the investment vault that `delete_project` queries for active
+    /// investments (#526). Owner-only.
+    #[only_owner]
+    pub fn set_vault(env: Env, vault: Address) {
+        env.storage().instance().set(&DataKey::Vault, &vault);
+    }
+
+    /// Return the configured investment vault address, if any (#526).
+    pub fn get_vault(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Vault)
     }
 
     /// Return the configured emergency-admin address, if any.

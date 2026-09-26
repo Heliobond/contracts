@@ -105,6 +105,9 @@ pub enum RegistryError {
     CompactStorageTooLarge = 43,
     /// create_proposal voting_duration_secs exceeds the maximum allowed period (#332).
     VotingPeriodTooLong = 44,
+    /// delete_project was called before the investment vault address was set
+    /// via `set_vault`, so active investments cannot be ruled out (#526).
+    VaultNotConfigured = 45,
 }
 
 /// Certification state for a green project (#130).
@@ -236,6 +239,8 @@ pub enum DataKey {
     /// Optional emergency-admin address that may pause/unpause without
     /// holding full owner privileges (#43). Unset means no emergency admin.
     EmergencyAdmin,
+    /// Investment vault queried by `delete_project` for active investments (#526).
+    Vault,
 }
 
 /// Consolidated operational status for monitoring/health-check integrations (#77).

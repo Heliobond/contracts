@@ -2745,3 +2745,167 @@ fn test_next_update_allowed_at() {
     env.ledger().with_mut(|l| l.timestamp = allowed);
     client.update_impact_score(&id, &70u32, &70u32);
 }
+
+// ── delete_project investment guard (#526) ───────────────────────────────────
+
+/// Minimal stand-in for the investment vault: only `get_project_investment`,
+/// with a setter so each test controls the reported investment exactly.
+#[soroban_sdk::contract]
+struct MockVault;
+
+#[soroban_sdk::contractimpl]
+impl MockVault {
+    pub fn set_investment(env: Env, project_id: u32, amount: i128) {
+        env.storage().instance().set(&project_id, &amount);
+    }
+
+    pub fn get_project_investment(env: Env, project_id: u32) -> i128 {
+        env.storage().instance().get(&project_id).unwrap_or(0)
+    }
+}
+
+fn contract_error(err: RegistryError) -> soroban_sdk::Error {
+    soroban_sdk::Error::from_contract_error(err as u32)
+}
+
+fn create_test_project(env: &Env, client: &ProjectRegistryClient) -> u32 {
+    let creator = Address::generate(env);
+    client.set_whitelist(&creator, &true);
+    client.create_project(
+        &creator,
+        &String::from_str(env, "ipfs://QmDelete"),
+        &0u64,
+        &test_metadata_hash(env),
+    )
+}
+
+fn setup_with_mock_vault() -> (
+    Env,
+    ProjectRegistryClient<'static>,
+    MockVaultClient<'static>,
+    u32,
+) {
+    let (env, _admin, _whitelister, client) = setup();
+    let vault_id = env.register(MockVault, ());
+    let vault = MockVaultClient::new(&env, &vault_id);
+    client.set_vault(&vault_id);
+    let project_id = create_test_project(&env, &client);
+    (env, client, vault, project_id)
+}
+
+#[test]
+fn test_get_vault_is_none_until_set() {
+    let (env, _admin, _whitelister, client) = setup();
+    assert_eq!(client.get_vault(), None);
+    let vault = Address::generate(&env);
+    client.set_vault(&vault);
+    assert_eq!(client.get_vault(), Some(vault));
+}
+
+#[test]
+fn test_set_vault_is_owner_only() {
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let whitelister = Address::generate(&env);
+    let registry_id = env.register(ProjectRegistry, (&admin, &whitelister));
+    let client = ProjectRegistryClient::new(&env, &registry_id);
+    // No auths mocked: the owner has not authorized this call.
+    assert!(client.try_set_vault(&Address::generate(&env)).is_err());
+    assert_eq!(client.get_vault(), None);
+}
+
+#[test]
+fn test_delete_project_fails_closed_without_vault() {
+    let (env, _admin, _whitelister, client) = setup();
+    let project_id = create_test_project(&env, &client);
+
+    assert_eq!(
+        client.try_delete_project(&project_id),
+        Err(Ok(contract_error(RegistryError::VaultNotConfigured)))
+    );
+    // Project is untouched.
+    assert_eq!(
+        client.get_project(&project_id).uri,
+        String::from_str(&env, "ipfs://QmDelete")
+    );
+}
+
+#[test]
+fn test_delete_project_rejects_active_investments() {
+    let (env, client, vault, project_id) = setup_with_mock_vault();
+    vault.set_investment(&project_id, &5_000_0000000i128);
+
+    assert_eq!(
+        client.try_delete_project(&project_id),
+        Err(Ok(contract_error(RegistryError::ProjectHasInvestments)))
+    );
+    assert_eq!(
+        client.get_project(&project_id).uri,
+        String::from_str(&env, "ipfs://QmDelete")
+    );
+}
+
+#[test]
+fn test_delete_project_rejects_any_nonzero_investment() {
+    let (_env, client, vault, project_id) = setup_with_mock_vault();
+    vault.set_investment(&project_id, &1i128);
+    assert_eq!(
+        client.try_delete_project(&project_id),
+        Err(Ok(contract_error(RegistryError::ProjectHasInvestments)))
+    );
+}
+
+#[test]
+fn test_delete_project_succeeds_with_no_investment() {
+    let (_env, client, _vault, project_id) = setup_with_mock_vault();
+    client.delete_project(&project_id);
+    assert_eq!(
+        client.try_get_project(&project_id),
+        Err(Ok(contract_error(RegistryError::ProjectNotFound)))
+    );
+}
+
+#[test]
+fn test_delete_project_allowed_once_investment_is_repaid() {
+    let (_env, client, vault, project_id) = setup_with_mock_vault();
+    vault.set_investment(&project_id, &250i128);
+    assert!(client.try_delete_project(&project_id).is_err());
+
+    vault.set_investment(&project_id, &0i128);
+    client.delete_project(&project_id);
+    assert!(client.try_get_project(&project_id).is_err());
+}
+
+#[test]
+fn test_delete_project_checks_only_the_target_project() {
+    let (env, client, vault, project_id) = setup_with_mock_vault();
+    let other = create_test_project(&env, &client);
+    vault.set_investment(&other, &1_000i128);
+
+    client.delete_project(&project_id);
+    assert!(client.try_get_project(&project_id).is_err());
+    assert_eq!(
+        client.try_delete_project(&other),
+        Err(Ok(contract_error(RegistryError::ProjectHasInvestments)))
+    );
+}
+
+/// The guard's client interface must match the real vault's ABI: wire the real
+/// InvestmentVault and delete an uninvested project through it.
+#[test]
+fn test_delete_project_against_real_investment_vault() {
+    let (env, admin, _whitelister, client) = setup();
+    let usdc_admin = Address::generate(&env);
+    let usdc_sac = env.register_stellar_asset_contract_v2(usdc_admin).address();
+    let vault_id = env.register(InvestmentVault, (&admin, &usdc_sac, &client.address));
+    client.set_vault(&vault_id);
+
+    let project_id = create_test_project(&env, &client);
+    assert_eq!(
+        InvestmentVaultClient::new(&env, &vault_id).get_project_investment(&project_id),
+        0
+    );
+
+    client.delete_project(&project_id);
+    assert!(client.try_get_project(&project_id).is_err());
+}

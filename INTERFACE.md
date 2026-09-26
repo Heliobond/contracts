@@ -91,7 +91,9 @@ Multi-sig errors:
 | `get_whitelister()` | none | `Address` | Current whitelister. |
 | `archive_project(project_id: u32)` | owner | none | Marks a project archived; excluded from `get_all_projects` by default (#26). |
 | `set_project_status(project_id: u32, status: ProjectStatus)` | owner | none | Transitions status between `Pending`/`Active`/`Funded`/`Completed`; cannot set or clear `Archived` (#329). |
-| `delete_project(project_id: u32)` | owner | none | Rejects deletion when the project has active investments. |
+| `delete_project(project_id: u32)` | owner | none | Rejects deletion when the project has active investments: queries `get_project_investment(project_id)` on the vault set via `set_vault` and panics with `ProjectHasInvestments` if non-zero. Fails closed with `VaultNotConfigured` if no vault is set (#526). |
+| `set_vault(vault: Address)` | owner | none | Sets the investment vault `delete_project` queries for active investments (#526). |
+| `get_vault()` | anyone | `Option<Address>` | Returns the configured investment vault, if any (#526). |
 | `get_all_projects_with_archived()` | none | `Vec<(u32, ProjectData)>` | Like `get_all_projects` but includes archived projects. |
 | `compact_archive(project_id: u32)` | owner | none | Replaces a full `ProjectData` with a minimal `ArchiveSummary` (#73). Project must already be archived. |
 | `get_archive_summary(project_id: u32)` | none | `ArchiveSummary` | Panics if the project hasn't been compacted. |
