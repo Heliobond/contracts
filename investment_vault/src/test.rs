@@ -346,18 +346,6 @@ fn test_total_deposited_survives_ttl_inactivity() {
 
     let portfolio_after = s.vault_client.get_portfolio(&investor);
     assert_eq!(portfolio_after.total_deposited, total_deposited_before);
-}before prolonged inactivity.
-    let before = s.vault_client.get_portfolio(&investor);
-
-    // Simulate passage of ~30 days of ledgers (5s/ledger => 518,400 ledgers).
-    // Use +1 to ensure we are past the current extend_ttl window.
-    s.env.ledger().with_mut(|li| {
-        li.sequence_number += 518_401;
-    });
-
-    // The lifetime-deposited value must not silently reset to zero.
-    let after = s.vault_client.get_portfolio(&investor);
-    assert_eq!(before, after);
 }
 
 #[test]
