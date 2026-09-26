@@ -352,16 +352,7 @@ impl InvestmentVault {
     /// Return the vault's net asset value (NAV) by recomputing from on-chain
     /// state on every call (e.g., liquid USDC + investments + expected returns).
     pub fn total_assets(env: Env) -> i128 {
-        let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
-        let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
-            .balance(&env.current_contract_address());
-        let investments: i128 = env
-            .storage()
-            .persistent()
-            .get(&VaultKey::TotalInvestments)
-            .unwrap_or(0);
-        let expected = Self::get_expected_returns(env.clone());
-        let total = liquid + investments + expected;
+        let total = read_total_assets(&env);
 
         env.storage()
             .instance()
@@ -397,6 +388,134 @@ impl InvestmentVault {
         }
     }
 
+    // ── ERC-4626-style read views (#617) ─────────────────────────────────────
+    //
+    // All of these are pure reads: unlike `total_assets()` they never write
+    // `CachedTotalAssets`, so they are safe to simulate from any client.
+
+    /// USDC value of one whole share (10^7 base units), scaled by 10^7.
+    /// Returns 10^7 (1:1) when no shares are outstanding, matching the 1:1
+    /// first-deposit mint.
+    pub fn share_price(env: Env) -> i128 {
+        require_current_state(&env);
+        let total_shares = Base::total_supply(&env);
+        let total_assets = read_total_assets(&env);
+        if total_shares == 0 || total_assets == 0 {
+            SHARE_PRICE_SCALE
+        } else {
+            total_assets * SHARE_PRICE_SCALE / total_shares
+        }
+    }
+
+    /// Exact number of shares `deposit(from, usdc_amount)` would mint right
+    /// now, after the insurance premium and the management / volume-tier fee.
+    /// Panics with the same errors `deposit` would (non-positive, below
+    /// minimum, above maximum, max-transaction cap, supply cap, paused).
+    pub fn preview_deposit(env: Env, usdc_amount: i128) -> i128 {
+        require_not_paused(&env);
+        require_current_state(&env);
+        validate_deposit_amount(&env, usdc_amount);
+        let (_, _, investable) = deposit_breakdown(&env, usdc_amount);
+        let shares = shares_for_assets(&env, investable);
+        if Base::total_supply(&env) + shares > MAX_HBS_SUPPLY {
+            panic_with_error!(&env, VaultError::MaxSupplyExceeded);
+        }
+        shares
+    }
+
+    /// What `withdraw(_, shares_amount, 0)` would do right now:
+    /// `(usdc_now, usdc_queued)` — paid immediately, or burned and enqueued
+    /// for `claim()` when liquid USDC is short. Exactly one of the two is
+    /// non-zero. Panics with `WithdrawalExceedsLimit` if the graduated
+    /// utilization limit (#45) would reject it, and with the same amount
+    /// errors as `withdraw`. The per-account deposit lock is not checked here;
+    /// see `max_withdraw`.
+    pub fn preview_withdraw(env: Env, shares_amount: i128) -> (i128, i128) {
+        require_not_paused(&env);
+        require_current_state(&env);
+        if shares_amount <= 0 {
+            panic_with_error!(&env, VaultError::SharesNotPositive);
+        }
+        if shares_amount < MIN_WITHDRAW {
+            panic_with_error!(&env, VaultError::WithdrawBelowMinimum);
+        }
+        let usdc = assets_for_shares(&env, shares_amount);
+        check_max_transaction_amount(&env, usdc);
+        let liquid = liquid_usdc(&env);
+        if usdc > withdraw_tier_limit(liquid, Self::get_utilization_bps(env.clone())) {
+            panic_with_error!(&env, VaultError::WithdrawalExceedsLimit);
+        }
+        if usdc > liquid {
+            (0, usdc)
+        } else {
+            (usdc, 0)
+        }
+    }
+
+    /// Largest USDC amount `account` could withdraw right now: the value of
+    /// its share balance, capped by the graduated utilization limit (#45)
+    /// and the max-transaction cap. Returns 0 while paused, while the
+    /// account's deposit lock (#33) is active, or if its balance is below
+    /// the minimum withdrawal.
+    pub fn max_withdraw(env: Env, account: Address) -> i128 {
+        require_current_state(&env);
+        if vault_paused(&env) || is_deposit_locked(&env, &account) {
+            return 0;
+        }
+        let shares = Base::balance(&env, &account);
+        if shares < MIN_WITHDRAW {
+            return 0;
+        }
+        let mut max = assets_for_shares(&env, shares);
+        let limit = withdraw_tier_limit(liquid_usdc(&env), Self::get_utilization_bps(env.clone()));
+        if max > limit {
+            max = limit;
+        }
+        let tx_cap = max_transaction_amount(&env);
+        if tx_cap > 0 && max > tx_cap {
+            max = tx_cap;
+        }
+        max
+    }
+
+    /// Largest USDC amount `account` could deposit right now: `MAX_DEPOSIT`,
+    /// capped by the max-transaction cap and by the remaining HBS supply
+    /// headroom (#20). Returns 0 while paused. Funding rounds only block share
+    /// transfers (#38), not deposits, so they don't affect this. The supply
+    /// headroom is converted conservatively (using the lower of the flat and
+    /// volume-tier fee), so depositing `max_deposit` never hits
+    /// `MaxSupplyExceeded`.
+    pub fn max_deposit(env: Env, _account: Address) -> i128 {
+        require_current_state(&env);
+        if vault_paused(&env) {
+            return 0;
+        }
+        let mut max = MAX_DEPOSIT;
+        let tx_cap = max_transaction_amount(&env);
+        if tx_cap > 0 && max > tx_cap {
+            max = tx_cap;
+        }
+        let headroom_shares = MAX_HBS_SUPPLY - Base::total_supply(&env);
+        if headroom_shares <= 0 {
+            return 0;
+        }
+        let headroom_investable = assets_for_shares_or_one_to_one(&env, headroom_shares);
+        let fee_bps = min_deposit_fee_bps(&env) as i128;
+        let net_bps = BPS_SCALE - INSURANCE_PREMIUM_BPS - fee_bps;
+        let headroom_gross = headroom_investable
+            .checked_mul(BPS_SCALE)
+            .map(|v| v / net_bps)
+            .unwrap_or(i128::MAX);
+        if max > headroom_gross {
+            max = headroom_gross;
+        }
+        if max < MIN_DEPOSIT {
+            0
+        } else {
+            max
+        }
+    }
+
     /// Deposit USDC and mint HBS vault shares. Returns the number of shares minted.
     ///
     /// Deductions applied before share calculation:
@@ -408,42 +527,12 @@ impl InvestmentVault {
         require_not_paused(&env);
         require_current_state(&env);
         from.require_auth();
-        if usdc_amount <= 0 {
-            panic_with_error!(&env, VaultError::AmountNotPositive);
-        }
-        if usdc_amount < MIN_DEPOSIT {
-            panic_with_error!(&env, VaultError::DepositBelowMinimum);
-        }
-        if usdc_amount > MAX_DEPOSIT {
-            panic_with_error!(&env, VaultError::DepositExceedsMaximum);
-        }
-        check_max_transaction_amount(&env, usdc_amount);
+        validate_deposit_amount(&env, usdc_amount);
 
-        // Deduct insurance premium before share calculation (#135)
-        let premium = usdc_amount * INSURANCE_PREMIUM_BPS / BPS_SCALE;
-
-        // Deduct optional management fee (#7).
-        // Applies a dynamic (volume-tiered) rate when one is configured (#39):
-        // deposits >= VolumeTierThreshold use VolumeTierFeeBps; others use the
-        // flat ManagementFeeBps rate.
-        let fee_bps: u32 = env
-            .storage()
-            .instance()
-            .get(&VaultKey::ManagementFeeBps)
-            .unwrap_or(0);
-        let volume_threshold: Option<i128> =
-            env.storage().instance().get(&VaultKey::VolumeTierThreshold);
-        let volume_tier_bps: Option<u32> =
-            env.storage().instance().get(&VaultKey::VolumeTierFeeBps);
-        let effective_fee_bps = logic::logic::calculate_dynamic_fee_bps(
-            usdc_amount,
-            fee_bps,
-            volume_threshold,
-            volume_tier_bps,
-        );
-        let fee_amount = usdc_amount * (effective_fee_bps as i128) / BPS_SCALE;
-
-        let investable = usdc_amount - premium - fee_amount;
+        // Insurance premium (#135) and management / volume-tier fee (#7, #39)
+        // are deducted before share calculation. Shared with preview_deposit
+        // (#617) so the preview can never drift from the real deposit.
+        let (premium, fee_amount, investable) = deposit_breakdown(&env, usdc_amount);
 
         let shares = Self::convert_to_shares(env.clone(), investable);
 
@@ -600,15 +689,7 @@ impl InvestmentVault {
         // Graduated withdrawal limit based on vault utilization (#45).
         // Protects remaining investors from bank-run scenarios when most USDC is deployed.
         let utilization_bps = Self::get_utilization_bps(env.clone());
-        let max_withdraw: i128 = if utilization_bps >= UTIL_HIGH_BPS {
-            liquid * HIGH_TIER_PCT / 100
-        } else if utilization_bps >= UTIL_MED_BPS {
-            liquid * MED_TIER_PCT / 100
-        } else if utilization_bps >= UTIL_LOW_BPS {
-            liquid * LOW_TIER_PCT / 100
-        } else {
-            i128::MAX
-        };
+        let max_withdraw: i128 = withdraw_tier_limit(liquid, utilization_bps);
         if utilization_bps >= UTIL_WARN_BPS {
             events::utilization_warning(&env, utilization_bps);
         }
@@ -2322,6 +2403,146 @@ fn require_current_state(env: &Env) {
 /// Enforce the configured compliance transaction limit, if any (#457).
 /// `0` (the default) means "no limit configured" — matches the documented
 /// convention for `MaxTransactionAmount`.
+/// Fixed-point scale of `share_price()` (#617): 10^7, matching token decimals.
+const SHARE_PRICE_SCALE: i128 = 10_000_000;
+
+/// NAV without side effects: liquid USDC + investments + expected returns.
+/// `total_assets()` wraps this and additionally caches the result; the
+/// read-only views (#617) call this directly so they never write storage.
+fn read_total_assets(env: &Env) -> i128 {
+    let investments: i128 = env
+        .storage()
+        .persistent()
+        .get(&VaultKey::TotalInvestments)
+        .unwrap_or(0);
+    let expected = InvestmentVault::get_expected_returns(env.clone());
+    liquid_usdc(env) + investments + expected
+}
+
+fn liquid_usdc(env: &Env) -> i128 {
+    let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
+    soroban_sdk::token::TokenClient::new(env, &usdc_sac).balance(&env.current_contract_address())
+}
+
+/// Same formula as `convert_to_shares`, without caching NAV.
+fn shares_for_assets(env: &Env, usdc_amount: i128) -> i128 {
+    let total_assets = read_total_assets(env);
+    let total_shares = Base::total_supply(env);
+    if total_shares == 0 || total_assets == 0 {
+        usdc_amount
+    } else {
+        usdc_amount * total_shares / total_assets
+    }
+}
+
+/// Same formula as `convert_to_assets`, without caching NAV.
+fn assets_for_shares(env: &Env, shares_amount: i128) -> i128 {
+    let total_assets = read_total_assets(env);
+    let total_shares = Base::total_supply(env);
+    if total_shares == 0 || total_assets == 0 {
+        0
+    } else {
+        shares_amount * total_assets / total_shares
+    }
+}
+
+/// Like `assets_for_shares`, but 1:1 on an empty vault (the first-deposit
+/// rate), for converting supply headroom in `max_deposit`.
+fn assets_for_shares_or_one_to_one(env: &Env, shares_amount: i128) -> i128 {
+    let total_assets = read_total_assets(env);
+    let total_shares = Base::total_supply(env);
+    if total_shares == 0 || total_assets == 0 {
+        shares_amount
+    } else {
+        shares_amount
+            .checked_mul(total_assets)
+            .map(|v| v / total_shares)
+            .unwrap_or(i128::MAX)
+    }
+}
+
+/// Amount checks shared by `deposit` and `preview_deposit`.
+fn validate_deposit_amount(env: &Env, usdc_amount: i128) {
+    if usdc_amount <= 0 {
+        panic_with_error!(env, VaultError::AmountNotPositive);
+    }
+    if usdc_amount < MIN_DEPOSIT {
+        panic_with_error!(env, VaultError::DepositBelowMinimum);
+    }
+    if usdc_amount > MAX_DEPOSIT {
+        panic_with_error!(env, VaultError::DepositExceedsMaximum);
+    }
+    check_max_transaction_amount(env, usdc_amount);
+}
+
+/// `(insurance_premium, management_fee, investable)` for a deposit of
+/// `usdc_amount`. Shared by `deposit` and `preview_deposit` (#617).
+fn deposit_breakdown(env: &Env, usdc_amount: i128) -> (i128, i128, i128) {
+    let premium = usdc_amount * INSURANCE_PREMIUM_BPS / BPS_SCALE;
+    let fee_bps: u32 = env
+        .storage()
+        .instance()
+        .get(&VaultKey::ManagementFeeBps)
+        .unwrap_or(0);
+    let volume_threshold: Option<i128> = env.storage().instance().get(&VaultKey::VolumeTierThreshold);
+    let volume_tier_bps: Option<u32> = env.storage().instance().get(&VaultKey::VolumeTierFeeBps);
+    let effective_fee_bps =
+        logic::logic::calculate_dynamic_fee_bps(usdc_amount, fee_bps, volume_threshold, volume_tier_bps);
+    let fee_amount = usdc_amount * (effective_fee_bps as i128) / BPS_SCALE;
+    (premium, fee_amount, usdc_amount - premium - fee_amount)
+}
+
+/// Lowest management fee any deposit could pay (flat vs. volume tier).
+fn min_deposit_fee_bps(env: &Env) -> u32 {
+    let fee_bps: u32 = env
+        .storage()
+        .instance()
+        .get(&VaultKey::ManagementFeeBps)
+        .unwrap_or(0);
+    let volume_tier_bps: Option<u32> = env.storage().instance().get(&VaultKey::VolumeTierFeeBps);
+    match volume_tier_bps {
+        Some(tier) if tier < fee_bps => tier,
+        _ => fee_bps,
+    }
+}
+
+/// Graduated withdrawal limit (#45): the max USDC a single withdrawal may
+/// return at the given utilization. Shared by `withdraw` and the views.
+fn withdraw_tier_limit(liquid: i128, utilization_bps: u32) -> i128 {
+    if utilization_bps >= UTIL_HIGH_BPS {
+        liquid * HIGH_TIER_PCT / 100
+    } else if utilization_bps >= UTIL_MED_BPS {
+        liquid * MED_TIER_PCT / 100
+    } else if utilization_bps >= UTIL_LOW_BPS {
+        liquid * LOW_TIER_PCT / 100
+    } else {
+        i128::MAX
+    }
+}
+
+fn max_transaction_amount(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&VaultKey::MaxTransactionAmount)
+        .unwrap_or(0)
+}
+
+fn vault_paused(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&VaultKey::Paused)
+        .unwrap_or(false)
+}
+
+/// Non-panicking form of `check_deposit_lock` (#33).
+fn is_deposit_locked(env: &Env, address: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get::<_, u64>(&VaultKey::LastDeposit(address.clone()))
+        .map(|deposited_at| env.ledger().timestamp() < deposited_at + MIN_LOCK_PERIOD)
+        .unwrap_or(false)
+}
+
 fn check_max_transaction_amount(env: &Env, amount: i128) {
     let max: i128 = env
         .storage()
