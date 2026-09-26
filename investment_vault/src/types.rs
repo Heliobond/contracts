@@ -198,7 +198,8 @@ pub enum VaultKey {
     MultiSigThreshold,
     /// Circuit breaker pause state.
     Paused,
-    /// Last deposit ledger sequence per address.
+    /// Last deposit ledger *timestamp* per address; drives the MIN_LOCK_PERIOD
+    /// deposit lock (#33).
     LastDeposit(Address),
     /// Optional emergency-admin address that may pause/unpause without
     /// holding full owner privileges (#43). Unset means no emergency admin.
@@ -206,6 +207,9 @@ pub enum VaultKey {
     /// Minimum ledger gap between a deposit and a withdrawal (#36).
     /// Default is 1 (blocks same-ledger exit). Set via set_withdrawal_window.
     WithdrawalWindowLedgers,
+    /// Ledger sequence of an address's last deposit; compared against
+    /// `WithdrawalWindowLedgers` in `withdraw` (#530).
+    LastDepositLedger(Address),
     /// Minimum deposit amount (in USDC stroops) at which a volume-discount fee
     /// rate applies instead of the flat ManagementFeeBps rate (#39).
     VolumeTierThreshold,

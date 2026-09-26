@@ -347,7 +347,7 @@ Each event lists the public [`INTERFACE.md`](INTERFACE.md) function(s) that emit
 ### `withdrawal_window_set`
 - **Topics**: `["vault", "withdrawal_window_set"]`
 - **Data**: `(ledgers: u32)`
-- **Description**: Emitted when the admin changes the withdrawal sliding-window length.
+- **Description**: Emitted when the admin changes the withdrawal sliding-window length. `withdraw` rejects with `DepositLocked` until `ledgers` ledgers have passed since the caller's last deposit, in addition to the time-based `MIN_LOCK_PERIOD` (1 day). `0` disables the ledger check (#530).
 - **Emitted by**: [`set_withdrawal_window`](INTERFACE.md#investmentvault)
 
 ### `funding_round_started`

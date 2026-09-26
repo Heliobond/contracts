@@ -2970,11 +2970,56 @@ fn test_withdrawal_window_allows_exit_after_window() {
 
     let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
 
-    // Advance past the 5-ledger window.
-    s.env.ledger().with_mut(|li| li.sequence_number += 5);
+    // Advance past the 5-ledger window and the 1-day MIN_LOCK_PERIOD.
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 5;
+        li.timestamp += 86_400;
+    });
 
     let returned = s.vault_client.withdraw(&investor, &shares, &0);
     assert!(returned > 0, "withdraw should succeed after window expires");
+}
+
+#[test]
+fn test_withdrawal_window_enforced_after_time_lock_expires() {
+    // #530: the configured ledger window must bind on its own, even once the
+    // time-based MIN_LOCK_PERIOD has passed.
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+
+    s.vault_client.set_withdrawal_window(&100u32);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    // Time lock over, but only 50 of 100 ledgers elapsed.
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += 50;
+        li.timestamp += 86_400;
+    });
+    assert_eq!(
+        s.vault_client.try_withdraw(&investor, &shares, &0),
+        Err(Ok(soroban_sdk::Error::from_contract_error(
+            VaultError::DepositLocked as u32
+        )))
+    );
+
+    // Window elapsed: withdrawal succeeds.
+    s.env.ledger().with_mut(|li| li.sequence_number += 50);
+    assert!(s.vault_client.withdraw(&investor, &shares, &0) > 0);
+}
+
+#[test]
+fn test_withdrawal_window_zero_disables_ledger_check() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+
+    s.vault_client.set_withdrawal_window(&0u32);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+
+    // Same ledger sequence, only the time lock has passed.
+    s.env.ledger().with_mut(|li| li.timestamp += 86_400);
+    assert!(s.vault_client.withdraw(&investor, &shares, &0) > 0);
 }
 
 #[test]
