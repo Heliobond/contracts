@@ -121,7 +121,7 @@ mod registry_interface {
 
 pub use types::{
     CarbonCreditCalculation, ComplianceEventData, HBSTokenInfo, HealthStatus, PortfolioInfo,
-    QueuedClaim, RegulatoryReport, ReportingSnapshotData, VaultError, VaultKey,
+    ProjectPosition, QueuedClaim, RegulatoryReport, ReportingSnapshotData, VaultError, VaultKey,
 };
 pub use wormhole::{BridgeDataKey, BridgeTransferPayload};
 
@@ -1132,6 +1132,98 @@ impl InvestmentVault {
             .unwrap_or(0)
     }
 
+    /// Return principal from a project to the vault (#631).
+    ///
+    /// Transfers `amount` USDC from `from` into the vault and applies it
+    /// against the project's outstanding investment. Anything above the
+    /// outstanding balance stays in the vault as liquid USDC (a gain for
+    /// shareholders) rather than going negative. NAV is unchanged by the
+    /// principal part: liquid USDC rises by exactly what investments fall.
+    /// Panics with `AmountNotPositive`, or `ProjectAlreadySettled` once
+    /// `settle_project` has run. Emits `PrincipalRepaid`.
+    pub fn repay_principal(env: Env, from: Address, project_id: u32, amount: i128) {
+        require_not_paused(&env);
+        require_current_state(&env);
+        from.require_auth();
+        if amount <= 0 {
+            panic_with_error!(&env, VaultError::AmountNotPositive);
+        }
+        require_not_settled(&env, project_id);
+
+        let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
+        soroban_sdk::token::TokenClient::new(&env, &usdc_sac).transfer(
+            &from,
+            &env.current_contract_address(),
+            &amount,
+        );
+
+        let outstanding = read_i128(&env, &VaultKey::ProjectInvestment(project_id));
+        let applied = amount.min(outstanding);
+        if applied > 0 {
+            reduce_outstanding(&env, project_id, applied);
+            let repaid = read_i128(&env, &VaultKey::ProjectRepaid(project_id));
+            env.storage()
+                .persistent()
+                .set(&VaultKey::ProjectRepaid(project_id), &(repaid + applied));
+        }
+        events::principal_repaid(&env, project_id, &from, amount, outstanding - applied);
+    }
+
+    /// Close a matured project's books (#631). Owner-only.
+    ///
+    /// Requires the registry to report the project as mature. Any principal
+    /// still outstanding is written off as impairment (removed from
+    /// `TotalInvestments`, so NAV reflects the loss), and the project is
+    /// marked settled: further `fund_project` / `repay_principal` calls for
+    /// it panic with `ProjectAlreadySettled`. Emits `ProjectSettled`.
+    ///
+    /// The registry status is not changed here; the registry owner moves it
+    /// to `Completed` with `set_project_status` once settlement is final.
+    #[only_owner]
+    pub fn settle_project(env: Env, project_id: u32) {
+        require_not_paused(&env);
+        require_current_state(&env);
+        require_not_settled(&env, project_id);
+
+        let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
+        if !registry_interface::Client::new(&env, &registry_addr).is_mature(&project_id) {
+            panic_with_error!(&env, VaultError::ProjectNotMature);
+        }
+
+        let impairment = read_i128(&env, &VaultKey::ProjectInvestment(project_id));
+        if impairment > 0 {
+            reduce_outstanding(&env, project_id, impairment);
+            env.storage()
+                .persistent()
+                .set(&VaultKey::ProjectImpairment(project_id), &impairment);
+        }
+        env.storage()
+            .persistent()
+            .set(&VaultKey::ProjectSettled(project_id), &true);
+
+        let repaid = read_i128(&env, &VaultKey::ProjectRepaid(project_id));
+        events::project_settled(&env, project_id, repaid + impairment, repaid, impairment);
+    }
+
+    /// Return the vault-side lifecycle position of `project_id` (#631):
+    /// funded, repaid, outstanding and impaired principal, plus maturity and
+    /// settlement flags, for the frontend's project page.
+    pub fn get_project_position(env: Env, project_id: u32) -> ProjectPosition {
+        let outstanding = read_i128(&env, &VaultKey::ProjectInvestment(project_id));
+        let repaid = read_i128(&env, &VaultKey::ProjectRepaid(project_id));
+        let impairment = read_i128(&env, &VaultKey::ProjectImpairment(project_id));
+        let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
+        let mature = registry_interface::Client::new(&env, &registry_addr).is_mature(&project_id);
+        ProjectPosition {
+            funded: outstanding + repaid + impairment,
+            repaid,
+            outstanding,
+            impairment,
+            mature,
+            settled: is_settled(&env, project_id),
+        }
+    }
+
     /// Return USDC investment amounts for a list of project IDs in one call (#35).
     ///
     /// Results are returned in the same order as `project_ids`. Unknown or
@@ -1933,6 +2025,36 @@ impl InvestmentVault {
     }
 }
 
+fn read_i128(env: &Env, key: &VaultKey) -> i128 {
+    env.storage().persistent().get(key).unwrap_or(0)
+}
+
+fn is_settled(env: &Env, project_id: u32) -> bool {
+    env.storage()
+        .persistent()
+        .get(&VaultKey::ProjectSettled(project_id))
+        .unwrap_or(false)
+}
+
+fn require_not_settled(env: &Env, project_id: u32) {
+    if is_settled(env, project_id) {
+        panic_with_error!(env, VaultError::ProjectAlreadySettled);
+    }
+}
+
+/// Reduce a project's outstanding investment (and the vault-wide total) by
+/// `amount`, which the caller has already capped at the outstanding balance.
+fn reduce_outstanding(env: &Env, project_id: u32, amount: i128) {
+    let outstanding = read_i128(env, &VaultKey::ProjectInvestment(project_id));
+    env.storage()
+        .persistent()
+        .set(&VaultKey::ProjectInvestment(project_id), &(outstanding - amount));
+    let total = read_i128(env, &VaultKey::TotalInvestments);
+    env.storage()
+        .persistent()
+        .set(&VaultKey::TotalInvestments, &(total - amount));
+}
+
 fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
     require_current_state(&env);
     if amount <= 0 {
@@ -1943,6 +2065,7 @@ fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
         panic_with_error!(&env, VaultError::ProjectNotFound);
     }
     check_max_transaction_amount(&env, amount);
+    require_not_settled(&env, project_id);
 
     let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
     let registry = registry_interface::Client::new(&env, &registry_addr);
