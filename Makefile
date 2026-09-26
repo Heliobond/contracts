@@ -60,4 +60,7 @@ deploy-testnet: test build
 	echo "InvestmentVault: $$VAULT_ID" && \
 	printf '{"network":"testnet","project_registry":"%s","investment_vault":"%s"}\n' \
 	  "$$REGISTRY_ID" "$$VAULT_ID" > deploy/testnet.json && \
-	echo "Saved to deploy/testnet.json"
+	python3 scripts/check_deploy_wasm_hash.py update deploy/testnet.json \
+	  project_registry=target/wasm32v1-none/release/project_registry.wasm \
+	  investment_vault=target/wasm32v1-none/release/investment_vault.wasm && \
+	echo "Saved to deploy/testnet.json (contract IDs + WASM hashes)"
