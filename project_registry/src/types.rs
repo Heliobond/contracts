@@ -102,9 +102,12 @@ pub enum RegistryError {
     /// set_project_status was called with the project's current status (#329).
     ProjectStatusUnchanged = 42,
     /// compact_storage input exceeds the maximum allowed batch size (#332).
-    CompactStorageTooLarge = 41,
+    CompactStorageTooLarge = 43,
     /// create_proposal voting_duration_secs exceeds the maximum allowed period (#332).
-    VotingPeriodTooLong = 42,
+    VotingPeriodTooLong = 44,
+    /// delete_project was called before the investment vault address was set
+    /// via `set_vault`, so active investments cannot be ruled out (#526).
+    VaultNotConfigured = 45,
 }
 
 /// Certification state for a green project (#130).
@@ -236,6 +239,8 @@ pub enum DataKey {
     /// Optional emergency-admin address that may pause/unpause without
     /// holding full owner privileges (#43). Unset means no emergency admin.
     EmergencyAdmin,
+    /// Investment vault queried by `delete_project` for active investments (#526).
+    Vault,
 }
 
 /// Consolidated operational status for monitoring/health-check integrations (#77).
