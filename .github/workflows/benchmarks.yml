@@ -40,7 +40,7 @@ jobs:
       # cargo invocation in this job only.
       - name: Use a toolchain the benchmark tool accepts
         run: |
-          rustup toolchain install 1.92.0 --profile minimal
+          rustup toolchain install 1.92.0 --profile minimal --target wasm32v1-none --component rustfmt,clippy
           RUSTUP_TOOLCHAIN=1.92.0 rustc --version
           echo "RUSTUP_TOOLCHAIN=1.92.0" >> "$GITHUB_ENV"
 
