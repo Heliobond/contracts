@@ -29,6 +29,18 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      # The benchmark tool refuses to measure on 1.81, 1.82, 1.83 or 1.91.0,
+      # while the workspace's locked soroban-sdk 26.1.0 requires at least 1.91.0.
+      # A repository-wide pin therefore cannot satisfy both: 1.91.0 keeps the
+      # other CI jobs green but the benchmark refuses it, and 1.92.0 makes this
+      # job pass while breaking the six jobs that need the pinned toolchain.
+      # Overriding the toolchain in this job only, verified in CI, is the way out.
+      - name: Use a toolchain the benchmark tool accepts
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          rustup default 1.92.0
+          rustc --version
+
       - name: Install Stellar CLI
         env:
           STELLAR_CLI_VERSION: "26.1.0"
