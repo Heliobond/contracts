@@ -35,11 +35,14 @@ jobs:
       # other CI jobs green but the benchmark refuses it, and 1.92.0 makes this
       # job pass while breaking the six jobs that need the pinned toolchain.
       # Overriding the toolchain in this job only, verified in CI, is the way out.
+      # rust-toolchain.toml outranks `rustup default`, so the override has to be
+      # the RUSTUP_TOOLCHAIN environment variable: it wins over the file for every
+      # cargo invocation in this job only.
       - name: Use a toolchain the benchmark tool accepts
         run: |
           rustup toolchain install 1.92.0 --profile minimal
-          rustup default 1.92.0
-          rustc --version
+          RUSTUP_TOOLCHAIN=1.92.0 rustc --version
+          echo "RUSTUP_TOOLCHAIN=1.92.0" >> "$GITHUB_ENV"
 
       - name: Install Stellar CLI
         env:
