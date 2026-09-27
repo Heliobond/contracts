@@ -93,6 +93,50 @@ pub enum VaultError {
     FundingRoundActive = 42,
     /// Funding would push cumulative investment in a project above its per-project cap (#32).
     InvestmentCapExceeded = 43,
+    /// Requested amount exceeds the configured MaxTransactionAmount compliance limit (#457).
+    ExceedsMaxTransactionAmount = 44,
+    /// complete_bridge_transfer's decoded payload's token_address does not match
+    /// this vault's own contract address (#453).
+    BridgeTokenMismatch = 45,
+    /// complete_bridge_transfer's decoded payload targets a chain other than
+    /// Stellar (#454).
+    BridgeWrongTargetChain = 46,
+    /// batch_fund_projects received an empty fundings list (#445).
+    EmptyBatchFunding = 47,
+    /// A batch deposit or fund-projects request exceeds the configured maximum
+    /// batch size (#447).
+    BatchTooLarge = 48,
+    /// set_flash_loan_fee's fee_bps argument is outside the allowed 0-1000 bps range (#402).
+    FlashLoanFeeOutOfRange = 49,
+    /// execute_flash_loan's borrower callback returned false (repayment not honoured) (#402).
+    FlashLoanCallbackFailed = 50,
+    /// set_carbon_credit_price called before set_carbon_oracle configured an oracle (#402).
+    CarbonOracleNotSet = 51,
+    /// set_carbon_credit_price's price argument is not positive (#402).
+    CarbonPriceNotPositive = 52,
+    /// issue_carbon_credits computed zero or fewer credits for the requested amount (#402).
+    NoCarbonCreditsToIssue = 53,
+    /// transfer_carbon_credits: sender's balance is less than the requested amount (#402).
+    InsufficientCarbonCredits = 54,
+    /// set_max_transaction_amount's amount argument is negative (#402).
+    NegativeMaxTransactionAmount = 55,
+    /// get_compliance_event: no event exists for the requested sequence number (#402).
+    ComplianceEventNotFound = 56,
+    /// get_latest_snapshot: no reporting snapshot has been taken yet (#402).
+    NoSnapshotTaken = 57,
+    /// transfer_ownership: no owner is currently set on the contract (#402).
+    OwnerNotSet = 58,
+    /// transfer_carbon_credits: from and to must be different addresses —
+    /// a self-transfer previously let both balance reads snapshot the same
+    /// pre-write value, and the second .set() overwrote the first, doubling
+    /// (or worse) the caller's balance for free (#564).
+    SelfTransferNotAllowed = 59,
+    /// fund_project / repay_principal / settle_project: the project has
+    /// already been settled at maturity and its books are closed (#631).
+    ProjectAlreadySettled = 60,
+    /// settle_project: the registry does not report the project as mature
+    /// yet (or it has no maturity date) (#631).
+    ProjectNotMature = 61,
 }
 
 #[contracttype]
@@ -154,7 +198,8 @@ pub enum VaultKey {
     MultiSigThreshold,
     /// Circuit breaker pause state.
     Paused,
-    /// Last deposit ledger sequence per address.
+    /// Last deposit ledger *timestamp* per address; drives the MIN_LOCK_PERIOD
+    /// deposit lock (#33).
     LastDeposit(Address),
     /// Optional emergency-admin address that may pause/unpause without
     /// holding full owner privileges (#43). Unset means no emergency admin.
@@ -162,6 +207,9 @@ pub enum VaultKey {
     /// Minimum ledger gap between a deposit and a withdrawal (#36).
     /// Default is 1 (blocks same-ledger exit). Set via set_withdrawal_window.
     WithdrawalWindowLedgers,
+    /// Ledger sequence of an address's last deposit; compared against
+    /// `WithdrawalWindowLedgers` in `withdraw` (#530).
+    LastDepositLedger(Address),
     /// Minimum deposit amount (in USDC stroops) at which a volume-discount fee
     /// rate applies instead of the flat ManagementFeeBps rate (#39).
     VolumeTierThreshold,
@@ -178,6 +226,18 @@ pub enum VaultKey {
     /// Ledger timestamp (seconds) at which a project was first funded (#34).
     /// Used for time-weighted expected-returns calculation.
     InvestmentTimestamp(u32),
+    /// Principal returned by a project and applied against its outstanding
+    /// investment via `repay_principal` (#631).
+    ProjectRepaid(u32),
+    /// Outstanding principal written off as impairment by `settle_project` (#631).
+    ProjectImpairment(u32),
+    /// Set once `settle_project` closes a project's books; blocks further
+    /// funding and repayment for that ID (#631).
+    ProjectSettled(u32),
+    /// Sum of `usdc_owed` across unpaid redemption queue entries (#613).
+    /// Deducted from `total_assets` so burned-but-unpaid shares don't inflate
+    /// the share price for remaining holders.
+    QueuedLiabilities,
 }
 
 /// Container for wormhole bridge data keys.
@@ -259,6 +319,26 @@ pub struct QueuedClaim {
     pub from: Address,
     /// USDC amount owed, fixed at the share price when the withdrawal was requested.
     pub usdc_owed: i128,
+}
+
+/// Vault-side lifecycle position of a single project (#631).
+///
+/// `funded = outstanding + repaid + impairment` always holds.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProjectPosition {
+    /// Total principal ever deployed to the project.
+    pub funded: i128,
+    /// Principal returned via `repay_principal`.
+    pub repaid: i128,
+    /// Principal still deployed (counted in `total_assets`).
+    pub outstanding: i128,
+    /// Principal written off at settlement because it was never repaid.
+    pub impairment: i128,
+    /// Registry reports the project's maturity date has passed.
+    pub mature: bool,
+    /// `settle_project` has closed the project's books.
+    pub settled: bool,
 }
 
 /// On-chain portfolio snapshot for a single investor (#132).

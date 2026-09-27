@@ -193,6 +193,20 @@ Response body:
 
 **GET `/health`** — Health check.
 
+#### Metrics
+
+**GET `/metrics`** — In-memory counters for events processed and notifications sent.
+
+Response body:
+```json
+{
+  "eventsProcessed": 128,
+  "notificationsSent": 94
+}
+```
+
+Only registered when a `Metrics` instance is passed to `createApi`; if none is configured, this route doesn't exist and requests return the default Express 404. As of #336, `Metrics` isn't currently instantiated in the running service at all, so this endpoint is not reachable in the default deployment.
+
 ### Webhook Payload
 
 When a score change triggers a webhook notification, the service sends an HTTP POST with the following JSON body:

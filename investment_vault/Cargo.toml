@@ -11,8 +11,19 @@ soroban-sdk = { workspace = true }
 stellar-tokens = { workspace = true }
 stellar-access = { workspace = true }
 stellar-macros = { workspace = true }
+multisig = { path = "../libs/multisig" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+# proptest stays on a normal semver range (#422): it's the fuzz-input
+# generator, not the thing under test, so a minor/patch bump changing its
+# shrinking/coverage behavior between CI runs is acceptable drift, not a
+# correctness risk.
 proptest = "1.0"
-sha2 = "0.10.8"
+# sha2 is pinned exactly (#422), unlike proptest above: it feeds the
+# WASM-hash snapshot tests' expected values directly, so a version bump
+# silently changing its output would look like a real hash mismatch/failure
+# rather than a benign dependency update -- exact-pinning here follows the
+# same reproducibility rationale as the workspace's soroban-sdk/stellar-*
+# pins.
+sha2 = "=0.10.9"

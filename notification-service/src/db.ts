@@ -124,15 +124,6 @@ export class Store {
     return this.rowToPreference(row);
   }
 
-  getAllEnabledPreferences(): NotificationPreference[] {
-    const rows = this.db
-      .prepare(
-        "SELECT * FROM notification_preferences WHERE enabled = 1 AND (email IS NOT NULL OR webhook_url IS NOT NULL)",
-      )
-      .all() as Record<string, unknown>[];
-    return rows.map((r) => this.rowToPreference(r));
-  }
-
   listPreferences(): NotificationPreference[] {
     const rows = this.db
       .prepare(
@@ -207,6 +198,26 @@ export class Store {
          VALUES (?, ?, ?, ?)`,
       )
       .run(investor_address, project_id, channel, ledger);
+  }
+
+  /**
+   * Check whether a specific (investor, project, ledger) notification has
+   * already been recorded. Used for cross-restart dedup — the in-memory
+   * Set is lost on process restart, but the DB table persists.
+   */
+  hasBeenNotified(
+    investor_address: string,
+    project_id: number,
+    ledger: number,
+  ): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1 FROM notification_history
+         WHERE investor_address = ? AND project_id = ? AND ledger = ?
+         LIMIT 1`,
+      )
+      .get(investor_address, project_id, ledger);
+    return !!row;
   }
 
   /**

@@ -7,6 +7,13 @@ import {
   ServiceConfig,
 } from "./types";
 
+const sendMailMock = vi.fn(async () => ({ messageId: "test" }));
+vi.mock("nodemailer", () => ({
+  default: {
+    createTransport: vi.fn(() => ({ sendMail: sendMailMock })),
+  },
+}));
+
 const config: ServiceConfig = {
   rpc_url: "https://example.invalid",
   network_passphrase: "Test SDF Network ; September 2015",
@@ -15,6 +22,17 @@ const config: ServiceConfig = {
   db_path: ":memory:",
   poll_interval_ms: 1000,
   api_port: 3000,
+};
+
+const configWithEmail: ServiceConfig = {
+  ...config,
+  from_email: "noreply@heliobond.io",
+  email_transport: {
+    host: "smtp.example.invalid",
+    port: 587,
+    secure: false,
+    auth: { user: "user", pass: "pass" },
+  },
 };
 
 const preference: NotificationPreference = {
@@ -45,6 +63,7 @@ function makeEvent(
 function makeStore(): Store {
   return {
     getPreference: vi.fn(() => preference),
+    hasBeenNotified: vi.fn(() => false),
     recordNotification: vi.fn(),
   } as unknown as Store;
 }
@@ -101,6 +120,7 @@ describe("Notifier.notifyInvestors deduplication", () => {
       getPreference: vi.fn((addr: string) =>
         addr === other.investor_address ? other : preference,
       ),
+      hasBeenNotified: vi.fn(() => false),
       recordNotification: vi.fn(),
     } as unknown as Store;
 
@@ -169,6 +189,7 @@ describe("Notifier retry behavior on a failed delivery", () => {
     };
     const store = {
       getPreference: vi.fn(() => withBoth),
+      hasBeenNotified: vi.fn(() => false),
       recordNotification: vi.fn(),
     } as unknown as Store;
 
@@ -194,5 +215,226 @@ describe("Notifier retry behavior on a failed delivery", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(store.recordNotification).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Issue #426: the email channel had zero test coverage ───────────────────
+
+describe("Notifier email channel", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    sendMailMock.mockClear();
+    sendMailMock.mockImplementation(async () => ({ messageId: "test" }));
+    fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  it("sends an email via the configured transport when the investor has an email preference", async () => {
+    const withEmail: NotificationPreference = {
+      ...preference,
+      webhook_url: undefined,
+      email: "investor@example.invalid",
+    };
+    const store = {
+      getPreference: vi.fn(() => withEmail),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn(),
+    } as unknown as Store;
+
+    const notifier = new Notifier(configWithEmail, store);
+    const event = makeEvent();
+
+    await notifier.notifyInvestors(event, [withEmail.investor_address]);
+
+    expect(sendMailMock).toHaveBeenCalledTimes(1);
+    expect(sendMailMock).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "investor@example.invalid" }),
+    );
+    expect(store.recordNotification).toHaveBeenCalledWith(
+      withEmail.investor_address,
+      event.project_id,
+      "email",
+      event.ledger,
+    );
+  });
+
+  it("retries a redelivered event by email after the first send fails", async () => {
+    const withEmail: NotificationPreference = {
+      ...preference,
+      webhook_url: undefined,
+      email: "investor@example.invalid",
+    };
+    const store = {
+      getPreference: vi.fn(() => withEmail),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn(),
+    } as unknown as Store;
+
+    sendMailMock
+      .mockRejectedValueOnce(new Error("smtp connection refused"))
+      .mockImplementationOnce(async () => ({ messageId: "test" }));
+
+    const notifier = new Notifier(configWithEmail, store);
+    const event = makeEvent();
+
+    await notifier.notifyInvestors(event, [withEmail.investor_address]);
+    await notifier.notifyInvestors(event, [withEmail.investor_address]);
+
+    expect(sendMailMock).toHaveBeenCalledTimes(2);
+    expect(store.recordNotification).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Issue #395: min_delta threshold filtering ────────────────────────────────
+
+describe("Notifier min_delta threshold filtering", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  it("suppresses notification when min_delta exceeds the event's maxDelta", async () => {
+    const highDelta: NotificationPreference = {
+      ...preference,
+      min_delta: 30, // default event has maxDelta = 20 (rate delta)
+    };
+    const store = {
+      getPreference: vi.fn(() => highDelta),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn(),
+    } as unknown as Store;
+
+    const notifier = new Notifier(config, store);
+    const event = makeEvent(); // maxDelta = 20 (rate delta)
+
+    await notifier.notifyInvestors(event, [preference.investor_address]);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(store.recordNotification).not.toHaveBeenCalled();
+  });
+
+  it("sends notification when maxDelta equals min_delta (boundary: < not <=)", async () => {
+    const boundaryPref: NotificationPreference = {
+      ...preference,
+      min_delta: 20, // default event has maxDelta = 20 (rate delta)
+    };
+    const store = {
+      getPreference: vi.fn(() => boundaryPref),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn(),
+    } as unknown as Store;
+
+    const notifier = new Notifier(config, store);
+    const event = makeEvent(); // maxDelta = 20 (rate delta)
+
+    await notifier.notifyInvestors(event, [preference.investor_address]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(store.recordNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("considers rate_bps delta in maxDelta calculation", async () => {
+    // Event with no credit_quality/green_impact change but large rate change
+    const rateOnlyEvent = makeEvent({
+      old_credit_quality: 50,
+      new_credit_quality: 50, // no change
+      old_green_impact: 40,
+      new_green_impact: 40, // no change
+      old_rate_bps: 500,
+      new_rate_bps: 2000, // 1500 bps change
+    });
+    const midDeltaPref: NotificationPreference = {
+      ...preference,
+      min_delta: 100, // would filter out if only CQ/GI were checked (delta=0)
+    };
+    const store = {
+      getPreference: vi.fn(() => midDeltaPref),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn(),
+    } as unknown as Store;
+
+    const notifier = new Notifier(config, store);
+
+    await notifier.notifyInvestors(rateOnlyEvent, [preference.investor_address]);
+
+    // Should notify because rate delta (1500) exceeds min_delta (100)
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(store.recordNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses notification when rate delta is below min_delta", async () => {
+    const rateOnlyEvent = makeEvent({
+      old_credit_quality: 50,
+      new_credit_quality: 50, // no change
+      old_green_impact: 40,
+      new_green_impact: 40, // no change
+      old_rate_bps: 500,
+      new_rate_bps: 510, // only 10 bps change
+    });
+    const highDeltaPref: NotificationPreference = {
+      ...preference,
+      min_delta: 20, // exceeds rate delta of 10
+    };
+    const store = {
+      getPreference: vi.fn(() => highDeltaPref),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn(),
+    } as unknown as Store;
+
+    const notifier = new Notifier(config, store);
+
+    await notifier.notifyInvestors(rateOnlyEvent, [preference.investor_address]);
+
+    // Should NOT notify because rate delta (10) < min_delta (20)
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(store.recordNotification).not.toHaveBeenCalled();
+  });
+});
+
+// ── Issue #396: MAX_TRACKED_NOTIFICATIONS bounded-eviction behavior ────────
+
+describe("Notifier bounded-eviction (#396)", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  it("keeps notifiedRecipients at or below MAX_TRACKED_NOTIFICATIONS after many unique events", async () => {
+    const notifier = new Notifier(config, makeStore());
+
+    // Send 5050 unique events — 50 more than the cap — to trigger eviction
+    for (let i = 0; i < 5050; i++) {
+      const event = makeEvent({ ledger: 100 + i, timestamp: 1_700_000_000 + i });
+      await notifier.notifyInvestors(event, [preference.investor_address]);
+    }
+
+    const recipients = (notifier as any).notifiedRecipients as Set<string>;
+    expect(recipients.size).toBeLessThanOrEqual(5000);
+  });
+
+  it("evicts the oldest entry when capacity is exceeded", async () => {
+    const notifier = new Notifier(config, makeStore());
+
+    // Fill to exactly 5000
+    for (let i = 0; i < 5000; i++) {
+      const event = makeEvent({ ledger: 100 + i, timestamp: 1_700_000_000 + i });
+      await notifier.notifyInvestors(event, [preference.investor_address]);
+    }
+
+    const recipients = (notifier as any).notifiedRecipients as Set<string>;
+    const firstKey = recipients.values().next().value;
+
+    // Add one more to trigger eviction
+    const extraEvent = makeEvent({ ledger: 6100, timestamp: 1_700_006_100 });
+    await notifier.notifyInvestors(extraEvent, [preference.investor_address]);
+
+    expect(recipients.size).toBeLessThanOrEqual(5000);
+    // The oldest entry should have been evicted
+    expect(recipients.has(firstKey)).toBe(false);
   });
 });

@@ -33,6 +33,6 @@ Key reasons:
 
 **Negative / trade-offs:**
 - Smaller developer ecosystem than EVM; fewer ready-made audit firms.
-- No native multi-sig in contracts (must be handled at the Stellar account layer).
+- ~~No native multi-sig in contracts (must be handled at the Stellar account layer).~~ Both contracts have since grown an on-chain multisig subsystem (`set_multisig_admin`/`_with_approvals` variants), so this is no longer accurate as a platform trade-off — see ADR-004 (#425).
 - `no_std` limits available Rust crates; anything requiring `std` must be avoided or rewritten.
 - WASM size budget (~128 KiB) requires careful dependency management.

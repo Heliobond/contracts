@@ -918,6 +918,7 @@ checksum = "8e04e2fd2b8188ea827b32ef11de88377086d690286ab35747ef7f9bf3ccb590"
 name = "investment-vault"
 version = "0.1.0"
 dependencies = [
+ "multisig",
  "proptest",
  "sha2",
  "soroban-sdk",
@@ -1013,6 +1014,13 @@ name = "memchr"
 version = "2.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
+
+[[package]]
+name = "multisig"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
 
 [[package]]
 name = "num-bigint"
@@ -1147,6 +1155,7 @@ name = "project-registry"
 version = "0.1.0"
 dependencies = [
  "investment-vault",
+ "multisig",
  "proptest",
  "sha2",
  "soroban-sdk",

@@ -170,7 +170,7 @@ Sets the `Ownable` owner to `admin`, stores USDC SAC and Registry addresses, ini
 |---|---|---|
 | `deposit(from, usdc_amount)` | `from` | Transfer USDC from investor; mint HBS shares; return shares minted |
 | `batch_deposit(deposits)` | Each depositor | Batch deposit for multiple investors |
-| `withdraw(from, shares_amount)` | `from` | Burn HBS shares; enqueue if insufficient liquidity |
+| `withdraw(from, shares_amount, min_usdc_return)` | `from` | Burn HBS shares; enqueue if insufficient liquidity. Panics if USDC return is below `min_usdc_return` (slippage protection). |
 | `claim()` | none | Settle queued redemptions FIFO; return USDC paid out |
 | `fund_project(project_id, amount)` | `Admin` | Cross-call Registry; transfer USDC to project owner |
 | `fund_project_with_approvals(project_id, amount, approvals)` | Multi-sig signers | Multi-sig variant for critical operations |
@@ -260,8 +260,8 @@ The command builds both contracts, deploys `ProjectRegistry` first, captures its
   "network": "testnet",
   "project_registry": "C...",
   "investment_vault": "C...",
-  "project_registry_wasm_hash": "",
-  "investment_vault_wasm_hash": ""
+  "project_registry_wasm_hash": "<sha256 of project_registry.wasm>",
+  "investment_vault_wasm_hash": "<sha256 of investment_vault.wasm>"
 }
 ```
 
@@ -286,6 +286,7 @@ Every state-changing function emits a structured event. Topics are indexed by th
 | `YieldClaimed` | `to` (Address) | `amount` (i128) | `claim_yield()` |
 | `InsuranceClaimed` | `project_id` (u32) | `recipient` (Address), `amount` (i128) | `claim_insurance()` |
 | `OwnershipTransfer` | (library) | `new_owner` (Address) | `transfer_ownership()` — emitted by `stellar-access` |
+| `OwnershipTransferred` | `old_owner` (Address), `new_owner` (Address) | — | `transfer_ownership()` — contract-defined, for audit trail |
 | `OwnershipTransferCompleted` | (library) | `new_owner` (Address) | `accept_ownership()` — emitted by `stellar-access` |
 | `OwnershipRenounced` | (library) | — | `renounce_ownership()` — emitted by `stellar-access` |
 
@@ -302,6 +303,7 @@ Every state-changing function emits a structured event. Topics are indexed by th
 | `VoteCast` | `proposal_id` (u32) | `voter` (Address), `support` (bool), `weight` (i128) | `cast_vote()` |
 | `ProposalExecuted` | `proposal_id` (u32) | `passed` (bool) | `execute_proposal()` |
 | `OwnershipTransfer` | (library) | `new_owner` (Address) | `transfer_ownership()` — emitted by `stellar-access` |
+| `OwnershipTransferred` | `old_owner` (Address), `new_owner` (Address) | — | `transfer_ownership()` — contract-defined, for audit trail |
 | `OwnershipTransferCompleted` | (library) | `new_owner` (Address) | `accept_ownership()` — emitted by `stellar-access` |
 | `OwnershipRenounced` | (library) | — | `renounce_ownership()` — emitted by `stellar-access` |
 

@@ -76,4 +76,20 @@ describe("loadConfig", () => {
       auth: { user: "user", pass: "pass" },
     });
   });
+
+  it("throws when a numeric env var is malformed", () => {
+    process.env.REGISTRY_CONTRACT_ID = "CONTRACT123";
+    process.env.POLL_INTERVAL_MS = "30_000";
+    expect(() => loadConfig()).toThrow(/POLL_INTERVAL_MS/);
+
+    process.env.POLL_INTERVAL_MS = "abc";
+    expect(() => loadConfig()).toThrow(/POLL_INTERVAL_MS/);
+
+    process.env.POLL_INTERVAL_MS = "-5";
+    expect(() => loadConfig()).toThrow(/POLL_INTERVAL_MS/);
+
+    process.env.POLL_INTERVAL_MS = "30000";
+    process.env.API_PORT = "not-a-port";
+    expect(() => loadConfig()).toThrow(/API_PORT/);
+  });
 });

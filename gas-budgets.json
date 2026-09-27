@@ -13,6 +13,21 @@
     "instructions": 2000000,
     "fee": 4000000
   },
+  "investment_vault.share_price": {
+    "note": "Read-only ERC-4626-style view (#617): same NAV reads as deposit, no storage writes.",
+    "instructions": 1500000,
+    "fee": 3000000
+  },
+  "investment_vault.preview_deposit": {
+    "note": "Read-only ERC-4626-style view (#617): same NAV reads as deposit, no storage writes.",
+    "instructions": 1500000,
+    "fee": 3000000
+  },
+  "investment_vault.max_withdraw": {
+    "note": "Read-only ERC-4626-style view (#617): same NAV reads as deposit, no storage writes.",
+    "instructions": 1500000,
+    "fee": 3000000
+  },
   "storage_key_sizes": {
     "note": "Key bytes are XDR Symbol overhead + variant name length (#82). Shorter names reduce per-entry rent.",
     "project_registry.Project(u32)": { "key_bytes": 12, "value_bytes_typical": 132, "value_bytes_max": 580 },
@@ -23,6 +38,14 @@
     "investment_vault.ProjectInvestment(u32)": { "key_bytes": 25, "value_bytes": 16 },
     "investment_vault.YieldDebt(Address)": { "key_bytes": 42, "value_bytes": 16 },
     "investment_vault.TotalDeposited(Address)": { "key_bytes": 46, "value_bytes": 16 },
-    "investment_vault.CachedTotalAssets": { "key_bytes": 21, "value_bytes": 16, "storage_tier": "instance", "note": "Moved to instance (#85): read/written on every state change, no separate rent needed" }
+    "investment_vault.CachedTotalAssets": { "key_bytes": 21, "value_bytes": 16, "storage_tier": "instance", "note": "Moved to instance (#85): read/written on every state change, no separate rent needed" },
+    "investment_vault.QueueEntry(u64)": { "key_bytes": 23, "value_bytes": 48, "note": "QueuedClaim { from: Address, usdc_owed: i128 } (#424)" },
+    "investment_vault.ComplianceEvent(u64)": { "key_bytes": 28, "value_bytes_typical": 90, "value_bytes_max": 300, "note": "ComplianceEventData has two variable-length String fields — event_type/data (#424)" },
+    "investment_vault.CarbonCreditBalance(Address)": { "key_bytes": 56, "value_bytes": 16, "note": "i128 balance (#424)" },
+    "investment_vault.InsuranceClaimed(u32)": { "key_bytes": 25, "value_bytes": 1, "note": "bool flag (#424)" },
+    "investment_vault.MultiSigSigners": { "key_bytes": 20, "value_bytes_typical": 96, "note": "Vec<Address>, size varies with signer count — typical shown for 3 signers (#424)" },
+    "project_registry.Proposal(u32)": { "key_bytes": 17, "value_bytes_typical": 113, "value_bytes_max": 300, "note": "Proposal has a variable-length description String; other fields are fixed (Address/u64/i128/bool) (#424)" },
+    "project_registry.ScoreHistorySlot(u32,u32)": { "key_bytes": 29, "value_bytes": 16, "note": "ScoreHistoryEntry { timestamp: u64, credit_quality: u32, green_impact: u32 } (#424)" },
+    "project_registry.MultiSigSigners": { "key_bytes": 20, "value_bytes_typical": 96, "note": "Vec<Address>, size varies with signer count — typical shown for 3 signers (#424)" }
   }
 }

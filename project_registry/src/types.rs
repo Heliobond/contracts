@@ -92,6 +92,22 @@ pub enum RegistryError {
     BatchTooLarge = 37,
     /// Project is already certified with the target status.
     AlreadyCertified = 38,
+    /// create_proposal's description exceeds MAX_PROPOSAL_DESCRIPTION_LEN (#455).
+    ProposalDescriptionTooLong = 39,
+    /// update_impact_scores_batch received an empty updates list (#445).
+    EmptyBatchUpdate = 40,
+    /// set_project_status was asked to set or clear `Archived` — use
+    /// `archive_project` instead, since archived projects are immutable (#329).
+    InvalidStatusTransition = 41,
+    /// set_project_status was called with the project's current status (#329).
+    ProjectStatusUnchanged = 42,
+    /// compact_storage input exceeds the maximum allowed batch size (#332).
+    CompactStorageTooLarge = 43,
+    /// create_proposal voting_duration_secs exceeds the maximum allowed period (#332).
+    VotingPeriodTooLong = 44,
+    /// delete_project was called before the investment vault address was set
+    /// via `set_vault`, so active investments cannot be ruled out (#526).
+    VaultNotConfigured = 45,
 }
 
 /// Certification state for a green project (#130).
@@ -105,6 +121,13 @@ pub enum CertificationStatus {
     Revoked = 3,
 }
 
+/// Lifecycle status of a project (#27).
+///
+/// `Pending` is set at creation and `Archived` via `archive_project`.
+/// `Active`, `Funded`, and `Completed` are set via `set_project_status`
+/// (admin/vault-callable) — this contract does not transition into them on
+/// its own; a cross-contract call from the vault on real funding events is
+/// tracked separately (#329).
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 #[repr(u32)]
@@ -161,6 +184,8 @@ pub struct ArchiveSummary {
     pub final_green_impact: u32,
     pub maturity_date: u64,
     pub certification_status: CertificationStatus,
+    /// Preserved so `verify_metadata_hash` keeps working after compaction (#448).
+    pub metadata_hash: BytesN<32>,
 }
 
 /// A governance proposal that HBS holders vote on (#134).
@@ -214,6 +239,8 @@ pub enum DataKey {
     /// Optional emergency-admin address that may pause/unpause without
     /// holding full owner privileges (#43). Unset means no emergency admin.
     EmergencyAdmin,
+    /// Investment vault queried by `delete_project` for active investments (#526).
+    Vault,
 }
 
 /// Consolidated operational status for monitoring/health-check integrations (#77).

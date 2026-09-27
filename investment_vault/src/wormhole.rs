@@ -25,9 +25,11 @@
 //! # Cross-chain bridge readiness (#48)
 //!
 //! The [`BridgeInterface`] trait defines a chain-agnostic bridge API that can be
-//! implemented on Stellar, EVM, Solana, or any other blockchain. The contract
-//! implements this trait internally; off-chain indexers and relayers SHOULD
-//! rely on the standardised events and types defined here rather than
+//! implemented on Stellar, EVM, Solana, or any other blockchain. It is a design
+//! reference only — `InvestmentVault` does not implement it (its real entry
+//! points, `set_wormhole_core`/`initiate_bridge_transfer`/`complete_bridge_transfer`,
+//! use different names and parameter shapes); off-chain indexers and relayers
+//! SHOULD rely on the standardised events and types defined here rather than
 //! chain-specific formats.
 //!
 //! # Trust assumptions (#267)
@@ -164,13 +166,21 @@ pub enum BridgeDataKey {
 const PAYLOAD_PREFIX: &[u8] = b"HBS\x00";
 
 /// Encode an Address into 32 bytes via the Env's XDR serialization.
+///
+/// Right-aligned: a source shorter than 32 bytes is left-padded with zeros
+/// (`buf[32-len..32] = xdr`), and a source longer than 32 bytes is truncated
+/// by keeping the *trailing* 32 bytes (`buf = xdr[len-32..len]`), not the
+/// leading ones — the meaningful key material of a real Stellar `Address`'s
+/// XDR encoding sits after its leading type discriminant, so keeping the
+/// trailing bytes is what "right-padded" encoding requires on both ends (#404).
 pub fn address_to_bytes32(env: &Env, addr: &Address) -> BytesN<32> {
     let xdr = addr.to_xdr(env);
-    let len = xdr.len();
+    let len = xdr.len() as usize;
     let mut buf = [0u8; 32];
-    let copy_len = core::cmp::min(len as usize, 32usize);
+    let start = len.saturating_sub(32);
+    let copy_len = core::cmp::min(len, 32usize);
     for i in 0..copy_len {
-        buf[32 - copy_len + i] = xdr.get(i as u32).unwrap_or(0);
+        buf[32 - copy_len + i] = xdr.get((start + i) as u32).unwrap_or(0);
     }
     BytesN::from_array(env, &buf)
 }
@@ -199,9 +209,32 @@ pub fn serialize_bridge_payload(env: &Env, p: &BridgeTransferPayload) -> Bytes {
     buf
 }
 
+/// Minimum valid payload length: 4 (prefix) + 32 (token) + 32 (recipient) +
+/// 16 (amount) + 4 (source_chain) + 4 (target_chain) + 8 (nonce) = 100 bytes.
+const MIN_PAYLOAD_LEN: u32 = 100;
+
 /// Parse a `BridgeTransferPayload` from raw Wormhole payload bytes.
+///
+/// # Panics
+///
+/// Panics if the payload is shorter than [`MIN_PAYLOAD_LEN`] bytes or does not
+/// start with the [`PAYLOAD_PREFIX`] magic bytes (`HBS\x00`).
 pub fn parse_bridge_payload(env: &Env, raw: &Bytes) -> BridgeTransferPayload {
     let prefix_len: u32 = 4;
+
+    // Validate minimum length before reading any fields.
+    let len = raw.len();
+    if len < MIN_PAYLOAD_LEN {
+        panic!("bridge payload too short");
+    }
+
+    // Validate the magic prefix to reject payloads that are not HBS transfers.
+    for i in 0..prefix_len {
+        if raw.get(i).unwrap_or(0) != PAYLOAD_PREFIX[i as usize] {
+            panic!("invalid bridge payload prefix");
+        }
+    }
+
     let mut offset: u32 = prefix_len;
 
     let mut token_arr = [0u8; 32];

@@ -49,7 +49,7 @@ Any editor works. If you use VS Code, the `rust-analyzer` extension provides inl
    cargo test --all                 # all tests must pass
    make build                       # contracts must compile to WASM
    ```
-4. **Open a PR** with `Closes #<issue>` in the body. CI runs `cargo fmt --check`, `cargo test`, and a WASM size check — all must be green.
+4. **Open a PR** with `Closes #<issue>` in the body. CI (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml) for the definitive, up-to-date list) runs considerably more than `fmt`/`test`/size — currently: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all`, a WASM size check, `check_interface_docs.py`, `check_event_field_types.py`, the gas-budget script's own unit tests, a gas profile/budget check, the `notification-service` job's `npm run lint`/`npm run format:check`, a `cargo-audit` security scan, a dependency-review check, and — on pull requests — an ABI-breaking-change check against the base branch. All must be green.
 
 ### Commit message format
 

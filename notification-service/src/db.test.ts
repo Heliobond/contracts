@@ -154,3 +154,41 @@ function listIndexes(store: Store): string[] {
     .all() as { name: string }[];
   return rows.map((r) => r.name);
 }
+
+// ── Issue #393: markLedgerProcessed / getLastProcessedLedger ─────────────────
+
+describe("Store processed-ledger cursor", () => {
+  let store: Store;
+
+  afterEach(() => {
+    store?.close();
+  });
+
+  it("returns 0 on a fresh database", () => {
+    store = new Store(":memory:");
+    expect(store.getLastProcessedLedger()).toBe(0);
+  });
+
+  it("returns the inserted ledger after a single mark", () => {
+    store = new Store(":memory:");
+    store.markLedgerProcessed(42);
+    expect(store.getLastProcessedLedger()).toBe(42);
+  });
+
+  it("returns the maximum ledger across out-of-order inserts", () => {
+    store = new Store(":memory:");
+    store.markLedgerProcessed(100);
+    store.markLedgerProcessed(50);
+    store.markLedgerProcessed(200);
+    store.markLedgerProcessed(75);
+    expect(store.getLastProcessedLedger()).toBe(200);
+  });
+
+  it("ignores duplicate ledger numbers", () => {
+    store = new Store(":memory:");
+    store.markLedgerProcessed(100);
+    store.markLedgerProcessed(100);
+    store.markLedgerProcessed(100);
+    expect(store.getLastProcessedLedger()).toBe(100);
+  });
+});

@@ -68,6 +68,8 @@ pub struct WithdrawQueued {
     pub from: Address,
     pub shares_burned: i128,
     pub usdc_owed: i128,
+    /// Total unpaid queue liabilities after this entry was added (#613).
+    pub queued_liabilities: i128,
 }
 
 /// Emitted when a queued redemption claim is settled by claim() (#3).
@@ -77,6 +79,8 @@ pub struct WithdrawClaimed {
     pub to: Address,
     pub usdc_paid: i128,
     pub claim_index: u64,
+    /// Total unpaid queue liabilities after this entry was paid (#613).
+    pub queued_liabilities: i128,
 }
 
 pub fn deposit(env: &Env, from: &Address, usdc_amount: i128, shares_minted: i128) {
@@ -118,6 +122,47 @@ pub fn emergency_admin_changed(env: &Env, new_emergency_admin: Option<Address>) 
     .publish(env);
 }
 
+/// Emitted when a project returns principal to the vault (#631).
+#[contractevent]
+pub struct PrincipalRepaid {
+    #[topic]
+    pub project_id: u32,
+    pub from: Address,
+    pub amount: i128,
+    pub outstanding: i128,
+}
+
+pub fn principal_repaid(env: &Env, project_id: u32, from: &Address, amount: i128, outstanding: i128) {
+    PrincipalRepaid {
+        project_id,
+        from: from.clone(),
+        amount,
+        outstanding,
+    }
+    .publish(env);
+}
+
+/// Emitted when a matured project's books are closed (#631). `impairment` is
+/// the principal that was still outstanding and has been written off.
+#[contractevent]
+pub struct ProjectSettled {
+    #[topic]
+    pub project_id: u32,
+    pub funded: i128,
+    pub repaid: i128,
+    pub impairment: i128,
+}
+
+pub fn project_settled(env: &Env, project_id: u32, funded: i128, repaid: i128, impairment: i128) {
+    ProjectSettled {
+        project_id,
+        funded,
+        repaid,
+        impairment,
+    }
+    .publish(env);
+}
+
 pub fn project_funded(env: &Env, project_id: u32, amount: i128, recipient: &Address) {
     ProjectFunded {
         project_id,
@@ -152,20 +197,34 @@ pub fn insurance_claimed(env: &Env, project_id: u32, recipient: &Address, amount
     .publish(env);
 }
 
-pub fn withdraw_queued(env: &Env, from: &Address, shares_burned: i128, usdc_owed: i128) {
+pub fn withdraw_queued(
+    env: &Env,
+    from: &Address,
+    shares_burned: i128,
+    usdc_owed: i128,
+    queued_liabilities: i128,
+) {
     WithdrawQueued {
         from: from.clone(),
         shares_burned,
         usdc_owed,
+        queued_liabilities,
     }
     .publish(env);
 }
 
-pub fn withdraw_claimed(env: &Env, to: &Address, usdc_paid: i128, claim_index: u64) {
+pub fn withdraw_claimed(
+    env: &Env,
+    to: &Address,
+    usdc_paid: i128,
+    claim_index: u64,
+    queued_liabilities: i128,
+) {
     WithdrawClaimed {
         to: to.clone(),
         usdc_paid,
         claim_index,
+        queued_liabilities,
     }
     .publish(env);
 }
@@ -368,7 +427,7 @@ pub struct FlashLoan {
 
 #[contractevent]
 pub struct FlashLoanFeeSet {
-    pub fee_bps: i128,
+    pub fee_bps: u32,
 }
 
 pub fn flash_loan(env: &Env, initiator: &Address, borrower: &Address, amount: i128, fee: i128) {
@@ -381,7 +440,7 @@ pub fn flash_loan(env: &Env, initiator: &Address, borrower: &Address, amount: i1
     .publish(env);
 }
 
-pub fn flash_loan_fee_set(env: &Env, fee_bps: i128) {
+pub fn flash_loan_fee_set(env: &Env, fee_bps: u32) {
     FlashLoanFeeSet { fee_bps }.publish(env);
 }
 

@@ -9,17 +9,18 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parents[1] / "check_gas_budgets.py"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 BUDGETS = FIXTURES / "budgets.json"
+BUDGETS_WITH_METADATA = FIXTURES / "budgets_with_metadata.json"
 
 
 class CheckGasBudgetsTest(unittest.TestCase):
-    def run_check(self, profile_name):
+    def run_check(self, profile_name, budgets_path=BUDGETS):
         with tempfile.TemporaryDirectory() as tmp:
             report_path = Path(tmp) / "gas-report.md"
             result = subprocess.run(
                 [
                     sys.executable,
                     str(SCRIPT),
-                    str(BUDGETS),
+                    str(budgets_path),
                     str(FIXTURES / profile_name),
                     str(report_path),
                 ],
@@ -54,6 +55,17 @@ class CheckGasBudgetsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertIn("## Unbudgeted Measurements", report)
         self.assertIn("- `contract.other_func`", report)
+
+    # Issue #446: exercise the informational-metadata-entry filter that the real
+    # gas-budgets.json relies on to keep `storage_key_sizes` out of pass/fail
+    # evaluation, since it has neither `instructions` nor `fee` keys.
+    def test_metadata_only_entry_is_excluded_from_evaluation(self):
+        result, report = self.run_check(
+            "profile_pass.txt", budgets_path=BUDGETS_WITH_METADATA
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("| `contract.func` | 900 | 1000 | 90 | 100 | OK |", report)
+        self.assertNotIn("storage_key_sizes", report)
 
     def test_wrong_argument_count_errors(self):
         result = subprocess.run(

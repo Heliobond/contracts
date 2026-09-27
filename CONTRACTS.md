@@ -41,7 +41,7 @@ Constructor args: `admin: Address, whitelister: Address`
 | Function | Auth | Args | Returns | Events |
 |---|---|---|---|---|
 | `set_whitelist(account, status)` | whitelister | `account: Address, status: bool` | `()` | `WhitelistSet { account, status }` |
-| `create_project(creator, uri, maturity_date)` | creator (whitelisted) | `creator: Address, uri: String, maturity_date: u64` | `u32` (project\_id) | `ProjectCreated { project_id, owner }` |
+| `create_project(creator, uri, maturity_date, metadata_hash)` | creator (whitelisted) | `creator: Address, uri: String, maturity_date: u64, metadata_hash: BytesN<32>` | `u32` (project\_id) | `ProjectCreated { project_id, owner }` |
 | `get_project(id)` | none | `id: u32` | `ProjectData` | — |
 | `total_projects()` | none | — | `u32` | — |
 | `get_all_projects()` | none | — | `Vec<(u32, ProjectData)>` | — |
@@ -64,9 +64,15 @@ pub struct ProjectData {
     pub green_impact: u32,     // 0–100, oracle-set
     pub maturity_date: u64,    // Unix timestamp; 0 = open-ended
     pub certification_status: CertificationStatus,
+    pub last_update_timestamp: u64,
+    pub status: ProjectStatus,
+    pub created_at: u64,
+    pub metadata_hash: BytesN<32>,
 }
 
-pub enum CertificationStatus { None, Certified, Revoked }
+pub enum CertificationStatus { None, Pending, Certified, Revoked }
+
+pub enum ProjectStatus { Pending, Active, Funded, Completed, Archived }
 
 pub struct Proposal {
     pub description: String,
@@ -111,7 +117,7 @@ Token: HBS (Heliobond Shares) — SEP-41 fungible token via `FungibleToken` trai
 | Function | Auth | Args | Returns | Events |
 |---|---|---|---|---|
 | `deposit(from, usdc_amount)` | from | `from: Address, usdc_amount: i128` (≤ MAX\_DEPOSIT) | `i128` (shares minted) | `Deposit { from, usdc_amount, shares_minted }` |
-| `withdraw(from, shares_amount)` | from (via `burn`) | `from: Address, shares_amount: i128` | `i128` (USDC returned) | `Withdraw { from, shares_burned, usdc_returned }` |
+| `withdraw(from, shares_amount, min_usdc_return)` | from (via `burn`) | `from: Address, shares_amount: i128, min_usdc_return: i128` | `i128` (USDC returned) | `Withdraw { from, shares_burned, usdc_returned }` |
 
 **Deposit fee deduction order:**
 1. `insurance_premium = usdc_amount × 50 / 10_000`
@@ -246,8 +252,9 @@ Investor                       |                              |
    - Updates `TotalInvestments` and `ProjectInvestment(project_id)` ledger entries
    - Emits `ProjectFunded`
 
-3. **Investor calls `withdraw(from, shares_amount)`**
+3. **Investor calls `withdraw(from, shares_amount, min_usdc_return)`**
    - Calls `convert_to_assets(shares_amount)` to determine USDC to return
+   - Panics if the USDC return is below `min_usdc_return` (slippage protection)
    - Burns HBS shares via `Base::burn`
    - Transfers USDC from vault to investor
 
@@ -289,4 +296,3 @@ hash (keep every uploaded hash recorded, see `deploy/testnet.json` and
 `scripts/check_deploy_wasm_hash.py`). State written under the new version may
 not be readable by the old WASM if the storage layout changed, so this is not
 a true undo.
-   - Emits `Withdraw`

@@ -23,6 +23,15 @@ Key reasons:
 
 `total_assets` = liquid USDC + invested USDC + expected returns (credit quality × green impact score).
 
+### Two yield-reaches-LPs mechanisms (updated, #400)
+
+Reason 2 above describes only the *implicit* mechanism — `total_assets` incorporates `get_expected_returns`, so share price rises as expected returns grow relative to `total_supply`, with no per-LP loop. That description was accurate when this ADR was written, but the vault has since (#125) also grown a second, *explicit* yield mechanism that coexists with it:
+
+- **Implicit (share-price appreciation)** — as described above. LPs never call anything; their share's redeemable value simply rises.
+- **Explicit (`receive_yield` / `claim_yield` accumulator)** — the owner calls `receive_yield` to credit real USDC repayment into the vault, which updates a global `YieldPerShareAccum`. Each investor tracks a per-address `YieldDebt` checkpoint and calls `claim_yield` to withdraw their accrued share. This *is* a per-LP yield distribution loop — the classic accumulator pattern reason 2 above was contrasted against.
+
+Both exist because they serve different purposes: the implicit mechanism handles projected/unrealised returns baked into `total_assets` (so share price reflects the vault's expected future value even before cash arrives), while the explicit accumulator handles *actually received* USDC yield that should be claimable without forcing a full withdraw/redeposit cycle. A reader relying on reason 2 alone would miss the explicit mechanism entirely.
+
 ## Consequences
 
 **Positive:**

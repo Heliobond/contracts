@@ -117,12 +117,29 @@ describe("GET /notifications/history", () => {
     expect(res.body.items).toEqual([]);
     expect(res.body.total).toBe(0);
   });
+
+  // Issue #427: negative limit/offset must fall back rather than reach the SQL query.
+  it("falls back to defaults instead of passing a negative limit/offset through", async () => {
+    store = makeStore();
+    for (let i = 0; i < 3; i++) {
+      store.recordNotification("GINVESTOR", 1, "webhook", 100 + i);
+    }
+    const app = createApi(store);
+
+    const res = await request(app)
+      .get("/notifications/history")
+      .query({ limit: -1, offset: -5 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.limit).toBe(50);
+    expect(res.body.offset).toBe(0);
+    expect(res.body.items).toHaveLength(3);
+  });
 });
 
 // ── Issue #218: input validation for malformed payloads ─────────────────────
 
 describe("PUT /preferences/:address input validation", () => {
-describe("CORS configuration", () => {
   let store: Store;
 
   afterEach(() => {
@@ -190,6 +207,47 @@ describe("CORS configuration", () => {
   });
 
   it("returns 400 when body is an array", async () => {
+    store = makeStore();
+    const app = createApi(store);
+
+    const res = await request(app)
+      .put("/preferences/GINVESTOR")
+      .send([{ email: "test@example.com" }]);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/JSON object/);
+  });
+
+  it("accepts a valid payload and returns 200", async () => {
+    store = makeStore();
+    const app = createApi(store);
+
+    const res = await request(app)
+      .put("/preferences/GINVESTOR")
+      .send({
+        email: "test@example.com",
+        webhook_url: "https://example.com/webhook",
+        enabled: true,
+        min_delta: 5,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.email).toBe("test@example.com");
+    expect(res.body.webhook_url).toBe("https://example.com/webhook");
+    expect(res.body.enabled).toBe(true);
+    expect(res.body.min_delta).toBe(5);
+  });
+});
+
+// ── CORS configuration ─────────────────────────────────────────────────────
+
+describe("CORS configuration", () => {
+  let store: Store;
+
+  afterEach(() => {
+    store?.close();
+  });
+
   it("sets Access-Control-Allow-Origin for a matching origin", async () => {
     store = makeStore();
     const app = createApi(store, {
@@ -263,6 +321,33 @@ describe("CORS configuration", () => {
     expect(res.body.enabled).toBe(true);
     expect(res.body.min_delta).toBe(5);
   });
+
+  // Issue #375: PUT should merge with existing preference, not overwrite missing fields
+  it("preserves existing fields when only some fields are sent", async () => {
+    store = makeStore();
+    const app = createApi(store);
+
+    // Create initial preference with email and webhook_url
+    await request(app)
+      .put("/preferences/GINVESTOR")
+      .send({
+        email: "me@example.com",
+        webhook_url: "https://my.app/hook",
+        enabled: true,
+        min_delta: 1,
+      });
+
+    // Update only min_delta — email and webhook_url should be preserved
+    const res = await request(app)
+      .put("/preferences/GINVESTOR")
+      .send({ min_delta: 5 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.email).toBe("me@example.com");
+    expect(res.body.webhook_url).toBe("https://my.app/hook");
+    expect(res.body.min_delta).toBe(5);
+    expect(res.body.enabled).toBe(true);
+  });
 });
 
 // ── Issue #219: health-check with DB connectivity ──────────────────────────
@@ -275,7 +360,9 @@ describe("GET /health with DB connectivity", () => {
   });
 });
 
-describe("GET /metrics", () => {
+// ── Issue #219: health-check with DB connectivity ──────────────────────────
+
+describe("GET /health with DB connectivity", () => {
   let store: Store;
 
   afterEach(() => {
@@ -305,6 +392,53 @@ describe("GET /metrics", () => {
 
     expect(res.status).toBe(503);
     expect(res.body.status).toBe("degraded");
+  });
+});
+
+// ── Issue #339: DELETE /preferences/:address ────────────────────────────────
+
+describe("DELETE /preferences/:address", () => {
+  let store: Store;
+
+  afterEach(() => {
+    store?.close();
+  });
+
+  it("removes an existing preference (subsequent GET returns 404)", async () => {
+    store = makeStore();
+    const app = createApi(store);
+
+    // Create a preference first
+    await request(app)
+      .put("/preferences/GINVESTOR")
+      .send({ email: "test@example.com" });
+
+    const del = await request(app).delete("/preferences/GINVESTOR");
+    expect(del.status).toBe(204);
+
+    // GET should now return 404
+    const get = await request(app).get("/preferences/GINVESTOR");
+    expect(get.status).toBe(404);
+  });
+
+  it("returns 204 for a non-existent address (idempotent)", async () => {
+    store = makeStore();
+    const app = createApi(store);
+
+    const del = await request(app).delete("/preferences/GNONEXISTENT");
+    expect(del.status).toBe(204);
+  });
+});
+
+// ── GET /metrics ───────────────────────────────────────────────────────────
+
+describe("GET /metrics", () => {
+  let store: Store;
+
+  afterEach(() => {
+    store?.close();
+  });
+
   it("returns snapshot from the provided Metrics instance", async () => {
     store = makeStore();
     const metrics = new Metrics();
@@ -328,5 +462,68 @@ describe("GET /metrics", () => {
 
     const res = await request(app).get("/metrics");
     expect(res.status).toBe(404);
+  });
+});
+
+// ── Issue #394: GET /preferences returns correct data ────────────────────────
+
+describe("GET /preferences response", () => {
+  let store: Store;
+
+  afterEach(() => {
+    store?.close();
+  });
+
+  it("returns all upserted preferences in most-recently-updated-first order", async () => {
+    store = makeStore();
+
+    // Upsert two preferences with different updated_at timestamps.
+    store.upsertPreference({
+      investor_address: "GINVESTOR",
+      email: "alice@example.invalid",
+      webhook_url: "https://example.invalid/alice",
+      enabled: true,
+      min_delta: 5,
+      updated_at: "2025-01-01T00:00:00.000Z",
+    });
+    store.upsertPreference({
+      investor_address: "GOTHER",
+      email: "bob@example.invalid",
+      enabled: true,
+      min_delta: 2,
+      updated_at: "2025-06-01T00:00:00.000Z",
+    });
+
+    const app = createApi(store);
+    const res = await request(app).get("/preferences");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+
+    // Most recently updated first (GOTHER was updated later).
+    expect(res.body[0].investor_address).toBe("GOTHER");
+    expect(res.body[1].investor_address).toBe("GINVESTOR");
+
+    // Verify fields.
+    const alice = res.body[1];
+    expect(alice.email).toBe("alice@example.invalid");
+    expect(alice.webhook_url).toBe("https://example.invalid/alice");
+    expect(alice.enabled).toBe(true);
+    expect(alice.min_delta).toBe(5);
+
+    const bob = res.body[0];
+    expect(bob.email).toBe("bob@example.invalid");
+    expect(bob.enabled).toBe(true);
+    expect(bob.min_delta).toBe(2);
+  });
+
+  it("returns an empty array when no preferences exist", async () => {
+    store = makeStore();
+    const app = createApi(store);
+
+    const res = await request(app).get("/preferences");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
   });
 });

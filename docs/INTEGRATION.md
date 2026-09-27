@@ -18,6 +18,68 @@ You also need:
 
 ---
 
+## Typed SDK (`@heliobond/contracts-sdk`)
+
+**Issue:** [#624](https://github.com/Heliobond/contracts/issues/624)
+
+Each release tag (`v*`) publishes `@heliobond/contracts-sdk` to GitHub Packages
+(`.github/workflows/sdk.yml`). It contains:
+
+- `ProjectRegistry` / `InvestmentVault` — typed clients generated with
+  `stellar contract bindings typescript` from that release's WASMs, so method
+  names, argument types and return types always match the deployed ABI;
+- `networks` — per-network `networkPassphrase`, `rpcUrl` and contract IDs,
+  generated from `deploy/*.json`;
+- `requireContractIds(name)` — returns a network's config, or throws if its
+  contracts aren't deployed yet.
+
+Prefer the SDK over hand-written `nativeToScVal` calls (the examples further
+down). Hand-encoded arguments drift silently when the ABI changes.
+
+```bash
+# .npmrc
+@heliobond:registry=https://npm.pkg.github.com
+```
+
+```bash
+npm install @heliobond/contracts-sdk @stellar/stellar-sdk
+```
+
+```typescript
+import { Keypair } from "@stellar/stellar-sdk";
+import { basicNodeSigner } from "@stellar/stellar-sdk/contract";
+import { InvestmentVault, requireContractIds } from "@heliobond/contracts-sdk";
+
+const net = requireContractIds("testnet");
+const keypair = Keypair.fromSecret(process.env.SECRET_KEY!);
+const vault = new InvestmentVault.Client({
+  contractId: net.investmentVault,
+  networkPassphrase: net.networkPassphrase,
+  rpcUrl: net.rpcUrl,
+  publicKey: keypair.publicKey(),
+  ...basicNodeSigner(keypair, net.networkPassphrase),
+});
+
+const tx = await vault.deposit({ from: keypair.publicKey(), usdc_amount: 1_000_000_000n });
+const { result: sharesMinted } = await tx.signAndSend();
+```
+
+A runnable version lives at `sdk/examples/deposit.ts`
+(`SECRET_KEY=S... npm run example:deposit` from `sdk/`).
+
+**Building locally:**
+
+```bash
+stellar contract build
+scripts/build_sdk.sh 0.0.0-dev   # bindings + networks.ts (gitignored)
+cd sdk && npm install && npm run build
+```
+
+> The frontend and backend will adopt the SDK in follow-up PRs, replacing their
+> hand-written calls and `src/lib/registry.ts`'s ScVal encoding.
+
+---
+
 ## Contract addresses
 
 | Contract | Testnet ID | Description |
@@ -146,19 +208,32 @@ async function invokeContract(
 
 ### Check if an address is whitelisted
 
+> **Note:** There is no on-chain `get_whitelist` getter. The only way to
+> determine current whitelist status off-chain is to index `WhitelistSet`
+> events emitted by `set_whitelist`. The example below filters the event
+> stream for the most recent status for a given address.
+
 ```typescript
 const REGISTRY = "CXXX…";
 
-const result = await server.simulateTransaction(
-  new TransactionBuilder(account, { fee: "100", networkPassphrase: network })
-    .addOperation(new Contract(REGISTRY).call(
-      "get_whitelist",
-      nativeToScVal(keypair.publicKey(), { type: "address" }),
-    ))
-    .setTimeout(30)
-    .build()
-);
-const isWhitelisted: boolean = scValToNative((result as any).result.retval);
+// Index WhitelistSet events to reconstruct current whitelist status.
+// There is no direct on-chain query for this — set_whitelist emits
+// WhitelistSet { account, status } and that is the only source of truth.
+const events = await server.getEvents({
+  filters: [{ type: "contract", contractId: REGISTRY }],
+  startLedger: 0,
+  limit: 100,
+});
+const target = keypair.publicKey();
+let isWhitelisted = false;
+for (const event of events.events) {
+  if (event.type !== "contract") continue;
+  const topics = event.topics.map(scValToNative);
+  if (topics[0] !== "WhitelistSet") continue;
+  if (topics[1] === target) {
+    isWhitelisted = topics[2] as boolean;
+  }
+}
 ```
 
 ### Create a project
@@ -171,6 +246,7 @@ const projectId = scValToNative(await invokeContract(
     nativeToScVal(keypair.publicKey(), { type: "address" }),  // creator
     nativeToScVal("ipfs://QmYourHash",  { type: "string" }),  // uri
     nativeToScVal(0n,                   { type: "u64" }),     // maturity_date (0 = open-ended)
+    nativeToScVal(hash("project-metadata-v1"), { type: "bytesN<32>" }), // metadata_hash
   ],
   keypair,
 ));

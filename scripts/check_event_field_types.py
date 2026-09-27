@@ -33,6 +33,16 @@ ALLOWED_DIVERGENCES = {
         "for this chain — intentionally different from same-chain "
         "`recipient` fields like CollateralReleased/InsuranceClaimed."
     ),
+    ("WhitelistSet", "status"): (
+        "WhitelistSet.status is a simple on/off toggle (bool), while "
+        "ProjectCertified.status is a CertificationStatus enum — "
+        "intentionally different domain concepts sharing a generic name."
+    ),
+    ("ProjectCertified", "status"): (
+        "ProjectCertified.status is a CertificationStatus enum — "
+        "intentionally different from WhitelistSet.status (bool), "
+        "which is a simple on/off toggle."
+    ),
 }
 
 # Matches `#[contractevent] ... pub struct Name { ...fields... }`, non-greedy
@@ -82,8 +92,14 @@ def main() -> int:
 
         contracts_involved = {c for locs in remaining.values() for c, _ in locs}
         if len(contracts_involved) <= 1:
-            # Only inconsistent within a single contract's own events — not
-            # what this check is about (still worth knowing, but out of scope).
+            # Inconsistent within a single contract's own events — still a
+            # real hazard for off-chain indexers that normalize fields across
+            # events from the same contract (#397).
+            failed = True
+            print(f"Field `{field_name}` has inconsistent types within a single contract:")
+            for ftype, locs in remaining.items():
+                for contract, struct_name in locs:
+                    print(f"  {contract}::{struct_name}.{field_name}: {ftype}")
             continue
         failed = True
         print(f"Field `{field_name}` has inconsistent types across contracts:")
@@ -93,14 +109,14 @@ def main() -> int:
 
     if failed:
         print(
-            "\nShared field names should use the same type across both "
-            "contracts' events so off-chain indexers can rely on a "
-            "consistent schema.",
+            "\nShared field names should use the same type across events "
+            "(both within and across contracts) so off-chain indexers can "
+            "rely on a consistent schema.",
             file=sys.stderr,
         )
         return 1
 
-    print("All shared event field names use consistent types across both contracts.")
+    print("All shared event field names use consistent types.")
     return 0
 
 

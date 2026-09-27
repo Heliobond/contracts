@@ -113,6 +113,21 @@ fn test_update_impact_score() {
     assert_eq!(project.green_impact, 90);
 }
 
+// ── Issue #445: update_impact_scores_batch must reject an empty batch ──────────
+
+#[test]
+fn test_update_impact_scores_batch_empty_list_reverts() {
+    let (env, _admin, _whitelister, client) = setup();
+    let empty: Vec<(u32, u32, u32)> = Vec::new(&env);
+
+    let result = client.try_update_impact_scores_batch(&empty);
+
+    assert!(
+        result.is_err(),
+        "update_impact_scores_batch() should revert on an empty updates list"
+    );
+}
+
 #[test]
 fn test_multisig_update_impact_score_approved() {
     let (env, _admin, _whitelister, client) = setup();
@@ -136,6 +151,43 @@ fn test_multisig_update_impact_score_approved() {
         &id,
         &80u32,
         &90u32,
+        &soroban_sdk::vec![&env, signer1, signer2],
+    );
+
+    let project = client.get_project(&id);
+    assert_eq!(project.credit_quality, 80);
+    assert_eq!(project.green_impact, 90);
+}
+
+// ── Issue #437: update_impact_scores_batch must stay reachable once multisig is enabled ──
+
+#[test]
+fn test_update_scores_batch_approved_after_multisig_enabled() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let signer3 = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmBatchApproved"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    client.set_multisig_admin(
+        &soroban_sdk::vec![&env, signer1.clone(), signer2.clone(), signer3],
+        &2u32,
+    );
+
+    // update_impact_scores_batch itself is now permanently blocked; only the
+    // approvals path works.
+    let updates = soroban_sdk::vec![&env, (id, 80u32, 90u32)];
+    assert!(client.try_update_impact_scores_batch(&updates).is_err());
+
+    client.update_scores_batch_approved(
+        &updates,
         &soroban_sdk::vec![&env, signer1, signer2],
     );
 
@@ -391,6 +443,34 @@ fn test_get_projects_page_zero_limit_returns_empty() {
     assert_eq!(page.len(), 0);
 }
 
+// ── Issue #435: offset beyond the project counter was never explicitly tested ──
+
+#[test]
+fn test_get_projects_page_offset_beyond_counter_returns_empty() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    for i in 1..=5u32 {
+        client.create_project(
+            &creator,
+            &String::from_str(&env, &std::format!("ipfs://Qm{i}")),
+            &0u64,
+            &test_metadata_hash(&env),
+        );
+    }
+
+    // 5 projects exist; offset is far beyond the counter, distinct from a
+    // large-limit edge case (limit here is small and would page normally
+    // if offset were in range).
+    let page = client.get_projects_page(&1_000u32, &10u32);
+    assert_eq!(page.len(), 0);
+
+    // Also check the boundary: offset exactly equal to the counter should
+    // likewise return nothing (there's no project ID `counter + 1` yet).
+    let boundary_page = client.get_projects_page(&5u32, &10u32);
+    assert_eq!(boundary_page.len(), 0);
+}
+
 #[test]
 #[should_panic]
 fn test_update_impact_score_nonexistent_project_panics() {
@@ -576,6 +656,30 @@ fn test_update_credit_quality_score_noop_identical_values() {
     let project_after = client.get_project(&id);
     assert_eq!(project_before.credit_quality, project_after.credit_quality);
     assert_eq!(project_before.green_impact, project_after.green_impact);
+}
+
+// ── #322: update_credit_quality_score must respect the multisig gate ────────
+
+#[test]
+#[should_panic]
+fn test_update_credit_quality_score_rejects_plain_call_once_multisig_enabled() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmCreditQualityMultisig"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    client.set_multisig_admin(&soroban_sdk::vec![&env, signer1, signer2], &2u32);
+
+    // Plain owner call must now be rejected — only update_credit_quality_score
+    // is missing this guard; update_impact_score already enforces it.
+    client.update_credit_quality_score(&id, &80u32);
 }
 
 // ── URI length edge cases (#119) ──────────────────────────────────────────────
@@ -1673,6 +1777,50 @@ fn test_score_history_multiple_updates_ordered() {
     assert!(history.get(1).unwrap().timestamp < history.get(2).unwrap().timestamp);
 }
 
+// ── Issue #434: get_score_history's ring-buffer wraparound was never tested ────
+
+#[test]
+fn test_score_history_wraps_around_past_max_score_history() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    // MAX_SCORE_HISTORY is 50; perform 55 updates (5 past the buffer size) with a
+    // distinct credit_quality each time so every call actually appends (no no-ops).
+    // Update i uses credit_quality = i, green_impact = 50 (fixed).
+    for i in 0..55u32 {
+        client.update_impact_score(&id, &i, &50u32);
+    }
+
+    let history = client.get_score_history(&id);
+
+    // Only the most recent MAX_SCORE_HISTORY (50) entries survive; updates 0-4
+    // were overwritten by updates 50-54.
+    assert_eq!(history.len(), 50);
+    assert_eq!(
+        history.get(0).unwrap().credit_quality,
+        5,
+        "oldest surviving entry should be update index 5 (updates 0-4 were overwritten)"
+    );
+    assert_eq!(
+        history.get(49).unwrap().credit_quality,
+        54,
+        "newest entry should be the last update (index 54)"
+    );
+
+    // Confirm every surviving entry is in strict chronological order with no gaps
+    // or leaked overwritten data: position k holds update index (5 + k).
+    for k in 0..50u32 {
+        assert_eq!(history.get(k).unwrap().credit_quality, 5 + k);
+    }
+}
+
 #[test]
 fn test_credit_quality_score_history_recorded() {
     let (env, _admin, _whitelister, client) = setup();
@@ -1818,6 +1966,50 @@ fn test_getters_work_when_paused() {
     assert_eq!(client.is_paused(), true);
 }
 
+// ── Persistent-storage TTL extension on write (#328) ──────────────────────────
+
+#[test]
+fn test_project_write_extends_ttl_beyond_creation() {
+    use soroban_sdk::testutils::storage::Persistent as _;
+
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmTtl"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    let key = crate::types::DataKey::Project(id);
+    let ttl_after_create =
+        env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
+    assert_eq!(ttl_after_create, crate::storage::TTL_EXTEND_TO_LEDGERS);
+
+    // Advance the ledger until the entry's remaining TTL has decayed below the
+    // extension threshold, so the next write is guaranteed to trigger a real
+    // re-extension rather than a threshold-gated no-op.
+    let advance =
+        crate::storage::TTL_EXTEND_TO_LEDGERS - crate::storage::TTL_EXTEND_THRESHOLD_LEDGERS + 1;
+    env.ledger().with_mut(|l| {
+        l.sequence_number += advance;
+    });
+    let ttl_before_update =
+        env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
+    assert!(ttl_before_update < crate::storage::TTL_EXTEND_THRESHOLD_LEDGERS);
+
+    client.update_credit_quality_score(&id, &42u32);
+
+    let ttl_after_update =
+        env.as_contract(&client.address, || env.storage().persistent().get_ttl(&key));
+    assert_eq!(
+        ttl_after_update,
+        crate::storage::TTL_EXTEND_TO_LEDGERS,
+        "writing the project should re-extend its TTL, not just at creation"
+    );
+}
+
 // ── Storage compaction tests (#88) ────────────────────────────────────────────
 
 #[test]
@@ -1857,6 +2049,115 @@ fn test_compact_storage_removes_zero_collateral() {
         &soroban_sdk::vec![&env, token],
     );
     assert_eq!(removed, 0u32);
+}
+
+// ── compact_storage pair-count cap (#549) ─────────────────────────────────────
+
+fn ids_and_tokens(env: &Env, n_ids: u32, n_tokens: u32) -> (soroban_sdk::Vec<u32>, soroban_sdk::Vec<Address>) {
+    let mut ids = soroban_sdk::Vec::new(env);
+    for i in 0..n_ids {
+        ids.push_back(i + 1);
+    }
+    let mut tokens = soroban_sdk::Vec::new(env);
+    for _ in 0..n_tokens {
+        tokens.push_back(Address::generate(env));
+    }
+    (ids, tokens)
+}
+
+/// Two lists that each pass the per-list cap (20) but whose product (400)
+/// exceeds MAX_COMPACT_STORAGE_PAIRS must be rejected.
+#[test]
+fn test_compact_storage_rejects_large_pair_product() {
+    let (env, _admin, _whitelister, client) = setup();
+    let (ids, tokens) = ids_and_tokens(&env, 20, 20);
+    assert!(client.try_compact_storage(&ids, &tokens).is_err());
+
+    // Just over the pair cap with small lists is rejected too.
+    let (ids, tokens) = ids_and_tokens(&env, 3, 7);
+    assert!(client.try_compact_storage(&ids, &tokens).is_err());
+}
+
+/// Inputs whose product is at the cap are accepted, whatever the shape.
+#[test]
+fn test_compact_storage_accepts_pairs_within_cap() {
+    let (env, _admin, _whitelister, client) = setup();
+    for (n_ids, n_tokens) in [(1u32, 20u32), (20, 1), (4, 5)] {
+        let (ids, tokens) = ids_and_tokens(&env, n_ids, n_tokens);
+        assert_eq!(client.compact_storage(&ids, &tokens), 0u32);
+    }
+}
+
+// ── Project status transitions (#329) ──────────────────────────────────────────
+
+#[test]
+fn test_set_project_status_transitions_and_emits_event() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmStatus"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+    assert_eq!(client.get_project(&id).status, ProjectStatus::Pending);
+
+    client.set_project_status(&id, &ProjectStatus::Active);
+
+    // Events are scoped to the most recent invocation, so check right after
+    // the mutating call before any other client call resets the log.
+    let events = env.events().all().filter_by_contract(&client.address);
+    assert_eq!(
+        events.events().len(),
+        1,
+        "set_project_status should emit exactly one event"
+    );
+    assert_eq!(client.get_project(&id).status, ProjectStatus::Active);
+
+    client.set_project_status(&id, &ProjectStatus::Funded);
+    assert_eq!(client.get_project(&id).status, ProjectStatus::Funded);
+}
+
+#[test]
+fn test_set_project_status_rejects_noop() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmStatusNoop"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    assert!(client
+        .try_set_project_status(&id, &ProjectStatus::Pending)
+        .is_err());
+}
+
+#[test]
+fn test_set_project_status_rejects_archived_target_and_source() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmStatusArch"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    // Cannot set Archived through this path — must use archive_project.
+    assert!(client
+        .try_set_project_status(&id, &ProjectStatus::Archived)
+        .is_err());
+
+    client.archive_project(&id);
+    // Cannot transition an already-archived project either.
+    assert!(client
+        .try_set_project_status(&id, &ProjectStatus::Active)
+        .is_err());
 }
 
 // ── Migration tests (#64) ──────────────────────────────────────────────────────
@@ -1980,6 +2281,9 @@ fn test_all_only_owner_functions_reject_non_admin_caller() {
             .is_err(),
         client
             .try_update_credit_quality_score(&project_id, &1u32)
+            .is_err(),
+        client
+            .try_set_project_status(&project_id, &crate::types::ProjectStatus::Active)
             .is_err(),
         client
             .try_liquidate_collateral(&project_id, &addr(), &addr())
@@ -2177,4 +2481,431 @@ proptest! {
         let result = client.try_set_creator_reputation(&whitelister, &creator, &score);
         prop_assert!(result.is_err());
     }
+}
+
+// ── get_multisig_admin / clear_multisig_admin tests (#384) ────────────────────
+
+#[test]
+fn test_get_multisig_admin_returns_empty_by_default() {
+    let (_env, _admin, _whitelister, client) = setup();
+    let (signers, threshold) = client.get_multisig_admin();
+    assert_eq!(signers.len(), 0);
+    assert_eq!(threshold, 0);
+}
+
+#[test]
+fn test_get_multisig_admin_after_set() {
+    let (env, _admin, _whitelister, client) = setup();
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+
+    client.set_multisig_admin(
+        &soroban_sdk::vec![&env, signer1.clone(), signer2.clone()],
+        &2u32,
+    );
+
+    let (signers, threshold) = client.get_multisig_admin();
+    assert_eq!(signers.len(), 2);
+    assert!(signers.contains(&signer1));
+    assert!(signers.contains(&signer2));
+    assert_eq!(threshold, 2);
+}
+
+#[test]
+fn test_clear_multisig_admin_resets_to_defaults() {
+    let (env, _admin, _whitelister, client) = setup();
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+
+    client.set_multisig_admin(
+        &soroban_sdk::vec![&env, signer1, signer2],
+        &2u32,
+    );
+
+    // Confirm set worked
+    let (_, threshold_before) = client.get_multisig_admin();
+    assert_eq!(threshold_before, 2);
+
+    client.clear_multisig_admin();
+
+    let (signers, threshold) = client.get_multisig_admin();
+    assert_eq!(signers.len(), 0);
+    assert_eq!(threshold, 0);
+}
+
+// ── Issue #390: health_check test coverage (project_registry) ────────────────
+
+/// health_check returns default operational state for a fresh registry.
+#[test]
+fn test_health_check_default_state() {
+    let (_env, _admin, _whitelister, client) = setup();
+    let status = client.health_check();
+
+    assert_eq!(status.state_version, 1);
+    assert_eq!(status.is_paused, false);
+    assert_eq!(status.total_projects, 0);
+    assert_eq!(status.has_emergency_admin, false);
+}
+
+/// health_check reflects total_projects after creation.
+#[test]
+fn test_health_check_reflects_project_count() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+
+    client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm1"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+    client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm2"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    let status = client.health_check();
+    assert_eq!(status.total_projects, 2);
+}
+
+/// health_check reflects a paused registry.
+#[test]
+fn test_health_check_reflects_paused_state() {
+    let (env, _admin, _whitelister, client) = setup();
+    let emergency_admin = Address::generate(&env);
+    client.set_emergency_admin(&Some(emergency_admin.clone()));
+
+    client.emergency_pause(&emergency_admin);
+
+    let status = client.health_check();
+    assert_eq!(status.is_paused, true);
+}
+
+/// health_check reports has_emergency_admin when one is configured.
+#[test]
+fn test_health_check_reflects_emergency_admin() {
+    let (_env, _admin, _whitelister, client) = setup();
+    let emergency_admin = Address::generate(&_env);
+    client.set_emergency_admin(&Some(emergency_admin));
+
+    let status = client.health_check();
+    assert_eq!(status.has_emergency_admin, true);
+}
+
+// ── Persistent TTL on non-Project keys (#552) ──────────────────────────────────
+
+fn persistent_ttl(env: &Env, client: &ProjectRegistryClient, key: &crate::types::DataKey) -> u32 {
+    use soroban_sdk::testutils::storage::Persistent as _;
+    env.as_contract(&client.address, || env.storage().persistent().get_ttl(key))
+}
+
+/// The shared helper used for the compacted `Arch` summary and the
+/// `HasVoted` double-vote guard must leave each entry at the extension target.
+#[test]
+fn test_write_persistent_extends_arch_and_has_voted_ttl() {
+    let (env, _admin, _whitelister, client) = setup();
+    let voter = Address::generate(&env);
+    let arch_key = crate::types::DataKey::Arch(1);
+    let voted_key = crate::types::DataKey::HasVoted(1, voter.clone());
+
+    env.as_contract(&client.address, || {
+        crate::storage::write_persistent(
+            &env,
+            &arch_key,
+            &ArchiveSummary {
+                owner: voter.clone(),
+                final_credit_quality: 0,
+                final_green_impact: 0,
+                maturity_date: 0,
+                certification_status: CertificationStatus::None,
+                metadata_hash: test_metadata_hash(&env),
+            },
+        );
+        crate::storage::write_persistent(&env, &voted_key, &true);
+    });
+
+    assert_eq!(
+        persistent_ttl(&env, &client, &arch_key),
+        crate::storage::TTL_EXTEND_TO_LEDGERS
+    );
+    assert_eq!(
+        persistent_ttl(&env, &client, &voted_key),
+        crate::storage::TTL_EXTEND_TO_LEDGERS
+    );
+}
+
+/// set_creator_reputation must extend the reputation entry's TTL.
+#[test]
+fn test_creator_reputation_write_extends_ttl() {
+    let (env, _admin, whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_creator_reputation(&whitelister, &creator, &75u32);
+
+    let key = crate::types::DataKey::CreatorReputation(creator);
+    assert_eq!(
+        persistent_ttl(&env, &client, &key),
+        crate::storage::TTL_EXTEND_TO_LEDGERS
+    );
+}
+
+/// A score update appends to the history ring buffer; both the slot and the
+/// running total must be TTL-extended so the buffer can't reset to slot 0.
+#[test]
+fn test_score_history_write_extends_ttl() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmHistTtl"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+    client.update_credit_quality_score(&id, &42u32);
+
+    let total_key = crate::types::DataKey::ScoreHistoryTotal(id);
+    let slot_key = crate::types::DataKey::ScoreHistorySlot(id, 0);
+    assert_eq!(
+        persistent_ttl(&env, &client, &total_key),
+        crate::storage::TTL_EXTEND_TO_LEDGERS
+    );
+    assert_eq!(
+        persistent_ttl(&env, &client, &slot_key),
+        crate::storage::TTL_EXTEND_TO_LEDGERS
+    );
+}
+
+// ── Issue #628: MIN_UPDATE_INTERVAL tolerates ledger-close jitter ─────────────
+
+fn scored_project_at(env: &Env, client: &ProjectRegistryClient, t0: u64) -> u32 {
+    let creator = Address::generate(env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(env),
+    );
+    env.ledger().with_mut(|l| l.timestamp = t0);
+    client.update_impact_score(&id, &50u32, &50u32);
+    id
+}
+
+#[test]
+fn test_update_interval_allows_small_jitter() {
+    let (env, _admin, _whitelister, client) = setup();
+    let t0 = 1_000_000u64;
+    let id = scored_project_at(&env, &client, t0);
+
+    // An hourly oracle landing a few seconds "early" must still succeed.
+    env.ledger().with_mut(|l| l.timestamp = t0 + 3590);
+    client.update_impact_score(&id, &60u32, &60u32);
+    assert_eq!(client.get_project(&id).credit_quality, 60);
+}
+
+#[test]
+fn test_update_interval_rejects_half_hour_update() {
+    let (env, _admin, _whitelister, client) = setup();
+    let t0 = 1_000_000u64;
+    let id = scored_project_at(&env, &client, t0);
+
+    env.ledger().with_mut(|l| l.timestamp = t0 + 1800);
+    let result = client.try_update_impact_score(&id, &60u32, &60u32);
+    assert_eq!(
+        result,
+        Err(Ok(soroban_sdk::Error::from_contract_error(
+            RegistryError::UpdateTooFrequent as u32
+        )))
+    );
+}
+
+#[test]
+fn test_next_update_allowed_at() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let fresh = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+    assert_eq!(client.next_update_allowed_at(&fresh), 0);
+
+    let t0 = 1_000_000u64;
+    let id = scored_project_at(&env, &client, t0);
+    let allowed = client.next_update_allowed_at(&id);
+    assert_eq!(allowed, t0 + MIN_UPDATE_INTERVAL - UPDATE_INTERVAL_TOLERANCE);
+
+    env.ledger().with_mut(|l| l.timestamp = allowed - 1);
+    assert!(client.try_update_impact_score(&id, &70u32, &70u32).is_err());
+    env.ledger().with_mut(|l| l.timestamp = allowed);
+    client.update_impact_score(&id, &70u32, &70u32);
+}
+
+// ── delete_project investment guard (#526) ───────────────────────────────────
+
+/// Minimal stand-in for the investment vault: only `get_project_investment`,
+/// with a setter so each test controls the reported investment exactly.
+#[soroban_sdk::contract]
+struct MockVault;
+
+#[soroban_sdk::contractimpl]
+impl MockVault {
+    pub fn set_investment(env: Env, project_id: u32, amount: i128) {
+        env.storage().instance().set(&project_id, &amount);
+    }
+
+    pub fn get_project_investment(env: Env, project_id: u32) -> i128 {
+        env.storage().instance().get(&project_id).unwrap_or(0)
+    }
+}
+
+fn contract_error(err: RegistryError) -> soroban_sdk::Error {
+    soroban_sdk::Error::from_contract_error(err as u32)
+}
+
+fn create_test_project(env: &Env, client: &ProjectRegistryClient) -> u32 {
+    let creator = Address::generate(env);
+    client.set_whitelist(&creator, &true);
+    client.create_project(
+        &creator,
+        &String::from_str(env, "ipfs://QmDelete"),
+        &0u64,
+        &test_metadata_hash(env),
+    )
+}
+
+fn setup_with_mock_vault() -> (
+    Env,
+    ProjectRegistryClient<'static>,
+    MockVaultClient<'static>,
+    u32,
+) {
+    let (env, _admin, _whitelister, client) = setup();
+    let vault_id = env.register(MockVault, ());
+    let vault = MockVaultClient::new(&env, &vault_id);
+    client.set_vault(&vault_id);
+    let project_id = create_test_project(&env, &client);
+    (env, client, vault, project_id)
+}
+
+#[test]
+fn test_get_vault_is_none_until_set() {
+    let (env, _admin, _whitelister, client) = setup();
+    assert_eq!(client.get_vault(), None);
+    let vault = Address::generate(&env);
+    client.set_vault(&vault);
+    assert_eq!(client.get_vault(), Some(vault));
+}
+
+#[test]
+fn test_set_vault_is_owner_only() {
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let whitelister = Address::generate(&env);
+    let registry_id = env.register(ProjectRegistry, (&admin, &whitelister));
+    let client = ProjectRegistryClient::new(&env, &registry_id);
+    // No auths mocked: the owner has not authorized this call.
+    assert!(client.try_set_vault(&Address::generate(&env)).is_err());
+    assert_eq!(client.get_vault(), None);
+}
+
+#[test]
+fn test_delete_project_fails_closed_without_vault() {
+    let (env, _admin, _whitelister, client) = setup();
+    let project_id = create_test_project(&env, &client);
+
+    assert_eq!(
+        client.try_delete_project(&project_id),
+        Err(Ok(contract_error(RegistryError::VaultNotConfigured)))
+    );
+    // Project is untouched.
+    assert_eq!(
+        client.get_project(&project_id).uri,
+        String::from_str(&env, "ipfs://QmDelete")
+    );
+}
+
+#[test]
+fn test_delete_project_rejects_active_investments() {
+    let (env, client, vault, project_id) = setup_with_mock_vault();
+    vault.set_investment(&project_id, &5_000_0000000i128);
+
+    assert_eq!(
+        client.try_delete_project(&project_id),
+        Err(Ok(contract_error(RegistryError::ProjectHasInvestments)))
+    );
+    assert_eq!(
+        client.get_project(&project_id).uri,
+        String::from_str(&env, "ipfs://QmDelete")
+    );
+}
+
+#[test]
+fn test_delete_project_rejects_any_nonzero_investment() {
+    let (_env, client, vault, project_id) = setup_with_mock_vault();
+    vault.set_investment(&project_id, &1i128);
+    assert_eq!(
+        client.try_delete_project(&project_id),
+        Err(Ok(contract_error(RegistryError::ProjectHasInvestments)))
+    );
+}
+
+#[test]
+fn test_delete_project_succeeds_with_no_investment() {
+    let (_env, client, _vault, project_id) = setup_with_mock_vault();
+    client.delete_project(&project_id);
+    assert_eq!(
+        client.try_get_project(&project_id),
+        Err(Ok(contract_error(RegistryError::ProjectNotFound)))
+    );
+}
+
+#[test]
+fn test_delete_project_allowed_once_investment_is_repaid() {
+    let (_env, client, vault, project_id) = setup_with_mock_vault();
+    vault.set_investment(&project_id, &250i128);
+    assert!(client.try_delete_project(&project_id).is_err());
+
+    vault.set_investment(&project_id, &0i128);
+    client.delete_project(&project_id);
+    assert!(client.try_get_project(&project_id).is_err());
+}
+
+#[test]
+fn test_delete_project_checks_only_the_target_project() {
+    let (env, client, vault, project_id) = setup_with_mock_vault();
+    let other = create_test_project(&env, &client);
+    vault.set_investment(&other, &1_000i128);
+
+    client.delete_project(&project_id);
+    assert!(client.try_get_project(&project_id).is_err());
+    assert_eq!(
+        client.try_delete_project(&other),
+        Err(Ok(contract_error(RegistryError::ProjectHasInvestments)))
+    );
+}
+
+/// The guard's client interface must match the real vault's ABI: wire the real
+/// InvestmentVault and delete an uninvested project through it.
+#[test]
+fn test_delete_project_against_real_investment_vault() {
+    let (env, admin, _whitelister, client) = setup();
+    let usdc_admin = Address::generate(&env);
+    let usdc_sac = env.register_stellar_asset_contract_v2(usdc_admin).address();
+    let vault_id = env.register(InvestmentVault, (&admin, &usdc_sac, &client.address));
+    client.set_vault(&vault_id);
+
+    let project_id = create_test_project(&env, &client);
+    assert_eq!(
+        InvestmentVaultClient::new(&env, &vault_id).get_project_investment(&project_id),
+        0
+    );
+
+    client.delete_project(&project_id);
+    assert!(client.try_get_project(&project_id).is_err());
 }

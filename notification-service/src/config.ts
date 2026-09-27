@@ -17,6 +17,25 @@ function assertRequiredEnvVars(): void {
   }
 }
 
+/**
+ * Parses a numeric environment variable and throws if the value is set but
+ * not a finite positive number. Returns the parsed value or the default.
+ */
+function requirePositiveInt(
+  name: string,
+  raw: string | undefined,
+  defaultValue: number,
+): number {
+  if (raw === undefined || raw === "") return defaultValue;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+    throw new Error(
+      `Environment variable ${name} must be a positive integer, got "${raw}"`,
+    );
+  }
+  return n;
+}
+
 export function loadConfig(): ServiceConfig {
   assertRequiredEnvVars();
 
@@ -29,19 +48,22 @@ export function loadConfig(): ServiceConfig {
     registry_contract_id: process.env.REGISTRY_CONTRACT_ID || "",
     vault_contract_id: process.env.VAULT_CONTRACT_ID || "",
     db_path: process.env.DB_PATH || "./data/notifications.db",
-    poll_interval_ms: parseInt(process.env.POLL_INTERVAL_MS || "30000", 10),
+    poll_interval_ms: requirePositiveInt(
+      "POLL_INTERVAL_MS",
+      process.env.POLL_INTERVAL_MS,
+      30000,
+    ),
     from_email: process.env.FROM_EMAIL,
     email_transport: process.env.SMTP_HOST
       ? {
           host: process.env.SMTP_HOST,
-          port: parseInt(process.env.SMTP_PORT || "587", 10),
+          port: requirePositiveInt("SMTP_PORT", process.env.SMTP_PORT, 587),
           secure: process.env.SMTP_SECURE === "true",
-          auth: {
-            user: process.env.SMTP_USER || "",
-            pass: process.env.SMTP_PASS || "",
-          },
+          ...(process.env.SMTP_USER && process.env.SMTP_PASS
+            ? { auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } }
+            : {}),
         }
       : undefined,
-    api_port: parseInt(process.env.API_PORT || "3000", 10),
+    api_port: requirePositiveInt("API_PORT", process.env.API_PORT, 3000),
   };
 }

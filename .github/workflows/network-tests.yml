@@ -75,6 +75,15 @@ jobs:
       - name: Build contracts
         run: stellar contract build
 
+      # Verify deploy manifest matches freshly-built WASM (#398). This catches
+      # drift between what the repo would build today and what was last recorded
+      # as deployed — independent of an active deploy.
+      - name: Check deploy manifest hashes
+        run: |
+          python3 scripts/check_deploy_wasm_hash.py check deploy/testnet.json \
+            project_registry=target/wasm32v1-none/release/project_registry.wasm \
+            investment_vault=target/wasm32v1-none/release/investment_vault.wasm
+
       - name: Set network variable
         id: net
         run: |
