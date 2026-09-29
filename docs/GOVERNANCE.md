@@ -46,7 +46,25 @@ An operational role focused on onboarding project creators and certifying projec
 
 ## Multisig Approval Threshold Configuration
 
-Both contracts support an optional multisig gate on their most sensitive Admin actions — `InvestmentVault::fund_project` / `batch_fund_projects` / `claim_insurance`, and `ProjectRegistry::update_impact_score_approved` — as the on-chain implementation of the "Phase 1: Multisig Administration" step in the roadmap below. This is separate from `stellar-access::ownable` (which is a single `Address`); the multisig config is its own signer list + threshold stored per-contract.
+Both contracts support an optional multisig gate on their most sensitive Admin actions — as the on-chain implementation of the "Phase 1: Multisig Administration" step in the roadmap below. This is separate from `stellar-access::ownable` (which is a single `Address`); the multisig config is its own signer list + threshold stored per-contract.
+
+### Gated Functions
+
+Once `threshold > 0` is configured, the plain single-owner variant of each gated function becomes unusable — it panics via an internal `require_multisig_disabled` guard. Callers must switch to the `_with_approvals` / `_approved` variant instead, passing a `Vec<Address>` of the approving signers.
+
+| Plain Function (Owner-Only) | Contract | Multisig Variant | Notes |
+|---|---|---|---|
+| `fund_project` | `InvestmentVault` | `fund_project_with_approvals` | Disburses capital to a project |
+| `receive_yield` | `InvestmentVault` | `receive_yield_with_approvals` | Registers yield payments from projects |
+| `claim_insurance` | `InvestmentVault` | `claim_insurance_with_approvals` | Pays insurance claims from reserve |
+| *(no plain variant)* | `InvestmentVault` | `batch_fund_projects` | Batch funding; **only exists as multisig variant** — always requires approvals when multisig is enabled |
+| `update_impact_score` | `ProjectRegistry` | `update_impact_score_approved` | Sets both credit quality & green impact |
+| `update_impact_scores_batch` | `ProjectRegistry` | `update_scores_batch_approved` | Batch score updates; shortened name due to 32-byte export limit |
+| `update_credit_quality_score` | `ProjectRegistry` | *(no multisig variant yet)* | Updates credit quality only — **currently has no `_approved` variant**; plain variant is gated but no approval path exists |
+| `liquidate_collateral` | `ProjectRegistry` | `liquidate_collateral_approved` | Liquidates collateral for defaulted projects |
+
+> [!NOTE]
+> `update_credit_quality_score` is gated by `require_multisig_disabled` but lacks a corresponding `_approved` entry point. This is a known gap — once multisig is enabled on `ProjectRegistry`, this function becomes permanently unusable until an approval variant is added.
 
 ### How it's configured
 
@@ -65,21 +83,35 @@ Each contract exposes the same three functions (owner-only unless noted):
 
 ### How it changes call behaviour
 
-Once `threshold > 0`, the plain single-owner variant of a gated function (e.g. `fund_project`, `claim_insurance`) becomes unusable — it panics via an internal `require_multisig_disabled` guard. Callers must switch to the `_with_approvals` variant instead (e.g. `fund_project_with_approvals`, `claim_insurance_with_approvals`, `update_impact_score_approved`), passing a `Vec<Address>` of the approving signers. For each address in that list, `require_admin_approval`:
+Once `threshold > 0`, the plain single-owner variant of each gated function becomes unusable — it panics via an internal `require_multisig_disabled` guard. Callers must switch to the corresponding approval variant instead, passing a `Vec<Address>` of the approving signers.
+
+**InvestmentVault:**
+- `fund_project` → `fund_project_with_approvals`
+- `receive_yield` → `receive_yield_with_approvals`
+- `claim_insurance` → `claim_insurance_with_approvals`
+- `batch_fund_projects` — **only exists as an approval-gated function**; no plain variant exists.
+
+**ProjectRegistry:**
+- `update_impact_score` → `update_impact_score_approved`
+- `update_impact_scores_batch` → `update_scores_batch_approved` (shortened name due to 32-byte export limit)
+- `update_credit_quality_score` → **no approval variant exists** (known gap; function becomes unusable once multisig is enabled)
+- `liquidate_collateral` → `liquidate_collateral_approved`
+
+For each address in the approvals list, `require_admin_approval`:
 1. Panics with `DuplicateApproval` if it already appeared earlier in the same list.
 2. Panics with `NotMultiSigSigner` if it isn't in the stored `signers` set.
 3. Calls `.require_auth()` on it — every listed approver must independently authorize the transaction, not just be named in the list.
 
 If fewer than `threshold` addresses pass all three checks, it panics with `InsufficientApprovals`.
 
-While `threshold == 0` (the default, unset state), call the plain variant (e.g. `fund_project`) — the `_with_approvals` variant's `require_admin_approval` would still work in this state too (it falls back to a plain `require_auth()` on the contract owner when `threshold == 0`), but the plain variant is what `require_multisig_disabled` expects while multisig is off. Both variants call the same internal implementation (e.g. `fund_project_internal`); only the auth gate in front of it differs.
+While `threshold == 0` (the default, unset state), call the plain variant where one exists (e.g. `fund_project`, `update_impact_score`) — the approval variant's `require_admin_approval` would still work in this state too (it falls back to a plain `require_auth()` on the contract owner when `threshold == 0`), but the plain variant is what `require_multisig_disabled` expects while multisig is off. Both variants call the same internal implementation (e.g. `fund_project_internal`); only the auth gate in front of it differs.
 
 ### Changing the threshold or signer set
 
 There is no separate "update" function — call `set_multisig_admin` again with the full new `signers` list and `threshold`; it overwrites the previous config atomically. To go from, say, a 2-of-3 to a 3-of-5 setup, submit one `set_multisig_admin` call with all 5 signers and `threshold: 3`.
 
 > [!WARNING]
-> **`InvestmentVault` cannot disable multisig once enabled.** `validate_multisig_config` rejects `threshold == 0` outright (`InvalidMultiSigThreshold`), and unlike `ProjectRegistry`, `InvestmentVault` has no `clear_multisig_admin()` function. Once you call `set_multisig_admin` on the vault with a real threshold, every `_with_approvals`-gated action (`fund_project`, `batch_fund_projects`, `claim_insurance`) requires that many approvals permanently — there's no on-chain path back to single-owner operation. `ProjectRegistry` doesn't have this limitation: call `clear_multisig_admin()` there to reset `threshold` to `0` and re-enable the plain owner-only functions. Treat enabling multisig on the vault as a one-way migration, and confirm the signer set before enabling it.
+> **`InvestmentVault` cannot disable multisig once enabled.** `validate_multisig_config` rejects `threshold == 0` outright (`InvalidMultiSigThreshold`), and unlike `ProjectRegistry`, `InvestmentVault` has no `clear_multisig_admin()` function. Once you call `set_multisig_admin` on the vault with a real threshold, every approval-gated action (`fund_project`, `receive_yield`, `claim_insurance`, `batch_fund_projects`) requires that many approvals permanently — there's no on-chain path back to single-owner operation. `ProjectRegistry` doesn't have this limitation: call `clear_multisig_admin()` there to reset `threshold` to `0` and re-enable the plain owner-only functions. Treat enabling multisig on the vault as a one-way migration, and confirm the signer set before enabling it.
 
 Because `set_multisig_admin` is itself `#[only_owner]` and not gated by the multisig it configures, the single-owner key retains ultimate control over the multisig roster — see the "Phase 1" note below on migrating that owner key to a genuine Stellar multisig account for defense in depth.
 
