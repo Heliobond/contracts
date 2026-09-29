@@ -164,7 +164,11 @@ export function createApi(store: Store, options: CreateApiOptions = {}): Express
         .json({ error: "At least one of email or webhook_url must be provided" });
     }
 
-    store.upsertPreference(mergedPreference);
+    // Ensure webhook_url is explicitly included for the DB parameter (null -> empty string)
+    store.upsertPreference({
+      ...mergedPreference,
+      webhook_url: mergedPreference.webhook_url ?? "",
+    });
     return res.json(mergedPreference);
   });
 
@@ -193,8 +197,10 @@ export function createApi(store: Store, options: CreateApiOptions = {}): Express
 
   // GET /notifications/history - paginated notification history
   app.get("/notifications/history", (req: Request, res: Response) => {
-    const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 50, 1), 200);
-    const offset = Math.max(parseInt(req.query.offset as string) || 0, 0);
+    const rawLimit = parseInt(req.query.limit as string);
+    const rawOffset = parseInt(req.query.offset as string);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 200) : 50;
+    const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
     const investor_address = req.query.investor_address as string | undefined;
 
     const page = store.listNotificationHistory({ investor_address, limit, offset });
