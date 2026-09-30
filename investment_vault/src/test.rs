@@ -1,6 +1,7 @@
 #![cfg(test)]
 #![allow(clippy::inconsistent_digit_grouping)]
 extern crate std;
+use std::format;
 use super::*;
 use proptest::prelude::*;
 use soroban_sdk::{
