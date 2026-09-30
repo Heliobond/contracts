@@ -1763,7 +1763,11 @@ fn test_score_history_multiple_updates_ordered() {
     );
 
     client.update_impact_score(&id, &10u32, &20u32);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp().saturating_add(1));
     client.update_impact_score(&id, &30u32, &40u32);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp().saturating_add(1));
     client.update_impact_score(&id, &50u32, &60u32);
 
     let history = client.get_score_history(&id);
