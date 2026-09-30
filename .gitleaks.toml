@@ -40,6 +40,5 @@ paths = [
 ]
 # Known-safe placeholder matches (extend only with review).
 regexes = [
-  '''S[BKJ]。。。''',
   '''EXAMPLE''',
 ]
