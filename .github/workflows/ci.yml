@@ -144,7 +144,16 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Security audit
-        run: cargo audit
+        run: cargo audit --deny unmaintained
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Supply-chain checks (advisories, bans, licenses, sources)
+        # deny.toml ignores document the two known transitive issues
+        # (RUSTSEC-2024-0436 paste, yanked spin 0.9.8 via soroban toolchain);
+        # any new advisory/yanked/ban/license/source drift fails here.
+        run: cargo deny check
 
   dependency-review:
     runs-on: ubuntu-latest

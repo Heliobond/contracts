@@ -1,0 +1,64 @@
+# cargo-deny configuration: supply-chain policy (advisories, bans, licenses, sources).
+# Docs: https://embarkstudios.github.io/cargo-deny/
+#
+# Background: `cargo audit` (CI `security` job, added for #101) does not check
+# for yanked crates at all, and with no flags it does not fail on
+# `unmaintained` advisories either. `cargo deny check` covers both, plus
+# license/source/ban policy, against the same Cargo.lock.
+
+[graph]
+targets = []
+all-features = true
+
+[advisories]
+db-path = "~/.cargo/advisory-dbs"
+db-urls = ["https://github.com/RustSec/advisory-db"]
+yanked = "deny"
+unmaintained = "deny"
+unsound = "deny"
+ignore = [
+  # Transitive via soroban-sdk/soroban-env-host toolchain. Not independently
+  # fixable by bumping this repo's Cargo.toml (workspace pins soroban-sdk
+  # =26.1.0, see Cargo.toml #421). Tracked for upstream fix; re-audit on
+  # every soroban-sdk bump and drop this ignore once the toolchain moves off
+  # paste 1.0.15.
+  { id = "RUSTSEC-2024-0436", reason = "unmaintained paste 1.0.15, transitive via soroban-sdk/soroban-env-host; awaiting upstream" },
+  # spin 0.9.8 yanked on crates.io; transitive via soroban-wasmi ->
+  # soroban-env-common/soroban-env-host. Same situation as above: tracked,
+  # drop once upstream updates.
+  { crate = "spin@0.9.8", reason = "yanked spin 0.9.8, transitive via soroban-wasmi/soroban-env-host; awaiting upstream" },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+allow-yanked = "deny"
+deny = []
+skip = []
+skip-tree = []
+
+[licenses]
+unlicensed = "deny"
+copyleft = "warn"
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-DFS-2016",
+  "Unicode-3.0",
+  "CC0-1.0",
+  "Zlib",
+  "MPL-2.0",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
