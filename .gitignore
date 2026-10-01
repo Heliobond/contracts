@@ -4,6 +4,14 @@ pr.md
 __pycache__/
 node_modules/
 
+# Secrets / local env — never commit these (Gitleaks + CI enforce this).
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.json
+
 # Fuzz test snapshots (non-deterministic, generated locally)
 **/test_snapshots/test/*_fuzz.*.json
 
