@@ -238,6 +238,11 @@ make test
 # Equivalent: cargo test
 ```
 
+> **Note (`investment_vault`, `#![no_std]`):** its unit tests (`investment_vault/src/test.rs`)
+> use `extern crate std;` plus an explicit `use std::format;` so the bare
+> `format!(...)` call sites resolve. `extern crate std` alone does not put
+> `std` macros into scope without the standard prelude.
+
 ---
 
 ## Deploy to Testnet
