@@ -353,6 +353,8 @@ describe("CORS configuration", () => {
 // ── Issue #219: health-check with DB connectivity ──────────────────────────
 
 describe("GET /health with DB connectivity", () => {
+  it("does not expose CORS for an origin that is not configured", async () => {
+    const res = await request(app)
       .get("/health")
       .set("Origin", "https://heliobond.io");
 
