@@ -990,6 +990,9 @@ impl InvestmentVault {
 
     /// Pay out an insurance claim for a defaulted project (owner only).
     /// Transfers `amount` from the insurance fund to `recipient`.
+    ///
+    /// The project must be settled with a non-zero impairment, and `amount`
+    /// is capped at that impairment (#700).
     #[only_owner]
     pub fn claim_insurance(env: Env, project_id: u32, recipient: Address, amount: i128) {
         require_multisig_disabled(&env);
@@ -2310,6 +2313,23 @@ fn claim_insurance_internal(env: Env, project_id: u32, recipient: Address, amoun
         panic_with_error!(&env, VaultError::ClaimAmountNotPositive);
     }
     check_max_transaction_amount(&env, amount);
+    // Only a loss the vault actually booked can be claimed (#565, #700): the
+    // project must have been settled via `settle_project` (which requires
+    // the registry to know it and report it mature) with principal written
+    // off as impairment, and the claim can't exceed that write-off. This
+    // rules out made-up project ids and active or fully repaid projects.
+    let settled: bool = env
+        .storage()
+        .persistent()
+        .get(&VaultKey::ProjectSettled(project_id))
+        .unwrap_or(false);
+    let impairment = read_i128(&env, &VaultKey::ProjectImpairment(project_id));
+    if !settled || impairment <= 0 {
+        panic_with_error!(&env, VaultError::ProjectNotImpaired);
+    }
+    if amount > impairment {
+        panic_with_error!(&env, VaultError::ClaimExceedsImpairment);
+    }
     let already_claimed: bool = env
         .storage()
         .persistent()
