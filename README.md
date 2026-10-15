@@ -24,11 +24,12 @@ rustup target add wasm32v1-none
 git clone https://github.com/Heliobond/contracts
 cd contracts
 
+# Build both contracts to WASM (target/wasm32v1-none/release/).
+# This MUST come before `cargo test`: the vault contractimport!s project_registry.wasm.
+make build
+
 # Run the test suite
 cargo test --all
-
-# Build both contracts to WASM (target/wasm32v1-none/release/)
-make build
 
 # Deploy to testnet (requires STELLAR_SECRET_KEY, ADMIN_ADDRESS, WHITELISTER_ADDRESS env vars)
 make deploy-testnet
@@ -233,10 +234,17 @@ make build
 # Output: target/wasm32v1-none/release/project_registry.wasm
 #         target/wasm32v1-none/release/investment_vault.wasm
 
-# Run all tests
+# Run all tests (builds the WASM first)
 make test
-# Equivalent: cargo test
+# Equivalent: stellar contract build && cargo test
 ```
+
+> **Note (build order):** `investment_vault` imports the registry client via
+> `contractimport!` from `target/wasm32v1-none/release/project_registry.wasm`, so a bare
+> `cargo build` / `cargo test` on a fresh clone fails until `make build` has run. Plain
+> `cargo build --target wasm32v1-none` cannot produce that WASM (soroban-sdk's
+> `experimental_spec_shaking_v2` requires `stellar contract build`), so the Stellar CLI is a
+> hard prerequisite for running the tests, not just for deploying.
 
 > **Note (`investment_vault`, `#![no_std]`):** its unit tests (`investment_vault/src/test.rs`)
 > use `extern crate std;` plus an explicit `use std::format;` so the bare

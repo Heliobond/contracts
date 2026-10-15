@@ -22,10 +22,20 @@ Browse [open issues](https://github.com/heliobond/contracts/issues). Issues tagg
 # Clone and verify the setup
 git clone https://github.com/heliobond/contracts
 cd contracts
-cargo test        # run the test suite
-make build        # stellar contract build → target/wasm32v1-none/release/
+make build        # stellar contract build → target/wasm32v1-none/release/ (must run first)
+make test         # runs `make build`, then `cargo test`
 make install-hooks # install the cargo fmt --check pre-commit hook
 ```
+
+> **Build order matters.** `investment_vault` pulls in the registry client with
+> `contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm")`,
+> so on a clean checkout a bare `cargo build` / `cargo test` fails with
+> `No such file or directory` followed by `could not find Client in registry_interface`.
+> That WASM can't be produced with plain `cargo build --target wasm32v1-none` either:
+> soroban-sdk's `experimental_spec_shaking_v2` feature aborts unless the build is driven
+> by `stellar contract build` (stellar-cli ≥ 26.1.0, see the table above). Always run
+> `make build` once before `cargo test`, and again whenever `project_registry` changes —
+> or just use `make test` / `make test-vault`, which do it for you.
 
 ### Editor
 
@@ -46,8 +56,8 @@ Any editor works. If you use VS Code, the `rust-analyzer` extension provides inl
 3. **Run the full quality gate locally** before pushing:
    ```bash
    cargo fmt --all                  # format (CI checks this)
+   make build                       # contracts must compile to WASM (also required before cargo test)
    cargo test --all                 # all tests must pass
-   make build                       # contracts must compile to WASM
    ```
 4. **Open a PR** with `Closes #<issue>` in the body. CI (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml) for the definitive, up-to-date list) runs considerably more than `fmt`/`test`/size — currently: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all`, a WASM size check, `check_interface_docs.py`, `check_event_field_types.py`, the gas-budget script's own unit tests, a gas profile/budget check, the `notification-service` job's `npm run lint`/`npm run format:check`, a `cargo-audit` security scan, a dependency-review check, and — on pull requests — an ABI-breaking-change check against the base branch. All must be green.
 
@@ -119,6 +129,7 @@ Anything touching `deposit`, `withdraw`, `fund_project`, or share math needs tes
 ### Running a single test
 
 ```bash
+# Requires target/wasm32v1-none/release/project_registry.wasm — run `make build` first.
 cargo test -p investment-vault test_deposit   # filter by test name
 cargo test --all -- --nocapture               # see println! output
 ```
