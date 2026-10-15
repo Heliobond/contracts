@@ -86,7 +86,7 @@ ci: add WASM size budget check to CI
 
 ### Changelog
 
-`CHANGELOG.md` is generated automatically, not written by hand — do not edit it in your PR. [`.github/workflows/changelog.yml`](.github/workflows/changelog.yml) runs on every `v*` tag push (or manually via `workflow_dispatch`), scans commit history with `conventional-changelog` (Angular preset), regenerates `CHANGELOG.md`, and publishes it as the GitHub release notes.
+`CHANGELOG.md` is generated automatically, not written by hand — do not edit it in your PR. [`.github/workflows/changelog.yml`](.github/workflows/changelog.yml) runs on every `v*` tag push (or manually via `workflow_dispatch`), scans commit history with `conventional-changelog` (Angular preset), regenerates `CHANGELOG.md`, and publishes it as the GitHub release notes. Runs are serialized by a single `changelog` concurrency group, so tags pushed in quick succession are processed one after another (never cancelled) instead of racing on the push to `main`.
 
 This means your changelog entry *is* your commit message, so it has to follow the format above correctly:
 - `feat:` commits bump the minor version and appear under "Features"
