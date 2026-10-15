@@ -25,5 +25,5 @@ proptest = "1.0"
 # rather than a benign dependency update -- exact-pinning here follows the
 # same reproducibility rationale as the workspace's soroban-sdk/stellar-*
 # pins.
-sha2 = "=0.10.9"
+sha2 = "=0.11.0"
 investment-vault = { path = "../investment_vault" }
