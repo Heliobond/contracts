@@ -12,6 +12,12 @@ Include what you can: affected component, steps to reproduce, and impact. We aim
 
 This is testnet, pre-production software. The smart contracts have not yet been audited. Treat anything on-chain as experimental until a release notes otherwise.
 
+## Dependency Updates
+
+[`.github/dependabot.yml`](.github/dependabot.yml) opens weekly update PRs for the Cargo workspace, the `notification-service` and `sdk` npm packages, and GitHub Actions. `soroban-sdk` and the exact-pinned `stellar-*` crates are grouped into a single PR because they must be upgraded together. Treat these PRs like any other: CI (including `cargo audit`) must be green before merging.
+
+Maintainers should also keep **Dependabot alerts** and **Dependabot security updates** enabled under *Settings → Code security*; that setting cannot be turned on from a file in the repo.
+
 ## Threat Model and Trust Assumptions
 
 ### Trust Boundaries
