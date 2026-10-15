@@ -8,11 +8,13 @@ install-hooks:
 	git config core.hooksPath scripts/hooks
 	@echo "Pre-commit hook installed: cargo fmt --check now runs before every commit."
 
-test:
+# investment_vault `contractimport!`s target/wasm32v1-none/release/project_registry.wasm,
+# so the registry WASM must exist before plain cargo can compile the vault (#665).
+test: build
 	cargo test
 
 # Scope to a single crate for faster local iteration (#254).
-test-vault:
+test-vault: build
 	cargo test -p investment-vault
 
 test-registry:
