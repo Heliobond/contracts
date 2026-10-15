@@ -3778,6 +3778,38 @@ fn test_get_compliance_events_range_caps_at_100() {
     // Requesting from 1..=200 should return at most 100.
     let events = s.vault_client.get_compliance_events(&1, &200);
     assert_eq!(events.len(), 100);
+    assert_eq!(events.get_unchecked(0).seq, 1);
+    assert_eq!(events.get_unchecked(99).seq, 100);
+}
+
+/// #707 — boundary: a span of exactly 100 is returned whole, a span of 101 is
+/// truncated to 100 (previously `from..=from + 100` returned 101).
+#[test]
+fn test_get_compliance_events_cap_boundary() {
+    let s = setup();
+
+    for i in 1..=150 {
+        s.vault_client.record_compliance_event(
+            &String::from_str(&s.env, &format!("T{}", i)),
+            &String::from_str(&s.env, &format!("d{}", i)),
+        );
+    }
+
+    // 1..=100 is exactly 100 seqs.
+    let exact = s.vault_client.get_compliance_events(&1, &100);
+    assert_eq!(exact.len(), 100);
+    assert_eq!(exact.get_unchecked(99).seq, 100);
+
+    // 1..=101 is 101 seqs — must stop at seq 100.
+    let over = s.vault_client.get_compliance_events(&1, &101);
+    assert_eq!(over.len(), 100);
+    assert_eq!(over.get_unchecked(99).seq, 100);
+
+    // A window starting mid-range is capped relative to `from`.
+    let mid = s.vault_client.get_compliance_events(&21, &150);
+    assert_eq!(mid.len(), 100);
+    assert_eq!(mid.get_unchecked(0).seq, 21);
+    assert_eq!(mid.get_unchecked(99).seq, 120);
 }
 
 /// get_compliance_events returns empty vec when from > to.

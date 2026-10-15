@@ -1965,6 +1965,8 @@ impl InvestmentVault {
     // ── Compliance / regulatory reporting ─────────────────────────────────────
 
     const MAX_COMPLIANCE_EVENTS: u64 = 1000;
+    /// Maximum number of events `get_compliance_events` returns per call (#511, #707).
+    const MAX_COMPLIANCE_EVENTS_PER_QUERY: u64 = 100;
 
     /// Set the maximum transaction amount limit for compliance monitoring (owner-only) (#184).
     #[only_owner]
@@ -2037,12 +2039,21 @@ impl InvestmentVault {
     }
 
     /// Retrieve a range of compliance events for reporting (#184).
+    ///
+    /// The range is inclusive and scans at most `MAX_COMPLIANCE_EVENTS_PER_QUERY`
+    /// sequence numbers starting at `from`.
     pub fn get_compliance_events(env: Env, from: u64, to: u64) -> Vec<ComplianceEventData> {
         require_current_state(&env);
         if from > to {
             return Vec::new(&env);
         }
-        let max = if to - from > 100 { from + 100 } else { to };
+        // `from..=max` is inclusive, so the last seq is `from + LIMIT - 1` (#707).
+        // No overflow: `to - from >= LIMIT` implies `from + LIMIT - 1 < to`.
+        let max = if to - from >= Self::MAX_COMPLIANCE_EVENTS_PER_QUERY {
+            from + Self::MAX_COMPLIANCE_EVENTS_PER_QUERY - 1
+        } else {
+            to
+        };
         let mut events_vec = Vec::new(&env);
         for seq in from..=max {
             if let Some(event) = env
