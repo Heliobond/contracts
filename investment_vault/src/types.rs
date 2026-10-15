@@ -137,6 +137,11 @@ pub enum VaultError {
     /// settle_project: the registry does not report the project as mature
     /// yet (or it has no maturity date) (#631).
     ProjectNotMature = 61,
+    /// `claim_insurance` for a project the vault has not settled with an
+    /// impairment, e.g. an unknown, still-active or fully repaid project (#700).
+    ProjectNotImpaired = 62,
+    /// `claim_insurance` amount exceeds the project's recorded impairment (#700).
+    ClaimExceedsImpairment = 63,
 }
 
 #[contracttype]

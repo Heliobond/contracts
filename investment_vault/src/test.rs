@@ -4465,3 +4465,45 @@ fn test_queued_withdrawal_liability_and_claim_keep_price_fair() {
     let price_after = s.vault_client.convert_to_assets(&1_0000000i128);
     assert!((price_after - price_mid).abs() <= 1);
 }
+
+// ── #700: claim_insurance only pays booked losses on real projects ──────────
+
+#[test]
+fn test_700_claim_insurance_requires_settled_impaired_project() {
+    let s = setup();
+    s.env.ledger().with_mut(|l| l.timestamp = 1_000);
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    // 50-bps premium: insurance fund = 5 USDC.
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let recipient = Address::generate(&s.env);
+
+    // A made-up project id can't be claimed against.
+    assert_eq!(
+        s.vault_client.try_claim_insurance(&999u32, &recipient, &1_0000000i128),
+        Err(Ok(VaultError::ProjectNotImpaired.into()))
+    );
+
+    // An active, funded but unsettled project can't either.
+    let (id, _owner) = create_maturing_project(&s, 1_000 + 3600);
+    s.vault_client.fund_project(&id, &2_0000000i128);
+    assert_eq!(
+        s.vault_client.try_claim_insurance(&id, &recipient, &1_0000000i128),
+        Err(Ok(VaultError::ProjectNotImpaired.into()))
+    );
+
+    // Settle with the full 2 USDC written off as impairment.
+    s.env.ledger().with_mut(|l| l.timestamp = 1_000 + 3600);
+    s.vault_client.settle_project(&id);
+    assert_eq!(s.vault_client.get_project_position(&id).impairment, 2_0000000);
+
+    // The claim is capped at the impairment, even though the fund holds 5 USDC.
+    assert_eq!(
+        s.vault_client.try_claim_insurance(&id, &recipient, &3_0000000i128),
+        Err(Ok(VaultError::ClaimExceedsImpairment.into()))
+    );
+
+    s.vault_client.claim_insurance(&id, &recipient, &2_0000000i128);
+    let usdc = soroban_sdk::token::TokenClient::new(&s.env, &s.usdc_sac);
+    assert_eq!(usdc.balance(&recipient), 2_0000000);
+}
