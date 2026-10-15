@@ -14,6 +14,15 @@ on:
           anything else conventional-changelog treats as a fix bumps patch.
         required: false
 
+# Serialize every changelog/release run (#672, regression of #559). Each run
+# pushes CHANGELOG.md to main and creates/edits a release, so the group is
+# repo-wide rather than per-ref: two different v* tags are different refs and
+# would otherwise still race on `git push origin HEAD:main`. Queued runs wait
+# instead of being cancelled so no tag ends up without its release.
+concurrency:
+  group: changelog
+  cancel-in-progress: false
+
 jobs:
   generate-changelog:
     name: Generate changelog & release notes
