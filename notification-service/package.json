@@ -4,6 +4,9 @@
   "private": true,
   "description": "Off-chain notification service for Heliobond score change events",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=20 <23"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",

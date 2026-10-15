@@ -17,6 +17,7 @@ Browse [open issues](https://github.com/heliobond/contracts/issues). Issues tagg
 | Rust | stable (≥ 1.78) | `rustup update stable` |
 | wasm target | `wasm32v1-none` | `rustup target add wasm32v1-none` |
 | Stellar CLI | ≥ 26.1.0 | [docs.stellar.org/tools/cli](https://developers.stellar.org/docs/tools/cli) |
+| Node.js (only for `notification-service/`) | 20.x – 22.x (see `notification-service/.nvmrc`) | `nvm install` / `nvm use` inside `notification-service/` — newer Node can't build `better-sqlite3` 11 |
 
 ```bash
 # Clone and verify the setup
