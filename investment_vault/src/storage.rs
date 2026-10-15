@@ -7,7 +7,7 @@ use soroban_sdk::{Address, Env};
 const TTL_THRESHOLD: u32 = 17_280; // ~1 day in ledgers
 const TTL_EXTEND_TO: u32 = 63_072_000; // ~10 years in 5-second ledgers
 
-pub fn read_usdc_sac (env: &Env) -> Address {
+pub fn read_usdc_sac(env: &Env) -> Address {
     env.storage().instance().get(&VaultKey::UsdcSac).unwrap()
 }
 
@@ -21,7 +21,9 @@ pub fn read_total_deposited(env: &Env, account: Address) -> Option<i128> {
     let key = VaultKey::TotalDeposited(account);
     let val: Option<i128> = env.storage().persistent().get(&key);
     if val.is_some() {
-        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
     val
 }
@@ -31,7 +33,9 @@ pub fn read_total_deposited(env: &Env, account: Address) -> Option<i128> {
 pub fn write_total_deposited(env: &Env, account: Address, amount: i128) {
     let key = VaultKey::TotalDeposited(account);
     env.storage().persistent().set(&key, &amount);
-    env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 #[cfg(test)]

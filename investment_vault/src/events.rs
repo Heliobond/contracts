@@ -132,7 +132,13 @@ pub struct PrincipalRepaid {
     pub outstanding: i128,
 }
 
-pub fn principal_repaid(env: &Env, project_id: u32, from: &Address, amount: i128, outstanding: i128) {
+pub fn principal_repaid(
+    env: &Env,
+    project_id: u32,
+    from: &Address,
+    amount: i128,
+    outstanding: i128,
+) {
     PrincipalRepaid {
         project_id,
         from: from.clone(),
