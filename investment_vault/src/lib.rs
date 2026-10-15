@@ -325,8 +325,7 @@ impl InvestmentVault {
                 .unwrap_or(0);
             if investment > 0 {
                 let project = registry.get_project(&i);
-                let score_rate =
-                    project.credit_quality as i128 + project.green_impact as i128;
+                let score_rate = project.credit_quality as i128 + project.green_impact as i128;
 
                 let funded_at: u64 = env
                     .storage()
@@ -337,8 +336,7 @@ impl InvestmentVault {
                 if funded_at > 0 && now > funded_at {
                     // Time-weighted: accrue interest over elapsed time (#34).
                     let elapsed = (now - funded_at) as i128;
-                    expected +=
-                        investment * score_rate * elapsed / (200 * ANNUAL_PERIOD_SECS);
+                    expected += investment * score_rate * elapsed / (200 * ANNUAL_PERIOD_SECS);
                 } else {
                     // Static fallback for pre-existing investments without a timestamp.
                     expected += investment * score_rate / 200;
@@ -577,7 +575,11 @@ impl InvestmentVault {
         env.storage()
             .persistent()
             .set(&key, &(prev_dep + usdc_amount));
-        env.storage().persistent().extend_ttl(&key, TTL_EXTEND_THRESHOLD_LEDGERS, TTL_EXTEND_TO_LEDGERS); // Add rent check/extend
+        env.storage().persistent().extend_ttl(
+            &key,
+            TTL_EXTEND_THRESHOLD_LEDGERS,
+            TTL_EXTEND_TO_LEDGERS,
+        ); // Add rent check/extend
 
         // Update cached total assets: liquid increases by full usdc_amount (#81, #85)
         let cached_ta: i128 = env
@@ -959,13 +961,11 @@ impl InvestmentVault {
             .get(&total_deposited_key)
             .unwrap_or(0);
         if env.storage().persistent().has(&total_deposited_key) {
-            env.storage()
-                .persistent()
-                .extend_ttl(
-                    &total_deposited_key,
-                    TTL_EXTEND_THRESHOLD_LEDGERS,
-                    TTL_EXTEND_TO_LEDGERS,
-                );
+            env.storage().persistent().extend_ttl(
+                &total_deposited_key,
+                TTL_EXTEND_THRESHOLD_LEDGERS,
+                TTL_EXTEND_TO_LEDGERS,
+            );
         }
 
         PortfolioInfo {
@@ -1408,9 +1408,7 @@ impl InvestmentVault {
             env.storage()
                 .instance()
                 .remove(&VaultKey::VolumeTierThreshold);
-            env.storage()
-                .instance()
-                .remove(&VaultKey::VolumeTierFeeBps);
+            env.storage().instance().remove(&VaultKey::VolumeTierFeeBps);
             return;
         }
         env.storage()
@@ -1451,7 +1449,11 @@ impl InvestmentVault {
         if cap < 0 {
             panic_with_error!(&env, VaultError::AmountNotPositive);
         }
-        let stored_cap = if cap == 0 { MAX_INVESTMENT_PER_PROJECT } else { cap };
+        let stored_cap = if cap == 0 {
+            MAX_INVESTMENT_PER_PROJECT
+        } else {
+            cap
+        };
         env.storage()
             .instance()
             .set(&VaultKey::MaxInvestmentPerProject, &stored_cap);
@@ -1475,7 +1477,11 @@ impl InvestmentVault {
             .get(&VaultKey::ProjectInvestment(project_id))
             .unwrap_or(0);
         let remaining = cap - invested;
-        if remaining < 0 { 0 } else { remaining }
+        if remaining < 0 {
+            0
+        } else {
+            remaining
+        }
     }
 
     // ── Deposit lock-up expiry query (#33) ────────────────────────────────────
@@ -1652,7 +1658,8 @@ impl InvestmentVault {
         // than silently ignored — otherwise a VAA about a different asset would
         // be accepted and minted as HBS anyway if the emitter is ever reused for
         // a multi-asset bridge.
-        if transfer.token_address != wormhole::address_to_bytes32(&env, &env.current_contract_address())
+        if transfer.token_address
+            != wormhole::address_to_bytes32(&env, &env.current_contract_address())
         {
             panic_with_error!(&env, VaultError::BridgeTokenMismatch);
         }
@@ -2135,9 +2142,10 @@ fn require_not_settled(env: &Env, project_id: u32) {
 /// `amount`, which the caller has already capped at the outstanding balance.
 fn reduce_outstanding(env: &Env, project_id: u32, amount: i128) {
     let outstanding = read_i128(env, &VaultKey::ProjectInvestment(project_id));
-    env.storage()
-        .persistent()
-        .set(&VaultKey::ProjectInvestment(project_id), &(outstanding - amount));
+    env.storage().persistent().set(
+        &VaultKey::ProjectInvestment(project_id),
+        &(outstanding - amount),
+    );
     let total = read_i128(env, &VaultKey::TotalInvestments);
     env.storage()
         .persistent()
@@ -2507,10 +2515,15 @@ fn deposit_breakdown(env: &Env, usdc_amount: i128) -> (i128, i128, i128) {
         .instance()
         .get(&VaultKey::ManagementFeeBps)
         .unwrap_or(0);
-    let volume_threshold: Option<i128> = env.storage().instance().get(&VaultKey::VolumeTierThreshold);
+    let volume_threshold: Option<i128> =
+        env.storage().instance().get(&VaultKey::VolumeTierThreshold);
     let volume_tier_bps: Option<u32> = env.storage().instance().get(&VaultKey::VolumeTierFeeBps);
-    let effective_fee_bps =
-        logic::logic::calculate_dynamic_fee_bps(usdc_amount, fee_bps, volume_threshold, volume_tier_bps);
+    let effective_fee_bps = logic::logic::calculate_dynamic_fee_bps(
+        usdc_amount,
+        fee_bps,
+        volume_threshold,
+        volume_tier_bps,
+    );
     let fee_amount = usdc_amount * (effective_fee_bps as i128) / BPS_SCALE;
     (premium, fee_amount, usdc_amount - premium - fee_amount)
 }

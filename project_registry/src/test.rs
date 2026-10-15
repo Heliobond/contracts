@@ -186,10 +186,7 @@ fn test_update_scores_batch_approved_after_multisig_enabled() {
     let updates = soroban_sdk::vec![&env, (id, 80u32, 90u32)];
     assert!(client.try_update_impact_scores_batch(&updates).is_err());
 
-    client.update_scores_batch_approved(
-        &updates,
-        &soroban_sdk::vec![&env, signer1, signer2],
-    );
+    client.update_scores_batch_approved(&updates, &soroban_sdk::vec![&env, signer1, signer2]);
 
     let project = client.get_project(&id);
     assert_eq!(project.credit_quality, 80);
@@ -2057,7 +2054,11 @@ fn test_compact_storage_removes_zero_collateral() {
 
 // ── compact_storage pair-count cap (#549) ─────────────────────────────────────
 
-fn ids_and_tokens(env: &Env, n_ids: u32, n_tokens: u32) -> (soroban_sdk::Vec<u32>, soroban_sdk::Vec<Address>) {
+fn ids_and_tokens(
+    env: &Env,
+    n_ids: u32,
+    n_tokens: u32,
+) -> (soroban_sdk::Vec<u32>, soroban_sdk::Vec<Address>) {
     let mut ids = soroban_sdk::Vec::new(env);
     for i in 0..n_ids {
         ids.push_back(i + 1);
@@ -2521,10 +2522,7 @@ fn test_clear_multisig_admin_resets_to_defaults() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
 
-    client.set_multisig_admin(
-        &soroban_sdk::vec![&env, signer1, signer2],
-        &2u32,
-    );
+    client.set_multisig_admin(&soroban_sdk::vec![&env, signer1, signer2], &2u32);
 
     // Confirm set worked
     let (_, threshold_before) = client.get_multisig_admin();
@@ -2742,7 +2740,10 @@ fn test_next_update_allowed_at() {
     let t0 = 1_000_000u64;
     let id = scored_project_at(&env, &client, t0);
     let allowed = client.next_update_allowed_at(&id);
-    assert_eq!(allowed, t0 + MIN_UPDATE_INTERVAL - UPDATE_INTERVAL_TOLERANCE);
+    assert_eq!(
+        allowed,
+        t0 + MIN_UPDATE_INTERVAL - UPDATE_INTERVAL_TOLERANCE
+    );
 
     env.ledger().with_mut(|l| l.timestamp = allowed - 1);
     assert!(client.try_update_impact_score(&id, &70u32, &70u32).is_err());
