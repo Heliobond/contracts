@@ -1766,15 +1766,26 @@ impl InvestmentVault {
         }
         initiator.require_auth();
 
+        // Check supply cap BEFORE computing fee to prevent overflow (#706)
+        let total_supply = Base::total_supply(&env);
+        if amount > MAX_HBS_SUPPLY - total_supply {
+            panic_with_error!(&env, VaultError::MaxSupplyExceeded);
+        }
+
         let fee_bps = Self::flash_loan_fee(env.clone()) as i128;
-        let fee = amount * fee_bps / BPS_SCALE;
+        // Use checked_mul to prevent overflow (#706)
+        let fee = amount.checked_mul(fee_bps)
+            .and_then(|v| v.checked_div(BPS_SCALE))
+            .unwrap_or_else(|| panic_with_error!(&env, VaultError::MaxSupplyExceeded));
 
         let vault = env.current_contract_address();
 
-        if Base::total_supply(&env) + amount + fee > MAX_HBS_SUPPLY {
+        if total_supply + amount + fee > MAX_HBS_SUPPLY {
             panic_with_error!(&env, VaultError::MaxSupplyExceeded);
         }
-        Base::mint(&env, &borrower, amount + fee);
+
+        // Mint only the principal amount - fee stays in vault (#705)
+        Base::mint(&env, &borrower, amount);
 
         let client = FlashLoanReceiverClient::new(&env, &borrower);
         let ok = client.flash_loan_callback(&initiator, &vault, &amount, &fee, &data);
@@ -1782,8 +1793,10 @@ impl InvestmentVault {
             panic_with_error!(&env, VaultError::FlashLoanCallbackFailed);
         }
 
+        // Borrower repays principal + fee; fee stays in vault as revenue (#705)
         Base::transfer(&env, &borrower, &MuxedAddress::from(&vault), amount + fee);
-        Base::burn(&env, &vault, amount + fee);
+        // Burn only the principal, keep fee in vault
+        Base::burn(&env, &vault, amount);
 
         events::flash_loan(&env, &initiator, &borrower, amount, fee);
     }
@@ -2778,10 +2791,10 @@ impl InvestmentVault {
         removed
     }
 
-    #[only_owner]
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
+    /// Upgrade requires multisig approval when enabled (#708)
+    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>, approvals: Vec<Address>) {
+        require_admin_approval(&env, approvals);
         env.deployer().update_current_contract_wasm(new_wasm_hash);
-        // events::upgraded(&env) could be called here if needed
     }
 }
 #[contractimpl(contracttrait)]

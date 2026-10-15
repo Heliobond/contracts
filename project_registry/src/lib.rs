@@ -794,6 +794,15 @@ impl ProjectRegistry {
         let prev: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         env.storage().persistent().set(&key, &(prev + amount));
 
+        // Extend TTL on collateral entry to prevent archival (#709)
+        // Use project maturity or a reasonable default
+        let extend_to = if project.maturity_timestamp > 0 {
+            (project.maturity_timestamp as u32) + 100_000
+        } else {
+            env.ledger().sequence() + 1_000_000
+        };
+        env.storage().persistent().extend_ttl(&key, extend_to, extend_to);
+
         events::collateral_deposited(&env, project_id, &token, &depositor, amount);
     }
 
@@ -983,8 +992,9 @@ impl ProjectRegistry {
         env.storage().instance().get(&DataKey::Whitelister).unwrap()
     }
 
-    #[only_owner]
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
+    /// Upgrade requires multisig approval when enabled (#708)
+    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>, approvals: Vec<Address>) {
+        require_admin_approval(&env, approvals);
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
