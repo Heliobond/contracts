@@ -1421,6 +1421,8 @@ impl InvestmentVault {
         if discounted_bps > MAX_MANAGEMENT_FEE_BPS {
             panic_with_error!(&env, VaultError::FeeExceedsMaximum);
         }
+        if threshold < 0 {
+            panic_with_error!(&env, VaultError::InvalidInput);
         // The discounted rate must not exceed the *current* management fee,
         // not just the absolute cap — otherwise a "discount" tier can charge
         // more than the base fee (#717).

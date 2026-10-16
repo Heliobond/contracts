@@ -24,6 +24,8 @@ const MIN_URI_LEN: u32 = 8;
 /// Maximum governance proposal description length in bytes, mirroring the
 /// URI-length bound above — prevents excessively large ledger entries (#455).
 const MAX_PROPOSAL_DESCRIPTION_LEN: u32 = 2048;
+/// #713 — minimum description length to reject empty proposals.
+const MIN_PROPOSAL_DESCRIPTION_LEN: u32 = 1;
 /// Current schema version for instance and persistent contract state (#66).
 const STATE_VERSION: u32 = 1;
 
@@ -614,11 +616,20 @@ impl ProjectRegistry {
         require_not_paused(&env);
         require_current_state(&env);
         proposer.require_auth();
+        // #712 — check proposer is whitelisted as the doc comment states.
+        let is_whitelisted: bool = storage::read_whitelist(&env, proposer.clone());
+        if !is_whitelisted {
+            panic_with_error!(&env, RegistryError::NotWhitelisted);
+        }
         if voting_duration_secs < MIN_VOTING_PERIOD {
             panic_with_error!(&env, RegistryError::VotingPeriodTooShort);
         }
         if voting_duration_secs > MAX_VOTING_PERIOD {
             panic_with_error!(&env, RegistryError::VotingPeriodTooLong);
+        }
+        // #713 — reject empty descriptions.
+        if description.len() < MIN_PROPOSAL_DESCRIPTION_LEN {
+            panic_with_error!(&env, RegistryError::ProposalDescriptionTooShort);
         }
         if description.len() > MAX_PROPOSAL_DESCRIPTION_LEN {
             panic_with_error!(&env, RegistryError::ProposalDescriptionTooLong);
