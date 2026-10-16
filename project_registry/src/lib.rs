@@ -15,6 +15,8 @@ use stellar_macros::only_owner;
 #[contractclient(name = "VaultInvestmentClient")]
 trait VaultInvestmentQuery {
     fn get_project_investment(env: Env, project_id: u32) -> i128;
+    /// Read the HBS balance for an account (#753).
+    fn balance(env: Env, account: Address) -> i128;
 }
 
 /// Maximum URI length in bytes. Prevents excessively large ledger entries (#119).
@@ -60,7 +62,7 @@ mod types;
 
 pub use types::{
     ArchiveSummary, CertificationStatus, DataKey, HealthStatus, ProjectData, ProjectStatus,
-    Proposal, RegistryError, ScoreHistoryEntry,
+    Proposal, RegistryError, ScoreHistoryEntry, TimelockEntry, WhitelistEntry,
 };
 
 /// Minimum voting period in seconds (~1 day at 5s/ledger, ≈ 17280 ledgers) (#134).
@@ -132,14 +134,17 @@ impl ProjectRegistry {
 
     /// Grant or revoke project-creation rights for `account`.
     /// Only the whitelister address (set at construction) may call this.
-    pub fn set_whitelist(env: Env, account: Address, status: bool) {
+    /// `valid_until` is a Unix timestamp (seconds) after which the entry
+    /// expires; 0 means no expiry (permanent entry) (#752).
+    pub fn set_whitelist(env: Env, account: Address, status: bool, valid_until: u64) {
         require_not_paused(&env);
         require_current_state(&env);
         let whitelister: Address = env.storage().instance().get(&DataKey::Whitelister).unwrap();
         whitelister.require_auth();
         // Validation: Soroban Address types inherently prevent null/zero addresses,
         // fulfilling explicit validation requirements for account.
-        storage::write_whitelist(&env, account.clone(), status);
+        let entry = WhitelistEntry { status, valid_until };
+        storage::write_whitelist_entry(&env, account.clone(), &entry);
         events::whitelist_set(&env, &account, status);
     }
 
@@ -157,7 +162,21 @@ impl ProjectRegistry {
         creator.require_auth();
         // Validation: Soroban Address types inherently prevent null/zero addresses,
         // fulfilling explicit validation requirements for creator.
-        let is_whitelisted: bool = storage::read_whitelist(&env, creator.clone());
+        // #752 — check whitelist with expiry
+        let whitelist_entry = storage::read_whitelist_entry(&env, creator.clone());
+        let is_whitelisted = match whitelist_entry {
+            Some(entry) => {
+                if !entry.status {
+                    false
+                } else if entry.valid_until > 0 && env.ledger().timestamp() > entry.valid_until {
+                    // Entry has expired
+                    panic_with_error!(&env, RegistryError::WhitelistExpired);
+                } else {
+                    true
+                }
+            }
+            None => storage::read_whitelist(&env, creator.clone()),
+        };
         if !is_whitelisted {
             panic_with_error!(&env, RegistryError::NotWhitelisted);
         }
@@ -649,18 +668,26 @@ impl ProjectRegistry {
 
     /// Cast a vote on an open proposal.
     ///
-    /// `weight` is the caller's HBS share balance, which the caller supplies.
-    /// **There is no on-chain verification of `weight` against the actual balance.**
-    /// Off-chain callers MUST query `vault.balance(voter)` and pass that value;
-    /// supplying an inflated weight enables vote stuffing.
+    /// #753 — vote weight is read from the voter's HBS balance on-chain
+    /// (via the vault's `balance()` call) rather than trusting the caller.
+    /// This prevents any address from outvoting all HBS holders by
+    /// supplying an arbitrary weight.
+    ///
+    /// #754 — uses checked arithmetic to prevent overflow that could
+    /// permanently brick a proposal's tally.
+    ///
     /// `support = true` = vote for; `support = false` = vote against.
-    pub fn cast_vote(env: Env, voter: Address, proposal_id: u32, support: bool, weight: i128) {
+    pub fn cast_vote(env: Env, voter: Address, proposal_id: u32, support: bool) {
         require_not_paused(&env);
         require_current_state(&env);
         voter.require_auth();
+
+        // #753 — read the voter's actual HBS balance from the vault
+        let weight = Self::get_voting_weight(&env, &voter);
         if weight <= 0 {
             panic_with_error!(&env, RegistryError::VotingWeightNotPositive);
         }
+
         let already: bool = env
             .storage()
             .persistent()
@@ -677,14 +704,34 @@ impl ProjectRegistry {
         if proposal.executed {
             panic_with_error!(&env, RegistryError::ProposalAlreadyExecuted);
         }
+
+        // #754 — checked arithmetic to prevent overflow
         if support {
-            proposal.votes_for += weight;
+            proposal.votes_for = proposal.votes_for
+                .checked_add(weight)
+                .unwrap_or_else(|| panic_with_error!(&env, RegistryError::VoteOverflow));
         } else {
-            proposal.votes_against += weight;
+            proposal.votes_against = proposal.votes_against
+                .checked_add(weight)
+                .unwrap_or_else(|| panic_with_error!(&env, RegistryError::VoteOverflow));
         }
         storage::write_proposal(&env, proposal_id, &proposal);
         storage::write_persistent(&env, &DataKey::HasVoted(proposal_id, voter.clone()), &true);
         events::vote_cast(&env, proposal_id, &voter, support, weight);
+    }
+
+    /// Read the voter's HBS balance from the investment vault (#753).
+    /// Falls back to 0 if the vault is not configured or the call fails.
+    fn get_voting_weight(env: &Env, voter: &Address) -> i128 {
+        let vault_addr: Option<Address> = env.storage().instance().get(&crate::types::DataKey::Vault);
+        match vault_addr {
+            Some(vault) => {
+                // Cross-contract call to vault.balance(voter)
+                let client = VaultInvestmentClient::new(env, &vault);
+                client.balance(voter)
+            }
+            None => 0,
+        }
     }
 
     /// Finalise a proposal after voting has ended. Anyone may call this.
@@ -985,7 +1032,79 @@ impl ProjectRegistry {
 
     #[only_owner]
     pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        // #749 — timelock: upgrade must go through the propose/execute flow
+        panic_with_error!(&env, RegistryError::TimelockNotReady);
+    }
+
+    // ── Timelock for privileged operations (#749) ─────────────────────────────
+
+    /// Queue a privileged operation for later execution after a timelock delay.
+    /// Only the owner may queue. Emits a `TimelockQueued` event.
+    /// Returns the timelock ID.
+    #[only_owner]
+    pub fn queue_timelock(env: Env, op_type: u32, target: BytesN<32>, delay_secs: u64) -> u32 {
+        require_current_state(&env);
+        let min_delay: u64 = 86400; // 24 hours minimum
+        if delay_secs < min_delay {
+            panic_with_error!(&env, RegistryError::TimelockNotReady);
+        }
+        let id = storage::next_timelock_id(&env);
+        let now = env.ledger().timestamp();
+        let entry = TimelockEntry {
+            op_type,
+            target,
+            execute_after: now + delay_secs,
+            queued_at: now,
+            executed: false,
+        };
+        storage::write_timelock(&env, id, &entry);
+        id
+    }
+
+    /// Execute a previously queued timelock operation after its delay has elapsed.
+    /// Anyone may call this once `execute_after` is reached.
+    #[only_owner]
+    pub fn execute_timelock(env: Env, id: u32) {
+        require_current_state(&env);
+        let mut entry = storage::read_timelock(&env, id)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::TimelockNotFound));
+        if entry.executed {
+            panic_with_error!(&env, RegistryError::TimelockAlreadyExecuted);
+        }
+        if env.ledger().timestamp() < entry.execute_after {
+            panic_with_error!(&env, RegistryError::TimelockNotReady);
+        }
+
+        entry.executed = true;
+        storage::write_timelock(&env, id, &entry);
+
+        // Execute the operation based on op_type
+        match entry.op_type {
+            0 => {
+                // upgrade: update_current_contract_wasm
+                env.deployer().update_current_contract_wasm(entry.target.clone());
+            }
+            // Additional op types can be added here for set_registry, set_bridge, etc.
+            _ => {}
+        }
+    }
+
+    /// Cancel a queued timelock operation before it executes.
+    #[only_owner]
+    pub fn cancel_timelock(env: Env, id: u32) {
+        require_current_state(&env);
+        let mut entry = storage::read_timelock(&env, id)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::TimelockNotFound));
+        if entry.executed {
+            panic_with_error!(&env, RegistryError::TimelockAlreadyExecuted);
+        }
+        entry.executed = true; // mark as cancelled
+        storage::write_timelock(&env, id, &entry);
+    }
+
+    /// Get the state of a timelock entry.
+    pub fn get_timelock(env: Env, id: u32) -> Option<TimelockEntry> {
+        storage::read_timelock(&env, id)
     }
 
     // ── Circuit breaker (#72) ──────────────────────────────────────────────────

@@ -108,6 +108,16 @@ pub enum RegistryError {
     /// delete_project was called before the investment vault address was set
     /// via `set_vault`, so active investments cannot be ruled out (#526).
     VaultNotConfigured = 45,
+    /// Whitelist entry has expired (#752).
+    WhitelistExpired = 46,
+    /// Timelock entry not found (#749).
+    TimelockNotFound = 47,
+    /// Timelock entry has not yet reached its execution time (#749).
+    TimelockNotReady = 48,
+    /// Timelock entry has already been executed (#749).
+    TimelockAlreadyExecuted = 49,
+    /// Vote weight would cause overflow (#754).
+    VoteOverflow = 50,
 }
 
 /// Certification state for a green project (#130).
@@ -206,6 +216,33 @@ pub struct Proposal {
     pub executed: bool,
 }
 
+/// Whitelist entry with optional expiry (#752).
+///
+/// `valid_until` is a Unix timestamp (seconds) after which the entry expires.
+/// `0` means no expiry (permanent entry).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct WhitelistEntry {
+    pub status: bool,
+    pub valid_until: u64,
+}
+
+/// A queued privileged operation awaiting its timelock delay (#749).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct TimelockEntry {
+    /// The kind of operation being queued.
+    pub op_type: u32,
+    /// Target parameter (e.g. new wasm hash, new address).
+    pub target: BytesN<32>,
+    /// Unix timestamp (seconds) after which the operation may be executed.
+    pub execute_after: u64,
+    /// Unix timestamp (seconds) when the operation was queued.
+    pub queued_at: u64,
+    /// Whether the operation has been executed.
+    pub executed: bool,
+}
+
 #[contracttype]
 pub enum DataKey {
     StateVersion,
@@ -241,6 +278,12 @@ pub enum DataKey {
     EmergencyAdmin,
     /// Investment vault queried by `delete_project` for active investments (#526).
     Vault,
+    /// Whitelist entries with expiry: stores (status, valid_until) per account (#752).
+    WhitelistExpiry(Address),
+    /// Timelock queue for privileged operations (#749).
+    TimelockQueue,
+    /// Next timelock operation ID counter (#749).
+    TimelockCounter,
 }
 
 /// Consolidated operational status for monitoring/health-check integrations (#77).
