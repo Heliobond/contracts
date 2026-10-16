@@ -1349,15 +1349,25 @@ impl InvestmentVault {
         }
         require_not_settled(&env, project_id);
 
-        let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
-        soroban_sdk::token::TokenClient::new(&env, &usdc_sac).transfer(
-            &from,
-            &env.current_contract_address(),
-            &amount,
-        );
-
         let outstanding = read_i128(&env, &VaultKey::ProjectInvestment(project_id));
+        if outstanding <= 0 {
+            panic_with_error!(&env, VaultError::AmountNotPositive);
+        }
+
         let applied = amount.min(outstanding);
+        let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
+        let token_client = soroban_sdk::token::TokenClient::new(&env, &usdc_sac);
+
+        // Transfer only the amount that will be applied, not the full amount.
+        // This prevents over-payments from staying in the vault as unaccounted liquid USDC (#765).
+        token_client.transfer(&from, &env.current_contract_address(), &applied);
+
+        // Refund any excess if the payer sent more than outstanding
+        if amount > applied {
+            let excess = amount - applied;
+            token_client.transfer(&env.current_contract_address(), &from, &excess);
+        }
+
         if applied > 0 {
             reduce_outstanding(&env, project_id, applied);
             let repaid = read_i128(&env, &VaultKey::ProjectRepaid(project_id));
@@ -1365,7 +1375,7 @@ impl InvestmentVault {
                 .persistent()
                 .set(&VaultKey::ProjectRepaid(project_id), &(repaid + applied));
         }
-        events::principal_repaid(&env, project_id, &from, amount, outstanding - applied);
+        events::principal_repaid(&env, project_id, &from, applied, outstanding - applied);
     }
 
     /// Close a matured project's books (#631). Owner-only.
@@ -2619,7 +2629,7 @@ fn require_multisig_disabled(env: &Env) {
         .get(&VaultKey::MultiSigThreshold)
         .unwrap_or(0);
     if !multisig::is_multisig_disabled(threshold) {
-        panic_with_error!(env, VaultError::InsufficientApprovals);
+        panic_with_error!(env, VaultError::MultisigEnabledUseApprovedVariant);
     }
 }
 
@@ -3070,14 +3080,23 @@ impl InvestmentVault {
         caller.require_auth();
         require_emergency_admin(&env, &caller);
         env.storage().instance().set(&VaultKey::Paused, &true);
+        env.storage().instance().set(&VaultKey::PausedBy, &"emergency");
         events::paused(&env);
     }
 
     /// Unpause the vault as the emergency admin, without requiring owner auth (#43).
+    /// The emergency admin can only unpause if they were the one who paused it (#763).
     pub fn emergency_unpause(env: Env, caller: Address) {
         caller.require_auth();
         require_emergency_admin(&env, &caller);
+        // Only allow emergency admin to unpause if they paused it (#763).
+        // If the owner paused it, only the owner can unpause.
+        let paused_by: Option<String> = env.storage().instance().get(&VaultKey::PausedBy);
+        if paused_by != Some(String::from_str(&env, "emergency")) {
+            panic_with_error!(&env, VaultError::Unauthorized);
+        }
         env.storage().instance().set(&VaultKey::Paused, &false);
+        env.storage().instance().remove(&VaultKey::PausedBy);
         events::unpaused(&env);
     }
 

@@ -127,6 +127,10 @@ pub enum RegistryError {
     /// liquidate_collateral received a recipient that is not the vault or
     /// insurance fund (#714).
     InvalidLiquidationRecipient = 47,
+    /// Multisig is enabled; use the _with_approvals/_approved variant instead (#764).
+    MultisigEnabledUseApprovedVariant = 51,
+    /// Project has outstanding collateral that must be released first (#766).
+    ProjectHasCollateral = 52,
 }
 
 /// Certification state for a green project (#130).
@@ -286,6 +290,8 @@ pub enum DataKey {
     ScoreHistoryTotal(u32),
     /// Circuit breaker pause state (#72).
     Paused,
+    /// Tracks who paused the contract: "owner" or "emergency" (#763).
+    PausedBy,
     /// Optional emergency-admin address that may pause/unpause without
     /// holding full owner privileges (#43). Unset means no emergency admin.
     EmergencyAdmin,
