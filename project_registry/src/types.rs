@@ -195,6 +195,8 @@ pub struct ArchiveSummary {
     pub certification_status: CertificationStatus,
     /// Preserved so `verify_metadata_hash` keeps working after compaction (#448).
     pub metadata_hash: BytesN<32>,
+    /// Timestamp of project creation, preserved across compaction (#768).
+    pub created_at: u64,
 }
 
 /// A governance proposal that HBS holders vote on (#134).
