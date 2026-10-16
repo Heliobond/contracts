@@ -59,6 +59,10 @@ const MAX_COMPACT_STORAGE_PAIRS: u64 = 20;
 /// Prevents overflow in voting_ends_at computation and rejects unreasonably long proposals.
 const MAX_VOTING_PERIOD: u64 = 30 * 86_400;
 
+/// Minimum total votes (for + against) required for a proposal to pass (#755).
+/// Without this, a single vote of any weight could carry a proposal.
+const MIN_QUORUM_VOTES: i128 = 10;
+
 mod events;
 mod logic;
 mod storage;
@@ -672,8 +676,10 @@ impl ProjectRegistry {
     // ── Governance (#134) ──────────────────────────────────────────────────────
 
     /// Create a governance proposal. `voting_duration_secs` must be >= MIN_VOTING_PERIOD.
-    /// Any whitelisted address may propose; voting weight is determined at vote time
-    /// by the caller's HBS share balance (read via the vault cross-contract call).
+    /// Any whitelisted address may propose. Voting weight is supplied by the caller
+    /// at vote time via `cast_vote` and is **not** verified on-chain — callers
+    /// must query `vault.balance(voter)` off-chain and pass that value. See
+    /// `cast_vote` for the full trust model.
     pub fn create_proposal(
         env: Env,
         proposer: Address,
@@ -766,7 +772,8 @@ impl ProjectRegistry {
     }
 
     /// Finalise a proposal after voting has ended. Anyone may call this.
-    /// Returns true if the proposal passed (votes_for > votes_against).
+    /// Returns true if the proposal passed (votes_for > votes_against AND
+    /// total votes meet the quorum threshold).
     pub fn execute_proposal(env: Env, proposal_id: u32) -> bool {
         require_current_state(&env);
         let mut proposal: Proposal = storage::read_proposal(&env, proposal_id)
@@ -778,7 +785,12 @@ impl ProjectRegistry {
             panic_with_error!(&env, RegistryError::ProposalAlreadyExecuted);
         }
         proposal.executed = true;
-        let passed = proposal.votes_for > proposal.votes_against;
+
+        // #755 — Require minimum participation (quorum) before a proposal can
+        // pass. Without this, a single vote of any weight carries the proposal.
+        let total_votes = proposal.votes_for + proposal.votes_against;
+        let passed = total_votes >= MIN_QUORUM_VOTES && proposal.votes_for > proposal.votes_against;
+
         storage::write_proposal(&env, proposal_id, &proposal);
         events::proposal_executed(&env, proposal_id, passed);
         passed
