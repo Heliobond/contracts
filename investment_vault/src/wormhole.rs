@@ -64,7 +64,8 @@
 //!   equivalent in sensitivity to direct minting authority.
 
 use soroban_sdk::xdr::{FromXdr, ToXdr};
-use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env};
+use soroban_sdk::{contracttype, panic_with_error, Address, Bytes, BytesN, Env};
+use crate::types::VaultError;
 
 pub mod chain_id {
     #![allow(dead_code)]
@@ -231,7 +232,7 @@ pub fn bytes32_to_address(env: &Env, b32: &BytesN<32>) -> Address {
         return addr;
     }
 
-    panic!("invalid address in bridge payload");
+    panic_with_error!(env, VaultError::BridgeBadRecipient);
 }
 
 /// Serialize a `BridgeTransferPayload` into a `Bytes` payload for Wormhole.
@@ -268,13 +269,13 @@ pub fn parse_bridge_payload(env: &Env, raw: &Bytes) -> BridgeTransferPayload {
     // Validate minimum length before reading any fields.
     let len = raw.len();
     if len < MIN_PAYLOAD_LEN {
-        panic!("bridge payload too short");
+        panic_with_error!(env, VaultError::BridgePayloadTooShort);
     }
 
     // Validate the magic prefix to reject payloads that are not HBS transfers.
     for i in 0..prefix_len {
         if raw.get(i).unwrap_or(0) != PAYLOAD_PREFIX[i as usize] {
-            panic!("invalid bridge payload prefix");
+            panic_with_error!(env, VaultError::BridgePayloadBadPrefix);
         }
     }
 
