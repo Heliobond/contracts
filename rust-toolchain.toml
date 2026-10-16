@@ -1,3 +1,7 @@
 [toolchain]
-channel = "1.84.0"
+# Floor set by the locked dependency graph:
+# - enum-ordinalize 4.x declares edition 2024 / rust-version 1.89
+# - soroban-sdk 26.1.0 declares rust-version 1.91
+channel = "1.91.0"
 targets = ["wasm32v1-none"]
+components = ["rustfmt", "clippy"]

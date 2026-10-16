@@ -365,20 +365,17 @@ impl InvestmentVault {
 
     /// Return the vault's net asset value (NAV) by recomputing from on-chain
     /// state on every call (e.g., liquid USDC + investments + expected returns).
+    /// #741 — Pure read: no longer writes CachedTotalAssets (that cache is
+    /// updated only in mutating paths like deposit/withdraw/claim).
     pub fn total_assets(env: Env) -> i128 {
-        let total = read_total_assets(&env);
-
-        env.storage()
-            .instance()
-            .set(&VaultKey::CachedTotalAssets, &total);
-        total
+        read_total_assets(&env)
     }
 
     /// Convert a USDC amount to vault shares at the current NAV (ERC-4626 formula).
     /// Uses virtual shares offset to prevent donation-based share inflation (#744).
     pub fn convert_to_shares(env: Env, usdc_amount: i128) -> i128 {
         require_current_state(&env);
-        let total_assets = Self::total_assets(env.clone());
+        let total_assets = read_total_assets(&env);
         let total_shares = Base::total_supply(&env);
         let virtual_shares = total_shares + VIRTUAL_SHARES_OFFSET;
         let virtual_assets = total_assets + VIRTUAL_SHARES_OFFSET;
@@ -393,7 +390,7 @@ impl InvestmentVault {
     /// Returns 0 when the vault is empty (no shares outstanding).
     pub fn convert_to_assets(env: Env, shares_amount: i128) -> i128 {
         require_current_state(&env);
-        let total_assets = Self::total_assets(env.clone());
+        let total_assets = read_total_assets(&env);
         let total_shares = Base::total_supply(&env);
         if total_shares == 0 || total_assets == 0 {
             // No assets to redeem when vault is empty (#111)
@@ -572,6 +569,11 @@ impl InvestmentVault {
             panic_with_error!(&env, VaultError::MaxSupplyExceeded);
         }
 
+        // #736 — settle the depositor's YieldDebt before minting new shares
+        // so they can only claim yield accrued after this deposit, not yield
+        // that was already earned by earlier holders.
+        settle_yield_debt(&env, &from);
+
         let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
         let token = soroban_sdk::token::TokenClient::new(&env, &usdc_sac);
         token.transfer(&from, env.current_contract_address(), &usdc_amount);
@@ -613,7 +615,9 @@ impl InvestmentVault {
             TTL_EXTEND_TO_LEDGERS,
         ); // Add rent check/extend
 
-        // Update cached total assets: liquid increases by full usdc_amount (#81, #85)
+        // Update cached total assets: only the investable amount stays in the
+        // vault — the fee was already transferred to the fee recipient and the
+        // premium is reserved for the insurance fund (#742).
         let cached_ta: i128 = env
             .storage()
             .instance()
@@ -621,7 +625,7 @@ impl InvestmentVault {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&VaultKey::CachedTotalAssets, &(cached_ta + usdc_amount));
+            .set(&VaultKey::CachedTotalAssets, &(cached_ta + investable));
 
         Base::mint(&env, &from, shares);
         lock_deposit(&env, &from);
@@ -955,6 +959,16 @@ impl InvestmentVault {
             .instance()
             .set(&VaultKey::CachedTotalAssets, &(cached_ta - claimable));
 
+        // #738 — decrease unclaimed yield so total_assets stays correct
+        let unclaimed: i128 = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::UnclaimedYield)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&VaultKey::UnclaimedYield, &(unclaimed - claimable));
+
         events::yield_claimed(&env, &from, claimable);
         claimable
     }
@@ -1104,6 +1118,21 @@ impl InvestmentVault {
         if current_fee == fee_bps && current_recipient == Some(recipient.clone()) {
             return;
         }
+        // Re-validate the volume-discount tier: if the management fee was
+        // lowered below the active tier's discounted rate, remove the tier
+        // so it cannot charge more than the base fee (#717).
+        let tier_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&VaultKey::VolumeTierFeeBps)
+            .unwrap_or(0);
+        if tier_bps > 0 && tier_bps > fee_bps {
+            env.storage()
+                .instance()
+                .remove(&VaultKey::VolumeTierThreshold);
+            env.storage().instance().remove(&VaultKey::VolumeTierFeeBps);
+        }
+
         env.storage()
             .instance()
             .set(&VaultKey::ManagementFeeBps, &fee_bps);
@@ -1438,6 +1467,19 @@ impl InvestmentVault {
         if discounted_bps > MAX_MANAGEMENT_FEE_BPS {
             panic_with_error!(&env, VaultError::FeeExceedsMaximum);
         }
+        if threshold < 0 {
+            panic_with_error!(&env, VaultError::InvalidInput);
+        // The discounted rate must not exceed the *current* management fee,
+        // not just the absolute cap — otherwise a "discount" tier can charge
+        // more than the base fee (#717).
+        let current_fee: u32 = env
+            .storage()
+            .instance()
+            .get(&VaultKey::ManagementFeeBps)
+            .unwrap_or(0);
+        if discounted_bps > current_fee {
+            panic_with_error!(&env, VaultError::FeeExceedsMaximum);
+        }
         if threshold == 0 {
             // Disable the tier entirely.
             env.storage()
@@ -1569,6 +1611,8 @@ impl InvestmentVault {
         if Base::total_supply(&env) + amount > MAX_HBS_SUPPLY {
             panic_with_error!(&env, VaultError::MaxSupplyExceeded);
         }
+        // #736 — settle YieldDebt before minting bridge shares
+        settle_yield_debt(&env, &to);
         Base::mint(&env, &to, amount);
         lock_deposit(&env, &to);
         events::bridge_mint(&env, &to, amount);
@@ -1714,6 +1758,8 @@ impl InvestmentVault {
         if Base::total_supply(&env) + transfer.amount > MAX_HBS_SUPPLY {
             panic_with_error!(&env, VaultError::MaxSupplyExceeded);
         }
+        // #736 — settle YieldDebt before minting bridge shares
+        settle_yield_debt(&env, &to);
         Base::mint(&env, &to, transfer.amount);
         lock_deposit(&env, &to);
         events::bridge_transfer_completed(
@@ -1798,15 +1844,26 @@ impl InvestmentVault {
         }
         initiator.require_auth();
 
+        // Check supply cap BEFORE computing fee to prevent overflow (#706)
+        let total_supply = Base::total_supply(&env);
+        if amount > MAX_HBS_SUPPLY - total_supply {
+            panic_with_error!(&env, VaultError::MaxSupplyExceeded);
+        }
+
         let fee_bps = Self::flash_loan_fee(env.clone()) as i128;
-        let fee = amount * fee_bps / BPS_SCALE;
+        // Use checked_mul to prevent overflow (#706)
+        let fee = amount.checked_mul(fee_bps)
+            .and_then(|v| v.checked_div(BPS_SCALE))
+            .unwrap_or_else(|| panic_with_error!(&env, VaultError::MaxSupplyExceeded));
 
         let vault = env.current_contract_address();
 
-        if Base::total_supply(&env) + amount + fee > MAX_HBS_SUPPLY {
+        if total_supply + amount + fee > MAX_HBS_SUPPLY {
             panic_with_error!(&env, VaultError::MaxSupplyExceeded);
         }
-        Base::mint(&env, &borrower, amount + fee);
+
+        // Mint only the principal amount - fee stays in vault (#705)
+        Base::mint(&env, &borrower, amount);
 
         let client = FlashLoanReceiverClient::new(&env, &borrower);
         let ok = client.flash_loan_callback(&initiator, &vault, &amount, &fee, &data);
@@ -1814,8 +1871,10 @@ impl InvestmentVault {
             panic_with_error!(&env, VaultError::FlashLoanCallbackFailed);
         }
 
+        // Borrower repays principal + fee; fee stays in vault as revenue (#705)
         Base::transfer(&env, &borrower, &MuxedAddress::from(&vault), amount + fee);
-        Base::burn(&env, &vault, amount + fee);
+        // Burn only the principal, keep fee in vault
+        Base::burn(&env, &vault, amount);
 
         events::flash_loan(&env, &initiator, &borrower, amount, fee);
     }
@@ -1999,6 +2058,9 @@ impl InvestmentVault {
     const MAX_COMPLIANCE_EVENTS: u64 = 1000;
     /// Maximum number of events `get_compliance_events` returns per call (#511, #707).
     const MAX_COMPLIANCE_EVENTS_PER_QUERY: u64 = 100;
+    /// Maximum length in bytes for `event_type` and `data` fields in
+    /// `record_compliance_event` (#718).
+    const MAX_COMPLIANCE_FIELD_LEN: u32 = 256;
 
     /// Set the maximum transaction amount limit for compliance monitoring (owner-only) (#184).
     #[only_owner]
@@ -2030,6 +2092,14 @@ impl InvestmentVault {
     #[only_owner]
     pub fn record_compliance_event(env: Env, event_type: String, data: String) {
         require_current_state(&env);
+        // Bound the string fields so a single call cannot write an
+        // arbitrarily large persistent entry (#718).
+        if event_type.len() > Self::MAX_COMPLIANCE_FIELD_LEN {
+            panic_with_error!(&env, VaultError::ComplianceFieldTooLong);
+        }
+        if data.len() > Self::MAX_COMPLIANCE_FIELD_LEN {
+            panic_with_error!(&env, VaultError::ComplianceFieldTooLong);
+        }
         let counter: u64 = env
             .storage()
             .instance()
@@ -2350,7 +2420,45 @@ fn receive_yield_internal(env: Env, from: Address, amount: i128) {
         .persistent()
         .set(&VaultKey::YieldPerShareAccum, &(accum + delta));
 
+    // #738 — track unclaimed yield so total_assets can exclude it.
+    // The USDC just received is also sitting in the vault's liquid balance
+    // (lifting NAV), and is separately claimable via claim_yield. Without
+    // excluding it, the same yield is counted twice: once as share price
+    // appreciation and once as a claimable amount.
+    let unclaimed: i128 = env
+        .storage()
+        .persistent()
+        .get(&VaultKey::UnclaimedYield)
+        .unwrap_or(0);
+    env.storage()
+        .persistent()
+        .set(&VaultKey::UnclaimedYield, &(unclaimed + amount));
+
     events::yield_received(&env, &from, amount);
+}
+
+/// Checkpoint an account's YieldDebt to the current accumulator (#736, #737).
+///
+/// Must be called BEFORE every balance change (mint, burn, transfer) so the
+/// account's pending yield is settled at the old share balance and they can
+/// never claim yield that accrued before they held their current shares.
+fn settle_yield_debt(env: &Env, account: &Address) {
+    let accum: i128 = env
+        .storage()
+        .persistent()
+        .get(&VaultKey::YieldPerShareAccum)
+        .unwrap_or(0);
+    env.storage()
+        .persistent()
+        .set(&VaultKey::YieldDebt(account.clone()), &accum);
+}
+
+/// Settle both sides of a transfer before the balance change (#737).
+/// Without this, a holder could claim yield, transfer shares to a fresh
+/// address with zero debt, and claim the same yield again.
+fn settle_yield_debt_transfer(env: &Env, from: &Address, to: &Address) {
+    settle_yield_debt(env, from);
+    settle_yield_debt(env, to);
 }
 
 fn claim_insurance_internal(env: Env, project_id: u32, recipient: Address, amount: i128) {
@@ -2507,6 +2615,17 @@ fn read_total_assets(env: &Env) -> i128 {
         .get(&VaultKey::InsuranceFund)
         .unwrap_or(0);
     liquid_usdc(env) + investments + expected - queued_liabilities(env) - insurance_fund
+    //
+    // #738 — unclaimed yield is a liability to the holders who will claim it,
+    // not an asset of the current share price. Without this subtraction the
+    // same USDC is counted twice: once as NAV (share price) and once as a
+    // separately claimable amount via claim_yield.
+    let unclaimed: i128 = env
+        .storage()
+        .persistent()
+        .get(&VaultKey::UnclaimedYield)
+        .unwrap_or(0);
+    liquid_usdc(env) + investments + expected - queued_liabilities(env) - unclaimed
 }
 
 fn queued_liabilities(env: &Env) -> i128 {
@@ -2690,6 +2809,27 @@ fn require_emergency_admin(env: &Env, caller: &Address) {
     }
 }
 
+/// Shared transfer restriction checks used by both `transfer` and
+/// `transfer_from` (#739). Blocks transfers to the vault's own address and
+/// transfers during an active funding round.
+fn check_transfer_restrictions(e: &Env, to: &MuxedAddress) {
+    // Soroban has no zero address; the vault's own address is the closest
+    // equivalent — shares sent here can never be recovered (#118).
+    if to.address() == e.current_contract_address() {
+        panic_with_error!(e, VaultError::TransferToVaultBlocked);
+    }
+    // Block share transfers while a funding round is active to prevent
+    // vault-accounting manipulation during project funding (#38).
+    let round_active: bool = e
+        .storage()
+        .instance()
+        .get(&VaultKey::FundingRoundActive)
+        .unwrap_or(false);
+    if round_active {
+        panic_with_error!(e, VaultError::FundingRoundActive);
+    }
+}
+
 /// Record the current ledger timestamp as the depositor's lock origin (#33).
 /// The lock prevents withdrawal for MIN_LOCK_PERIOD seconds after each deposit,
 /// blocking flash-deposit-withdraw attacks that could manipulate share pricing.
@@ -2828,10 +2968,10 @@ impl InvestmentVault {
         removed
     }
 
-    #[only_owner]
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
+    /// Upgrade requires multisig approval when enabled (#708)
+    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>, approvals: Vec<Address>) {
+        require_admin_approval(&env, approvals);
         env.deployer().update_current_contract_wasm(new_wasm_hash);
-        // events::upgraded(&env) could be called here if needed
     }
 }
 #[contractimpl(contracttrait)]
@@ -2840,6 +2980,7 @@ impl FungibleToken for InvestmentVault {
 
     fn transfer(e: &Env, from: Address, to: MuxedAddress, amount: i128) {
         require_current_state(e);
+        check_transfer_restrictions(e, &to);
         // Soroban has no zero address; the vault's own address is the closest
         // equivalent — shares sent here can never be recovered (#118).
         if to.address() == e.current_contract_address() {
@@ -2855,8 +2996,23 @@ impl FungibleToken for InvestmentVault {
         if round_active {
             panic_with_error!(e, VaultError::FundingRoundActive);
         }
+        // #737 — checkpoint both sides' YieldDebt before the balance change
+        // so the same yield cannot be claimed twice by moving shares to a
+        // fresh address.
+        settle_yield_debt_transfer(e, &from, &to.address());
         Base::transfer(e, &from, &to, amount);
-        lock_deposit(e, &to.address());
+        // #740 — Do NOT call lock_deposit on the recipient. Resetting the
+        // lock on incoming transfers lets anyone block a holder's withdrawals
+        // indefinitely by sending dust. The lock is only set on the account's
+        // own deposits (see `deposit`).
+    }
+
+    // #739 — transfer_from must apply the same restrictions as transfer.
+    fn transfer_from(e: &Env, spender: Address, from: Address, to: MuxedAddress, amount: i128) {
+        require_current_state(e);
+        check_transfer_restrictions(e, &to);
+        Base::transfer_from(e, &spender, &from, &to, amount);
+        // #740 — No lock_deposit on recipient (see transfer).
     }
 }
 

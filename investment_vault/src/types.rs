@@ -146,6 +146,8 @@ pub enum VaultError {
     DeadlineExpired = 64,
     /// Deposit would mint zero shares due to rounding (#744).
     ZeroShares = 65,
+    /// record_compliance_event's `event_type` or `data` exceeds MAX_COMPLIANCE_FIELD_LEN (#718).
+    ComplianceFieldTooLong = 64,
 }
 
 #[contracttype]
@@ -161,6 +163,10 @@ pub enum VaultKey {
     YieldPerShareAccum,
     /// Per-shareholder checkpoint: yield-per-share value at last claim (#125).
     YieldDebt(Address),
+    /// Total USDC received as yield but not yet claimed (#738).
+    /// Excluded from total_assets to prevent double-counting (yield is both
+    /// claimable via claim_yield AND would otherwise inflate NAV).
+    UnclaimedYield,
     /// Insurance fund USDC balance (#135).
     InsuranceFund,
     /// Whether a project default claim has been paid out (#135).
