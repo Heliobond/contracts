@@ -142,13 +142,13 @@ jobs:
           cache-on-failure: true
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo +stable install cargo-audit --locked
 
       - name: Security audit
         run: cargo audit --deny unmaintained
 
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+        run: cargo +stable install cargo-deny --locked
 
       - name: Supply-chain checks (advisories, bans, licenses, sources)
         # deny.toml ignores document the two known transitive issues

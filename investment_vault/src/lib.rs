@@ -1087,6 +1087,21 @@ impl InvestmentVault {
         if current_fee == fee_bps && current_recipient == Some(recipient.clone()) {
             return;
         }
+        // Re-validate the volume-discount tier: if the management fee was
+        // lowered below the active tier's discounted rate, remove the tier
+        // so it cannot charge more than the base fee (#717).
+        let tier_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&VaultKey::VolumeTierFeeBps)
+            .unwrap_or(0);
+        if tier_bps > 0 && tier_bps > fee_bps {
+            env.storage()
+                .instance()
+                .remove(&VaultKey::VolumeTierThreshold);
+            env.storage().instance().remove(&VaultKey::VolumeTierFeeBps);
+        }
+
         env.storage()
             .instance()
             .set(&VaultKey::ManagementFeeBps, &fee_bps);
@@ -1419,6 +1434,19 @@ impl InvestmentVault {
         require_not_paused(&env);
         require_current_state(&env);
         if discounted_bps > MAX_MANAGEMENT_FEE_BPS {
+            panic_with_error!(&env, VaultError::FeeExceedsMaximum);
+        }
+        if threshold < 0 {
+            panic_with_error!(&env, VaultError::InvalidInput);
+        // The discounted rate must not exceed the *current* management fee,
+        // not just the absolute cap — otherwise a "discount" tier can charge
+        // more than the base fee (#717).
+        let current_fee: u32 = env
+            .storage()
+            .instance()
+            .get(&VaultKey::ManagementFeeBps)
+            .unwrap_or(0);
+        if discounted_bps > current_fee {
             panic_with_error!(&env, VaultError::FeeExceedsMaximum);
         }
         if threshold == 0 {
@@ -1785,15 +1813,26 @@ impl InvestmentVault {
         }
         initiator.require_auth();
 
+        // Check supply cap BEFORE computing fee to prevent overflow (#706)
+        let total_supply = Base::total_supply(&env);
+        if amount > MAX_HBS_SUPPLY - total_supply {
+            panic_with_error!(&env, VaultError::MaxSupplyExceeded);
+        }
+
         let fee_bps = Self::flash_loan_fee(env.clone()) as i128;
-        let fee = amount * fee_bps / BPS_SCALE;
+        // Use checked_mul to prevent overflow (#706)
+        let fee = amount.checked_mul(fee_bps)
+            .and_then(|v| v.checked_div(BPS_SCALE))
+            .unwrap_or_else(|| panic_with_error!(&env, VaultError::MaxSupplyExceeded));
 
         let vault = env.current_contract_address();
 
-        if Base::total_supply(&env) + amount + fee > MAX_HBS_SUPPLY {
+        if total_supply + amount + fee > MAX_HBS_SUPPLY {
             panic_with_error!(&env, VaultError::MaxSupplyExceeded);
         }
-        Base::mint(&env, &borrower, amount + fee);
+
+        // Mint only the principal amount - fee stays in vault (#705)
+        Base::mint(&env, &borrower, amount);
 
         let client = FlashLoanReceiverClient::new(&env, &borrower);
         let ok = client.flash_loan_callback(&initiator, &vault, &amount, &fee, &data);
@@ -1801,8 +1840,10 @@ impl InvestmentVault {
             panic_with_error!(&env, VaultError::FlashLoanCallbackFailed);
         }
 
+        // Borrower repays principal + fee; fee stays in vault as revenue (#705)
         Base::transfer(&env, &borrower, &MuxedAddress::from(&vault), amount + fee);
-        Base::burn(&env, &vault, amount + fee);
+        // Burn only the principal, keep fee in vault
+        Base::burn(&env, &vault, amount);
 
         events::flash_loan(&env, &initiator, &borrower, amount, fee);
     }
@@ -1986,6 +2027,9 @@ impl InvestmentVault {
     const MAX_COMPLIANCE_EVENTS: u64 = 1000;
     /// Maximum number of events `get_compliance_events` returns per call (#511, #707).
     const MAX_COMPLIANCE_EVENTS_PER_QUERY: u64 = 100;
+    /// Maximum length in bytes for `event_type` and `data` fields in
+    /// `record_compliance_event` (#718).
+    const MAX_COMPLIANCE_FIELD_LEN: u32 = 256;
 
     /// Set the maximum transaction amount limit for compliance monitoring (owner-only) (#184).
     #[only_owner]
@@ -2017,6 +2061,14 @@ impl InvestmentVault {
     #[only_owner]
     pub fn record_compliance_event(env: Env, event_type: String, data: String) {
         require_current_state(&env);
+        // Bound the string fields so a single call cannot write an
+        // arbitrarily large persistent entry (#718).
+        if event_type.len() > Self::MAX_COMPLIANCE_FIELD_LEN {
+            panic_with_error!(&env, VaultError::ComplianceFieldTooLong);
+        }
+        if data.len() > Self::MAX_COMPLIANCE_FIELD_LEN {
+            panic_with_error!(&env, VaultError::ComplianceFieldTooLong);
+        }
         let counter: u64 = env
             .storage()
             .instance()
@@ -2845,10 +2897,10 @@ impl InvestmentVault {
         removed
     }
 
-    #[only_owner]
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
+    /// Upgrade requires multisig approval when enabled (#708)
+    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>, approvals: Vec<Address>) {
+        require_admin_approval(&env, approvals);
         env.deployer().update_current_contract_wasm(new_wasm_hash);
-        // events::upgraded(&env) could be called here if needed
     }
 }
 #[contractimpl(contracttrait)]
