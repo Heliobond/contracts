@@ -277,6 +277,17 @@ impl ProjectRegistry {
         if project.status == status {
             panic_with_error!(&env, RegistryError::ProjectStatusUnchanged);
         }
+        // Validate lifecycle transitions: Pending → Active → Funded → Completed (#767).
+        // Any other move is rejected.
+        let valid = match (&project.status, &status) {
+            (types::ProjectStatus::Pending, types::ProjectStatus::Active) => true,
+            (types::ProjectStatus::Active, types::ProjectStatus::Funded) => true,
+            (types::ProjectStatus::Funded, types::ProjectStatus::Completed) => true,
+            _ => false,
+        };
+        if !valid {
+            panic_with_error!(&env, RegistryError::InvalidStatusTransition);
+        }
         let old_status = project.status.clone();
         project.status = status.clone();
         storage::write_project(&env, project_id, &project);
@@ -335,6 +346,7 @@ impl ProjectRegistry {
             maturity_date: project.maturity_date,
             certification_status: project.certification_status,
             metadata_hash: project.metadata_hash,
+            created_at: project.created_at,
         };
         storage::write_persistent(&env, &DataKey::Arch(project_id), &summary);
         env.storage()
@@ -535,6 +547,9 @@ impl ProjectRegistry {
 
     /// Return all registered projects as `(project_id, ProjectData)` pairs.
     /// Iterates IDs 1..=`total_projects()` — O(n) in the number of projects.
+    ///
+    /// Deprecated: will exceed Soroban read limits once the registry grows (#770).
+    /// Use `get_projects_page` instead, which caps at 50 per call.
     pub fn get_all_projects(env: Env) -> Vec<(u32, ProjectData)> {
         require_current_state(&env);
         let counter: u32 = env
@@ -556,12 +571,16 @@ impl ProjectRegistry {
     /// Return up to `limit` non-archived projects starting after the first
     /// `offset` project IDs, ordered by ascending project ID (#269).
     ///
+    /// `limit` is capped at `MAX_PAGE_SIZE` (50) to prevent the paginated
+    /// alternative from exceeding Soroban's per-invocation read limits (#769).
+    ///
     /// Ordering is stable across calls as long as no projects are created or
     /// archived in between: paging through `offset = 0, limit, 2*limit, ...`
     /// visits every non-archived project exactly once, in the same order
     /// `get_all_projects` would return them.
     pub fn get_projects_page(env: Env, offset: u32, limit: u32) -> Vec<(u32, ProjectData)> {
         require_current_state(&env);
+        const MAX_PAGE_SIZE: u32 = 50;
         let counter: u32 = env
             .storage()
             .instance()
@@ -571,6 +590,7 @@ impl ProjectRegistry {
         if limit == 0 {
             return result;
         }
+        let limit = limit.min(MAX_PAGE_SIZE);
         let start = offset.saturating_add(1);
         let end = start.saturating_add(limit).min(counter.saturating_add(1));
         for i in start..end {
@@ -584,6 +604,9 @@ impl ProjectRegistry {
     }
 
     /// Return all projects including archived ones (#26).
+    ///
+    /// Deprecated: will exceed Soroban read limits once the registry grows (#770).
+    /// Use `get_projects_page` instead, which caps at 50 per call.
     pub fn get_all_projects_with_archived(env: Env) -> Vec<(u32, ProjectData)> {
         require_current_state(&env);
         let counter: u32 = env
