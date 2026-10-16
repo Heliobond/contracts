@@ -1072,6 +1072,21 @@ impl InvestmentVault {
         if current_fee == fee_bps && current_recipient == Some(recipient.clone()) {
             return;
         }
+        // Re-validate the volume-discount tier: if the management fee was
+        // lowered below the active tier's discounted rate, remove the tier
+        // so it cannot charge more than the base fee (#717).
+        let tier_bps: u32 = env
+            .storage()
+            .instance()
+            .get(&VaultKey::VolumeTierFeeBps)
+            .unwrap_or(0);
+        if tier_bps > 0 && tier_bps > fee_bps {
+            env.storage()
+                .instance()
+                .remove(&VaultKey::VolumeTierThreshold);
+            env.storage().instance().remove(&VaultKey::VolumeTierFeeBps);
+        }
+
         env.storage()
             .instance()
             .set(&VaultKey::ManagementFeeBps, &fee_bps);
@@ -1404,6 +1419,17 @@ impl InvestmentVault {
         require_not_paused(&env);
         require_current_state(&env);
         if discounted_bps > MAX_MANAGEMENT_FEE_BPS {
+            panic_with_error!(&env, VaultError::FeeExceedsMaximum);
+        }
+        // The discounted rate must not exceed the *current* management fee,
+        // not just the absolute cap — otherwise a "discount" tier can charge
+        // more than the base fee (#717).
+        let current_fee: u32 = env
+            .storage()
+            .instance()
+            .get(&VaultKey::ManagementFeeBps)
+            .unwrap_or(0);
+        if discounted_bps > current_fee {
             panic_with_error!(&env, VaultError::FeeExceedsMaximum);
         }
         if threshold == 0 {
@@ -1980,6 +2006,9 @@ impl InvestmentVault {
     const MAX_COMPLIANCE_EVENTS: u64 = 1000;
     /// Maximum number of events `get_compliance_events` returns per call (#511, #707).
     const MAX_COMPLIANCE_EVENTS_PER_QUERY: u64 = 100;
+    /// Maximum length in bytes for `event_type` and `data` fields in
+    /// `record_compliance_event` (#718).
+    const MAX_COMPLIANCE_FIELD_LEN: u32 = 256;
 
     /// Set the maximum transaction amount limit for compliance monitoring (owner-only) (#184).
     #[only_owner]
@@ -2011,6 +2040,14 @@ impl InvestmentVault {
     #[only_owner]
     pub fn record_compliance_event(env: Env, event_type: String, data: String) {
         require_current_state(&env);
+        // Bound the string fields so a single call cannot write an
+        // arbitrarily large persistent entry (#718).
+        if event_type.len() > Self::MAX_COMPLIANCE_FIELD_LEN {
+            panic_with_error!(&env, VaultError::ComplianceFieldTooLong);
+        }
+        if data.len() > Self::MAX_COMPLIANCE_FIELD_LEN {
+            panic_with_error!(&env, VaultError::ComplianceFieldTooLong);
+        }
         let counter: u64 = env
             .storage()
             .instance()

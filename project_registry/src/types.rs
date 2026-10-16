@@ -108,6 +108,11 @@ pub enum RegistryError {
     /// delete_project was called before the investment vault address was set
     /// via `set_vault`, so active investments cannot be ruled out (#526).
     VaultNotConfigured = 45,
+    /// update_impact_scores_batch received the same project_id more than once (#715).
+    DuplicateBatchUpdate = 46,
+    /// liquidate_collateral received a recipient that is not the vault or
+    /// insurance fund (#714).
+    InvalidLiquidationRecipient = 47,
 }
 
 /// Certification state for a green project (#130).

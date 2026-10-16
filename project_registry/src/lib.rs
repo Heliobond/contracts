@@ -1156,6 +1156,15 @@ fn update_impact_scores_batch_internal(env: Env, updates: Vec<(u32, u32, u32)>) 
     if updates.len() > MAX_BATCH_SCORE_SIZE {
         panic_with_error!(&env, RegistryError::BatchTooLarge);
     }
+    // Reject duplicate project IDs up front so the second entry does not hit
+    // the rate-limit and misdescribe a malformed batch (#715).
+    for i in 0..updates.len() {
+        for j in (i + 1)..updates.len() {
+            if updates.get(i).unwrap().0 == updates.get(j).unwrap().0 {
+                panic_with_error!(&env, RegistryError::DuplicateBatchUpdate);
+            }
+        }
+    }
     for entry in updates.iter() {
         let (project_id, credit_quality, green_impact) = entry;
         update_impact_score_internal(env.clone(), project_id, credit_quality, green_impact);
@@ -1225,6 +1234,24 @@ fn liquidate_collateral_internal(env: Env, project_id: u32, token: Address, reci
         .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
     if project.maturity_date > 0 && env.ledger().timestamp() < project.maturity_date {
         panic_with_error!(&env, RegistryError::ProjectNotMature);
+    }
+    // For open-ended projects (maturity_date == 0), require a default or
+    // impairment status so collateral cannot be liquidated at any moment (#714).
+    if project.maturity_date == 0
+        && project.status != types::ProjectStatus::Defaulted
+        && project.status != types::ProjectStatus::Archived
+    {
+        panic_with_error!(&env, RegistryError::ProjectNotMature);
+    }
+    // Restrict the liquidation recipient to the vault or insurance fund to
+    // prevent arbitrary withdrawal (#714).
+    let vault_addr = env
+        .storage()
+        .instance()
+        .get::<DataKey, Address>(&DataKey::Vault)
+        .unwrap_or_else(|| panic_with_error!(&env, RegistryError::VaultNotConfigured));
+    if recipient != vault_addr {
+        panic_with_error!(&env, RegistryError::InvalidLiquidationRecipient);
     }
     let key = DataKey::Collateral(project_id, token.clone());
     let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
