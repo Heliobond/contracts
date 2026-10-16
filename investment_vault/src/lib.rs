@@ -349,20 +349,17 @@ impl InvestmentVault {
 
     /// Return the vault's net asset value (NAV) by recomputing from on-chain
     /// state on every call (e.g., liquid USDC + investments + expected returns).
+    /// #741 — Pure read: no longer writes CachedTotalAssets (that cache is
+    /// updated only in mutating paths like deposit/withdraw/claim).
     pub fn total_assets(env: Env) -> i128 {
-        let total = read_total_assets(&env);
-
-        env.storage()
-            .instance()
-            .set(&VaultKey::CachedTotalAssets, &total);
-        total
+        read_total_assets(&env)
     }
 
     /// Convert a USDC amount to vault shares at the current NAV (ERC-4626 formula).
     /// Returns `usdc_amount` 1:1 when the vault is empty (first deposit).
     pub fn convert_to_shares(env: Env, usdc_amount: i128) -> i128 {
         require_current_state(&env);
-        let total_assets = Self::total_assets(env.clone());
+        let total_assets = read_total_assets(&env);
         let total_shares = Base::total_supply(&env);
         if total_shares == 0 || total_assets == 0 {
             // 1:1 mint when vault is empty (#111)
@@ -376,7 +373,7 @@ impl InvestmentVault {
     /// Returns 0 when the vault is empty (no shares outstanding).
     pub fn convert_to_assets(env: Env, shares_amount: i128) -> i128 {
         require_current_state(&env);
-        let total_assets = Self::total_assets(env.clone());
+        let total_assets = read_total_assets(&env);
         let total_shares = Base::total_supply(&env);
         if total_shares == 0 || total_assets == 0 {
             // No assets to redeem when vault is empty (#111)
@@ -586,7 +583,9 @@ impl InvestmentVault {
             TTL_EXTEND_TO_LEDGERS,
         ); // Add rent check/extend
 
-        // Update cached total assets: liquid increases by full usdc_amount (#81, #85)
+        // Update cached total assets: only the investable amount stays in the
+        // vault — the fee was already transferred to the fee recipient and the
+        // premium is reserved for the insurance fund (#742).
         let cached_ta: i128 = env
             .storage()
             .instance()
@@ -594,7 +593,7 @@ impl InvestmentVault {
             .unwrap_or(0);
         env.storage()
             .instance()
-            .set(&VaultKey::CachedTotalAssets, &(cached_ta + usdc_amount));
+            .set(&VaultKey::CachedTotalAssets, &(cached_ta + investable));
 
         Base::mint(&env, &from, shares);
         lock_deposit(&env, &from);
@@ -2759,6 +2758,27 @@ fn require_emergency_admin(env: &Env, caller: &Address) {
     }
 }
 
+/// Shared transfer restriction checks used by both `transfer` and
+/// `transfer_from` (#739). Blocks transfers to the vault's own address and
+/// transfers during an active funding round.
+fn check_transfer_restrictions(e: &Env, to: &MuxedAddress) {
+    // Soroban has no zero address; the vault's own address is the closest
+    // equivalent — shares sent here can never be recovered (#118).
+    if to.address() == e.current_contract_address() {
+        panic_with_error!(e, VaultError::TransferToVaultBlocked);
+    }
+    // Block share transfers while a funding round is active to prevent
+    // vault-accounting manipulation during project funding (#38).
+    let round_active: bool = e
+        .storage()
+        .instance()
+        .get(&VaultKey::FundingRoundActive)
+        .unwrap_or(false);
+    if round_active {
+        panic_with_error!(e, VaultError::FundingRoundActive);
+    }
+}
+
 /// Record the current ledger timestamp as the depositor's lock origin (#33).
 /// The lock prevents withdrawal for MIN_LOCK_PERIOD seconds after each deposit,
 /// blocking flash-deposit-withdraw attacks that could manipulate share pricing.
@@ -2909,6 +2929,7 @@ impl FungibleToken for InvestmentVault {
 
     fn transfer(e: &Env, from: Address, to: MuxedAddress, amount: i128) {
         require_current_state(e);
+        check_transfer_restrictions(e, &to);
         // Soroban has no zero address; the vault's own address is the closest
         // equivalent — shares sent here can never be recovered (#118).
         if to.address() == e.current_contract_address() {
@@ -2929,7 +2950,18 @@ impl FungibleToken for InvestmentVault {
         // fresh address.
         settle_yield_debt_transfer(e, &from, &to.address());
         Base::transfer(e, &from, &to, amount);
-        lock_deposit(e, &to.address());
+        // #740 — Do NOT call lock_deposit on the recipient. Resetting the
+        // lock on incoming transfers lets anyone block a holder's withdrawals
+        // indefinitely by sending dust. The lock is only set on the account's
+        // own deposits (see `deposit`).
+    }
+
+    // #739 — transfer_from must apply the same restrictions as transfer.
+    fn transfer_from(e: &Env, spender: Address, from: Address, to: MuxedAddress, amount: i128) {
+        require_current_state(e);
+        check_transfer_restrictions(e, &to);
+        Base::transfer_from(e, &spender, &from, &to, amount);
+        // #740 — No lock_deposit on recipient (see transfer).
     }
 }
 
