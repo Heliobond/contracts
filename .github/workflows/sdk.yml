@@ -47,12 +47,19 @@ jobs:
 
       - name: Resolve version
         id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
+          if [ "$EVENT_NAME" = "push" ]; then
             echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
             echo "publish=true" >> "$GITHUB_OUTPUT"
-          elif [ -n "${{ github.event.inputs.version }}" ]; then
-            echo "value=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "$INPUT_VERSION" ]; then
+            if ! echo "$INPUT_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+              echo "::error::Invalid version format: '$INPUT_VERSION'. Expected semver (e.g. 1.2.0 or 1.2.0-beta.1)"
+              exit 1
+            fi
+            echo "value=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
             echo "publish=true" >> "$GITHUB_OUTPUT"
           else
             echo "value=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
@@ -67,7 +74,9 @@ jobs:
           scope: '@heliobond'
 
       - name: Generate bindings + networks.ts
-        run: scripts/build_sdk.sh "${{ steps.version.outputs.value }}"
+        env:
+          SDK_VERSION: ${{ steps.version.outputs.value }}
+        run: scripts/build_sdk.sh "$SDK_VERSION"
 
       - name: Install & compile SDK
         working-directory: sdk

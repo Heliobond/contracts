@@ -2895,6 +2895,188 @@ fn test_delete_project_checks_only_the_target_project() {
     );
 }
 
+// ── Governance (#732) ────────────────────────────────────────────────────────
+
+#[test]
+fn test_create_proposal_stores_description_and_voting_period() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voting_secs: u64 = 86_400; // exactly MIN_VOTING_PERIOD
+
+    let proposal_id =
+        client.create_proposal(&proposer, &String::from_str(&env, "Increase funding"), &voting_secs);
+
+    assert_eq!(proposal_id, 1);
+    let proposal = client.get_proposal(&1);
+    assert_eq!(proposal.description, String::from_str(&env, "Increase funding"));
+    assert_eq!(proposal.proposer, proposer);
+    assert_eq!(proposal.votes_for, 0);
+    assert_eq!(proposal.votes_against, 0);
+    assert!(!proposal.executed);
+    assert!(proposal.voting_ends_at > env.ledger().timestamp());
+}
+
+#[test]
+fn test_create_proposal_sequential_ids() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+
+    let id1 = client.create_proposal(&proposer, &String::from_str(&env, "First"), &86_400);
+    let id2 = client.create_proposal(&proposer, &String::from_str(&env, "Second"), &86_400);
+
+    assert_eq!(id1, 1);
+    assert_eq!(id2, 2);
+}
+
+#[test]
+#[should_panic]
+fn test_create_proposal_rejects_voting_period_too_short() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    client.create_proposal(&proposer, &String::from_str(&env, "Too short"), &86_399);
+}
+
+#[test]
+#[should_panic]
+fn test_create_proposal_rejects_voting_period_too_long() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    client.create_proposal(&proposer, &String::from_str(&env, "Too long"), &(30 * 86_400 + 1));
+}
+
+#[test]
+fn test_cast_vote_accumulates_for_and_against() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter_a = Address::generate(&env);
+    let voter_b = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Vote test"), &86_400);
+
+    client.cast_vote(&voter_a, &proposal_id, &true, &100i128);
+    client.cast_vote(&voter_b, &proposal_id, &false, &30i128);
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.votes_for, 100);
+    assert_eq!(proposal.votes_against, 30);
+}
+
+#[test]
+#[should_panic]
+fn test_cast_vote_rejects_zero_weight() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Vote"), &86_400);
+    client.cast_vote(&voter, &proposal_id, &true, &0i128);
+}
+
+#[test]
+#[should_panic]
+fn test_cast_vote_rejects_negative_weight() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Vote"), &86_400);
+    client.cast_vote(&voter, &proposal_id, &true, &-5i128);
+}
+
+#[test]
+#[should_panic]
+fn test_cast_vote_rejects_double_vote() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Vote"), &86_400);
+    client.cast_vote(&voter, &proposal_id, &true, &100i128);
+    client.cast_vote(&voter, &proposal_id, &false, &50i128);
+}
+
+#[test]
+fn test_execute_proposal_passes_when_more_for_than_against() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter_a = Address::generate(&env);
+    let voter_b = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Pass"), &86_400);
+    client.cast_vote(&voter_a, &proposal_id, &true, &100i128);
+    client.cast_vote(&voter_b, &proposal_id, &false, &30i128);
+
+    let proposal = client.get_proposal(&proposal_id);
+    env.ledger().with_mut(|l| l.timestamp = proposal.voting_ends_at + 1);
+
+    let passed = client.execute_proposal(&proposal_id);
+    assert!(passed);
+    assert!(client.get_proposal(&proposal_id).executed);
+}
+
+#[test]
+fn test_execute_proposal_fails_when_more_against_than_for() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter_a = Address::generate(&env);
+    let voter_b = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Fail"), &86_400);
+    client.cast_vote(&voter_a, &proposal_id, &true, &10i128);
+    client.cast_vote(&voter_b, &proposal_id, &false, &20i128);
+
+    let proposal = client.get_proposal(&proposal_id);
+    env.ledger().with_mut(|l| l.timestamp = proposal.voting_ends_at + 1);
+
+    let passed = client.execute_proposal(&proposal_id);
+    assert!(!passed);
+    assert!(client.get_proposal(&proposal_id).executed);
+}
+
+#[test]
+#[should_panic]
+fn test_execute_proposal_rejects_while_voting_still_open() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Early"), &86_400);
+    client.execute_proposal(&proposal_id);
+}
+
+#[test]
+#[should_panic]
+fn test_execute_proposal_rejects_double_execution() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Twice"), &86_400);
+    let proposal = client.get_proposal(&proposal_id);
+    env.ledger().with_mut(|l| l.timestamp = proposal.voting_ends_at + 1);
+
+    client.execute_proposal(&proposal_id);
+    client.execute_proposal(&proposal_id);
+}
+
+#[test]
+fn test_get_proposal_returns_stored_data() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+
+    client.create_proposal(&proposer, &String::from_str(&env, "Hello"), &86_400);
+    let proposal = client.get_proposal(&1);
+
+    assert_eq!(proposal.description, String::from_str(&env, "Hello"));
+    assert_eq!(proposal.proposer, proposer);
+    assert!(!proposal.executed);
+}
+
+#[test]
+#[should_panic]
+fn test_get_proposal_rejects_unknown_id() {
+    let (_env, _admin, _whitelister, client) = setup();
+    client.get_proposal(&999);
+}
+
 /// The guard's client interface must match the real vault's ABI: wire the real
 /// InvestmentVault and delete an uninvested project through it.
 #[test]
