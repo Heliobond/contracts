@@ -2,20 +2,14 @@
 resolver = "2"
 members = ["project_registry", "investment_vault", "libs/multisig"]
 
-# Runtime/consensus-relevant dependencies are pinned with exact `=` versions
-# rather than semver ranges (#421). Soroban WASM output, gas costs, and
-# on-chain behavior can all shift on a patch release of the SDK or the
-# stellar-* crates, so an update here is a deliberate, reviewed action
-# (bump the version, re-audit, re-verify deploy hashes) rather than
-# something that should flow in silently via `cargo update`. `cargo-audit`
-# (CI's `security` job) still flags a vulnerable pinned version even though
-# it can't auto-resolve it -- that's intentional, not a gap to fix by
-# loosening these pins.
+# Runtime/consensus-relevant dependencies use caret ranges (the lockfile
+# guarantees reproducibility). Patch-level security fixes can flow in via
+# `cargo update` or Dependabot without a manual pin bump (#421, #727).
 [workspace.dependencies]
-soroban-sdk = { version = "=26.1.0" }
-stellar-tokens = { version = "=0.7.2" }
-stellar-access = { version = "=0.7.2" }
-stellar-macros = { version = "=0.7.2" }
+soroban-sdk = { version = "26.1.0" }
+stellar-tokens = { version = "0.7.2" }
+stellar-access = { version = "0.7.2" }
+stellar-macros = { version = "0.7.2" }
 
 [profile.release]
 opt-level = "z"
