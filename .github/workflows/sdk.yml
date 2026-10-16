@@ -16,6 +16,7 @@ on:
 
 env:
   STELLAR_CLI_VERSION: "26.1.0"
+  STELLAR_CLI_SHA256: "PLACEHOLDER_UPDATE_ON_VERSION_BUMP"
 
 jobs:
   sdk:
@@ -39,8 +40,10 @@ jobs:
       - name: Install Stellar CLI
         run: |
           url="https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-          curl -sSL "$url" | tar -xz
-          sudo mv stellar /usr/local/bin/stellar
+          curl -sSL -o /tmp/stellar-cli.tar.gz "$url"
+          echo "${STELLAR_CLI_SHA256}  /tmp/stellar-cli.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/stellar-cli.tar.gz -C /tmp
+          sudo mv /tmp/stellar /usr/local/bin/stellar
 
       - name: Build contracts
         run: stellar contract build
@@ -60,9 +63,24 @@ jobs:
               exit 1
             fi
             echo "value=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+          VERSION: ${{ github.event.inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "value=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$VERSION" ]; then
+            # Validate against semver before use — never pass unvalidated
+            # user input into shell (#730).
+            if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+              echo "::error::Invalid version format: '$VERSION' (expected semver like 1.2.3 or 1.2.3-rc1)"
+              exit 1
+            fi
+            echo "value=$VERSION" >> "$GITHUB_OUTPUT"
             echo "publish=true" >> "$GITHUB_OUTPUT"
           else
-            echo "value=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "value=0.0.0-${SHA::7}" >> "$GITHUB_OUTPUT"
             echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -81,7 +99,7 @@ jobs:
       - name: Install & compile SDK
         working-directory: sdk
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build
 
       - name: Pack SDK

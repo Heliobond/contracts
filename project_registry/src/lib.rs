@@ -24,6 +24,8 @@ const MIN_URI_LEN: u32 = 8;
 /// Maximum governance proposal description length in bytes, mirroring the
 /// URI-length bound above — prevents excessively large ledger entries (#455).
 const MAX_PROPOSAL_DESCRIPTION_LEN: u32 = 2048;
+/// #713 — minimum description length to reject empty proposals.
+const MIN_PROPOSAL_DESCRIPTION_LEN: u32 = 1;
 /// Current schema version for instance and persistent contract state (#66).
 const STATE_VERSION: u32 = 1;
 
@@ -614,11 +616,20 @@ impl ProjectRegistry {
         require_not_paused(&env);
         require_current_state(&env);
         proposer.require_auth();
+        // #712 — check proposer is whitelisted as the doc comment states.
+        let is_whitelisted: bool = storage::read_whitelist(&env, proposer.clone());
+        if !is_whitelisted {
+            panic_with_error!(&env, RegistryError::NotWhitelisted);
+        }
         if voting_duration_secs < MIN_VOTING_PERIOD {
             panic_with_error!(&env, RegistryError::VotingPeriodTooShort);
         }
         if voting_duration_secs > MAX_VOTING_PERIOD {
             panic_with_error!(&env, RegistryError::VotingPeriodTooLong);
+        }
+        // #713 — reject empty descriptions.
+        if description.len() < MIN_PROPOSAL_DESCRIPTION_LEN {
+            panic_with_error!(&env, RegistryError::ProposalDescriptionTooShort);
         }
         if description.len() > MAX_PROPOSAL_DESCRIPTION_LEN {
             panic_with_error!(&env, RegistryError::ProposalDescriptionTooLong);
@@ -707,48 +718,32 @@ impl ProjectRegistry {
     }
 
     /// Set only the credit-quality score for a project. Admin-only, bounded 0–100.
-    /// Emits `ScoreChanged` with the old and new values. Use `update_impact_score` to
+    /// Emits `CreditQualityUpdated`, `RateUpdated` when the computed rate changes,
+    /// and `ScoreChanged` with the old and new values. Use `update_impact_score` to
     /// update both scores simultaneously (#6).
     #[only_owner]
     pub fn update_credit_quality_score(env: Env, project_id: u32, credit_quality: u32) {
         require_not_paused(&env);
         require_multisig_disabled(&env);
-        if credit_quality > MAX_SCORE {
-            panic_with_error!(&env, RegistryError::CreditQualityOutOfRange);
-        }
-        let mut project: ProjectData = storage::read_project(&env, project_id)
-            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+        update_credit_quality_score_internal(env, project_id, credit_quality);
+    }
 
-        if project.status == types::ProjectStatus::Archived {
-            panic_with_error!(&env, RegistryError::ProjectArchived);
-        }
-
-        // Rate-limit oracle updates: reject if too soon since the last update.
-        if env.ledger().timestamp() < next_update_allowed_at_for(&project) {
-            panic_with_error!(&env, RegistryError::UpdateTooFrequent);
-        }
-
-        let old_cq = project.credit_quality;
-        if old_cq == credit_quality {
-            return;
-        }
-        let old_rate = compute_rate(project.credit_quality, project.green_impact);
-        project.credit_quality = credit_quality;
-        project.last_update_timestamp = env.ledger().timestamp();
-        let new_rate = compute_rate(credit_quality, project.green_impact);
-        storage::write_project(&env, project_id, &project);
-        events::credit_quality_updated(&env, project_id, credit_quality);
-        events::score_changed(
-            &env,
-            project_id,
-            old_cq,
-            credit_quality,
-            project.green_impact,
-            project.green_impact,
-            old_rate,
-            new_rate,
-        );
-        append_score_history(&env, project_id, credit_quality, project.green_impact);
+    /// Multisig counterpart of `update_credit_quality_score` (#574/#719).
+    ///
+    /// Once `set_multisig_admin` enables the threshold, the plain
+    /// `update_credit_quality_score` path is blocked by `require_multisig_disabled`,
+    /// and the combined `update_impact_score_approved` would overwrite
+    /// `green_impact` as well. This variant updates credit quality alone under
+    /// multi-sig admin approvals.
+    pub fn update_credit_quality_score_approved(
+        env: Env,
+        project_id: u32,
+        credit_quality: u32,
+        approvals: Vec<Address>,
+    ) {
+        require_not_paused(&env);
+        require_admin_approval(&env, approvals);
+        update_credit_quality_score_internal(env, project_id, credit_quality);
     }
 
     /// Return a proposal by ID. Panics with `ProposalNotFound` if unknown.
@@ -762,6 +757,8 @@ impl ProjectRegistry {
 
     /// Deposit `amount` of `token` as collateral for `project_id`.
     /// Only the project owner may deposit; tokens are held by this contract.
+    /// `token` must be on the accepted-collateral allowlist (#603) so a
+    /// worthless or malicious token cannot be recorded as collateral.
     pub fn deposit_collateral(
         env: Env,
         project_id: u32,
@@ -774,6 +771,9 @@ impl ProjectRegistry {
         depositor.require_auth();
         if amount <= 0 {
             panic_with_error!(&env, RegistryError::CollateralNotPositive);
+        }
+        if !is_accepted_collateral(&env, &token) {
+            panic_with_error!(&env, RegistryError::CollateralTokenNotAllowed);
         }
         let project: ProjectData = storage::read_project(&env, project_id)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
@@ -794,7 +794,37 @@ impl ProjectRegistry {
         let prev: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         env.storage().persistent().set(&key, &(prev + amount));
 
+        // Extend TTL on collateral entry to prevent archival (#709)
+        // Use project maturity or a reasonable default
+        let extend_to = if project.maturity_timestamp > 0 {
+            (project.maturity_timestamp as u32) + 100_000
+        } else {
+            env.ledger().sequence() + 1_000_000
+        };
+        env.storage().persistent().extend_ttl(&key, extend_to, extend_to);
+
         events::collateral_deposited(&env, project_id, &token, &depositor, amount);
+    }
+
+    /// Add or remove `token` from the accepted-collateral allowlist (#603).
+    /// Owner-only. `accepted = false` removes the token; existing balances for
+    /// that token can still be released/liquidated — only new deposits are blocked.
+    #[only_owner]
+    pub fn set_accepted_collateral(env: Env, token: Address, accepted: bool) {
+        if accepted {
+            env.storage()
+                .persistent()
+                .set(&DataKey::AcceptedCollateral(token), &true);
+        } else {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::AcceptedCollateral(token));
+        }
+    }
+
+    /// Return true when `token` may be used for new collateral deposits (#603).
+    pub fn is_accepted_collateral_token(env: Env, token: Address) -> bool {
+        is_accepted_collateral(&env, &token)
     }
 
     /// Return the collateral balance for (`project_id`, `token`).
@@ -983,8 +1013,9 @@ impl ProjectRegistry {
         env.storage().instance().get(&DataKey::Whitelister).unwrap()
     }
 
-    #[only_owner]
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
+    /// Upgrade requires multisig approval when enabled (#708)
+    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>, approvals: Vec<Address>) {
+        require_admin_approval(&env, approvals);
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
@@ -1146,6 +1177,15 @@ fn update_impact_scores_batch_internal(env: Env, updates: Vec<(u32, u32, u32)>) 
     if updates.len() > MAX_BATCH_SCORE_SIZE {
         panic_with_error!(&env, RegistryError::BatchTooLarge);
     }
+    // Reject duplicate project IDs up front so the second entry does not hit
+    // the rate-limit and misdescribe a malformed batch (#715).
+    for i in 0..updates.len() {
+        for j in (i + 1)..updates.len() {
+            if updates.get(i).unwrap().0 == updates.get(j).unwrap().0 {
+                panic_with_error!(&env, RegistryError::DuplicateBatchUpdate);
+            }
+        }
+    }
     for entry in updates.iter() {
         let (project_id, credit_quality, green_impact) = entry;
         update_impact_score_internal(env.clone(), project_id, credit_quality, green_impact);
@@ -1208,6 +1248,51 @@ fn update_impact_score_internal(env: Env, project_id: u32, credit_quality: u32, 
     append_score_history(&env, project_id, credit_quality, green_impact);
 }
 
+/// Shared body for `update_credit_quality_score` and its `_approved` variant.
+/// Emits `CreditQualityUpdated`, `RateUpdated` (when the computed rate moved —
+/// #581/#720, matching `update_impact_score_internal`), and `ScoreChanged`.
+fn update_credit_quality_score_internal(env: Env, project_id: u32, credit_quality: u32) {
+    if credit_quality > MAX_SCORE {
+        panic_with_error!(&env, RegistryError::CreditQualityOutOfRange);
+    }
+    let mut project: ProjectData = storage::read_project(&env, project_id)
+        .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+
+    if project.status == types::ProjectStatus::Archived {
+        panic_with_error!(&env, RegistryError::ProjectArchived);
+    }
+
+    // Rate-limit oracle updates: reject if too soon since the last update.
+    if env.ledger().timestamp() < next_update_allowed_at_for(&project) {
+        panic_with_error!(&env, RegistryError::UpdateTooFrequent);
+    }
+
+    let old_cq = project.credit_quality;
+    if old_cq == credit_quality {
+        return;
+    }
+    let old_rate = compute_rate(project.credit_quality, project.green_impact);
+    project.credit_quality = credit_quality;
+    project.last_update_timestamp = env.ledger().timestamp();
+    let new_rate = compute_rate(credit_quality, project.green_impact);
+    storage::write_project(&env, project_id, &project);
+    events::credit_quality_updated(&env, project_id, credit_quality);
+    if old_rate != new_rate {
+        events::rate_updated(&env, project_id, new_rate);
+    }
+    events::score_changed(
+        &env,
+        project_id,
+        old_cq,
+        credit_quality,
+        project.green_impact,
+        project.green_impact,
+        old_rate,
+        new_rate,
+    );
+    append_score_history(&env, project_id, credit_quality, project.green_impact);
+}
+
 fn liquidate_collateral_internal(env: Env, project_id: u32, token: Address, recipient: Address) {
     require_not_paused(&env);
     require_current_state(&env);
@@ -1215,6 +1300,24 @@ fn liquidate_collateral_internal(env: Env, project_id: u32, token: Address, reci
         .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
     if project.maturity_date > 0 && env.ledger().timestamp() < project.maturity_date {
         panic_with_error!(&env, RegistryError::ProjectNotMature);
+    }
+    // For open-ended projects (maturity_date == 0), require a default or
+    // impairment status so collateral cannot be liquidated at any moment (#714).
+    if project.maturity_date == 0
+        && project.status != types::ProjectStatus::Defaulted
+        && project.status != types::ProjectStatus::Archived
+    {
+        panic_with_error!(&env, RegistryError::ProjectNotMature);
+    }
+    // Restrict the liquidation recipient to the vault or insurance fund to
+    // prevent arbitrary withdrawal (#714).
+    let vault_addr = env
+        .storage()
+        .instance()
+        .get::<DataKey, Address>(&DataKey::Vault)
+        .unwrap_or_else(|| panic_with_error!(&env, RegistryError::VaultNotConfigured));
+    if recipient != vault_addr {
+        panic_with_error!(&env, RegistryError::InvalidLiquidationRecipient);
     }
     let key = DataKey::Collateral(project_id, token.clone());
     let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
@@ -1285,6 +1388,13 @@ fn require_multisig_disabled(env: &Env) {
     if !multisig::is_multisig_disabled(threshold) {
         panic_with_error!(env, RegistryError::InsufficientApprovals);
     }
+}
+
+fn is_accepted_collateral(env: &Env, token: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AcceptedCollateral(token.clone()))
+        .unwrap_or(false)
 }
 
 fn compute_rate(credit_quality: u32, green_impact: u32) -> u32 {
