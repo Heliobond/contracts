@@ -108,6 +108,8 @@ pub enum RegistryError {
     /// delete_project was called before the investment vault address was set
     /// via `set_vault`, so active investments cannot be ruled out (#526).
     VaultNotConfigured = 45,
+    /// deposit_collateral received a token that is not on the accepted-collateral allowlist (#603).
+    CollateralTokenNotAllowed = 46,
 }
 
 /// Certification state for a green project (#130).
@@ -241,6 +243,8 @@ pub enum DataKey {
     EmergencyAdmin,
     /// Investment vault queried by `delete_project` for active investments (#526).
     Vault,
+    /// Whether `token` is on the accepted-collateral allowlist (#603).
+    AcceptedCollateral(Address),
 }
 
 /// Consolidated operational status for monitoring/health-check integrations (#77).
