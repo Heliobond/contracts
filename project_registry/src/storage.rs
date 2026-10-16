@@ -33,9 +33,7 @@ pub fn read_proposal(env: &Env, id: u32) -> Option<Proposal> {
 }
 
 pub fn write_proposal(env: &Env, id: u32, proposal: &Proposal) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::Proposal(id), proposal);
+    write_persistent(env, &DataKey::Proposal(id), proposal);
 }
 
 pub fn read_whitelist(env: &Env, account: Address) -> bool {
@@ -62,9 +60,7 @@ pub fn write_whitelist_entry(env: &Env, account: Address, entry: &WhitelistEntry
 }
 
 pub fn write_whitelist(env: &Env, account: Address, status: bool) {
-    env.storage()
-        .persistent()
-        .set(&DataKey::Whitelist(account), &status);
+    write_persistent(env, &DataKey::Whitelist(account), &status);
 }
 
 // ── Timelock storage (#749) ──────────────────────────────────────────────

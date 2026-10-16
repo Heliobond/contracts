@@ -28,6 +28,19 @@ done
 
 python3 "$ROOT/scripts/gen_sdk_networks.py"
 
+# Fail the SDK build if any deploy/*.json has empty contract IDs (#726).
+# Without this, a released @heliobond/contracts-sdk would ship empty IDs.
+for deploy_file in "$ROOT"/deploy/*.json; do
+  network=$(basename "$deploy_file" .json)
+  for key in project_registry investment_vault; do
+    value=$(python3 -c "import json,sys; print(json.load(open('$deploy_file')).get('$key',''))" 2>/dev/null || echo "")
+    if [ -z "$value" ]; then
+      echo "ERROR: deploy/${network}.json has empty ${key} — cannot publish SDK with unpopulated contract IDs (#726)" >&2
+      exit 1
+    fi
+  done
+done
+
 if [ "${1:-}" != "" ]; then
   version="${1#v}"
   (cd "$ROOT/sdk" && npm pkg set version="$version")

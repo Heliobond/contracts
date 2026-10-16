@@ -1,8 +1,12 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractclient, contractimpl, panic_with_error, token::Client as TokenClient,
+    contract, contractclient, contractimpl, contractmeta, panic_with_error, token::Client as TokenClient,
     Address, BytesN, Env, String, Vec,
 };
+
+// Build metadata per SEP-55 (#751).
+contractmeta!(key = "source_repo", val = "https://github.com/Heliobond/contracts");
+contractmeta!(key = "contract_name", val = "project_registry");
 use stellar_access::ownable::{
     get_owner, set_owner, transfer_ownership as ownable_transfer_ownership, Ownable,
 };
@@ -26,6 +30,8 @@ const MIN_URI_LEN: u32 = 8;
 /// Maximum governance proposal description length in bytes, mirroring the
 /// URI-length bound above — prevents excessively large ledger entries (#455).
 const MAX_PROPOSAL_DESCRIPTION_LEN: u32 = 2048;
+/// #713 — minimum description length to reject empty proposals.
+const MIN_PROPOSAL_DESCRIPTION_LEN: u32 = 1;
 /// Current schema version for instance and persistent contract state (#66).
 const STATE_VERSION: u32 = 1;
 
@@ -54,6 +60,10 @@ const MAX_COMPACT_STORAGE_PAIRS: u64 = 20;
 /// Maximum voting duration in seconds — 30 days (#332).
 /// Prevents overflow in voting_ends_at computation and rejects unreasonably long proposals.
 const MAX_VOTING_PERIOD: u64 = 30 * 86_400;
+
+/// Minimum total votes (for + against) required for a proposal to pass (#755).
+/// Without this, a single vote of any weight could carry a proposal.
+const MIN_QUORUM_VOTES: i128 = 10;
 
 mod events;
 mod logic;
@@ -296,6 +306,17 @@ impl ProjectRegistry {
         if project.status == status {
             panic_with_error!(&env, RegistryError::ProjectStatusUnchanged);
         }
+        // Validate lifecycle transitions: Pending → Active → Funded → Completed (#767).
+        // Any other move is rejected.
+        let valid = match (&project.status, &status) {
+            (types::ProjectStatus::Pending, types::ProjectStatus::Active) => true,
+            (types::ProjectStatus::Active, types::ProjectStatus::Funded) => true,
+            (types::ProjectStatus::Funded, types::ProjectStatus::Completed) => true,
+            _ => false,
+        };
+        if !valid {
+            panic_with_error!(&env, RegistryError::InvalidStatusTransition);
+        }
         let old_status = project.status.clone();
         project.status = status.clone();
         storage::write_project(&env, project_id, &project);
@@ -354,6 +375,7 @@ impl ProjectRegistry {
             maturity_date: project.maturity_date,
             certification_status: project.certification_status,
             metadata_hash: project.metadata_hash,
+            created_at: project.created_at,
         };
         storage::write_persistent(&env, &DataKey::Arch(project_id), &summary);
         env.storage()
@@ -449,13 +471,52 @@ impl ProjectRegistry {
         }
     }
 
-    /// Update both `credit_quality` and `green_impact` for `project_id`. Admin-only.
+    /// Set the Oracle address authorized to update impact/credit scores (#748).
+    /// Owner-only. Pass `None` to disable Oracle updates (falling back to owner-only).
+    #[only_owner]
+    pub fn set_oracle(env: Env, oracle: Option<Address>) {
+        match oracle {
+            Some(addr) => {
+                env.storage().instance().set(&DataKey::Oracle, &addr);
+            }
+            None => {
+                env.storage().instance().remove(&DataKey::Oracle);
+            }
+        }
+    }
+
+    /// Return the current Oracle address, if any (#748).
+    pub fn get_oracle(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Oracle)
+    }
+
+    /// Require that the caller is the configured Oracle (#748).
+    fn require_oracle(env: &Env, caller: &Address) {
+        caller.require_auth();
+        let oracle: Option<Address> = env.storage().instance().get(&DataKey::Oracle);
+        match oracle {
+            Some(expected) => {
+                if caller != &expected {
+                    panic_with_error!(env, RegistryError::Unauthorized);
+                }
+            }
+            None => {
+                // No Oracle configured — fall back to owner-only.
+                let owner = AdminManager::get_owner(env);
+                if caller != &owner {
+                    panic_with_error!(env, RegistryError::Unauthorized);
+                }
+            }
+        }
+    }
+
+    /// Update both `credit_quality` and `green_impact` for `project_id`. Oracle-only (#748).
     /// Both values must be in the range 0–100. Emits `ProjectUpdated` and `RateUpdated`.
     /// No-op if the new scores are identical to the existing ones.
-    #[only_owner]
     pub fn update_impact_score(env: Env, project_id: u32, credit_quality: u32, green_impact: u32) {
         require_not_paused(&env);
         require_multisig_disabled(&env);
+        Self::require_oracle(&env, &env.current_auth().address().unwrap());
         update_impact_score_internal(env, project_id, credit_quality, green_impact);
     }
 
@@ -471,7 +532,7 @@ impl ProjectRegistry {
         update_impact_score_internal(env, project_id, credit_quality, green_impact);
     }
 
-    /// Update impact scores for multiple projects in a single transaction. Admin-only (#31).
+    /// Update impact scores for multiple projects in a single transaction. Oracle-only (#748).
     ///
     /// Each entry in `updates` is `(project_id, credit_quality, green_impact)`.
     /// Both score values must be in the range 0–100. Panics with `EmptyBatchUpdate`
@@ -483,9 +544,10 @@ impl ProjectRegistry {
     /// Individual project entries that are no-ops (scores identical to current values)
     /// are silently skipped, consistent with `update_impact_score`. Emits `ProjectUpdated`,
     /// `RateUpdated`, and `ScoreChanged` for each project whose scores actually change.
-    #[only_owner]
     pub fn update_impact_scores_batch(env: Env, updates: Vec<(u32, u32, u32)>) {
         require_not_paused(&env);
+        require_multisig_disabled(&env);
+        Self::require_oracle(&env, &env.current_auth().address().unwrap());
         require_multisig_disabled(&env);
         update_impact_scores_batch_internal(env, updates);
     }
@@ -554,6 +616,9 @@ impl ProjectRegistry {
 
     /// Return all registered projects as `(project_id, ProjectData)` pairs.
     /// Iterates IDs 1..=`total_projects()` — O(n) in the number of projects.
+    ///
+    /// Deprecated: will exceed Soroban read limits once the registry grows (#770).
+    /// Use `get_projects_page` instead, which caps at 50 per call.
     pub fn get_all_projects(env: Env) -> Vec<(u32, ProjectData)> {
         require_current_state(&env);
         let counter: u32 = env
@@ -575,12 +640,16 @@ impl ProjectRegistry {
     /// Return up to `limit` non-archived projects starting after the first
     /// `offset` project IDs, ordered by ascending project ID (#269).
     ///
+    /// `limit` is capped at `MAX_PAGE_SIZE` (50) to prevent the paginated
+    /// alternative from exceeding Soroban's per-invocation read limits (#769).
+    ///
     /// Ordering is stable across calls as long as no projects are created or
     /// archived in between: paging through `offset = 0, limit, 2*limit, ...`
     /// visits every non-archived project exactly once, in the same order
     /// `get_all_projects` would return them.
     pub fn get_projects_page(env: Env, offset: u32, limit: u32) -> Vec<(u32, ProjectData)> {
         require_current_state(&env);
+        const MAX_PAGE_SIZE: u32 = 50;
         let counter: u32 = env
             .storage()
             .instance()
@@ -590,6 +659,7 @@ impl ProjectRegistry {
         if limit == 0 {
             return result;
         }
+        let limit = limit.min(MAX_PAGE_SIZE);
         let start = offset.saturating_add(1);
         let end = start.saturating_add(limit).min(counter.saturating_add(1));
         for i in start..end {
@@ -603,6 +673,9 @@ impl ProjectRegistry {
     }
 
     /// Return all projects including archived ones (#26).
+    ///
+    /// Deprecated: will exceed Soroban read limits once the registry grows (#770).
+    /// Use `get_projects_page` instead, which caps at 50 per call.
     pub fn get_all_projects_with_archived(env: Env) -> Vec<(u32, ProjectData)> {
         require_current_state(&env);
         let counter: u32 = env
@@ -622,8 +695,10 @@ impl ProjectRegistry {
     // ── Governance (#134) ──────────────────────────────────────────────────────
 
     /// Create a governance proposal. `voting_duration_secs` must be >= MIN_VOTING_PERIOD.
-    /// Any whitelisted address may propose; voting weight is determined at vote time
-    /// by the caller's HBS share balance (read via the vault cross-contract call).
+    /// Any whitelisted address may propose. Voting weight is supplied by the caller
+    /// at vote time via `cast_vote` and is **not** verified on-chain — callers
+    /// must query `vault.balance(voter)` off-chain and pass that value. See
+    /// `cast_vote` for the full trust model.
     pub fn create_proposal(
         env: Env,
         proposer: Address,
@@ -633,11 +708,20 @@ impl ProjectRegistry {
         require_not_paused(&env);
         require_current_state(&env);
         proposer.require_auth();
+        // #712 — check proposer is whitelisted as the doc comment states.
+        let is_whitelisted: bool = storage::read_whitelist(&env, proposer.clone());
+        if !is_whitelisted {
+            panic_with_error!(&env, RegistryError::NotWhitelisted);
+        }
         if voting_duration_secs < MIN_VOTING_PERIOD {
             panic_with_error!(&env, RegistryError::VotingPeriodTooShort);
         }
         if voting_duration_secs > MAX_VOTING_PERIOD {
             panic_with_error!(&env, RegistryError::VotingPeriodTooLong);
+        }
+        // #713 — reject empty descriptions.
+        if description.len() < MIN_PROPOSAL_DESCRIPTION_LEN {
+            panic_with_error!(&env, RegistryError::ProposalDescriptionTooShort);
         }
         if description.len() > MAX_PROPOSAL_DESCRIPTION_LEN {
             panic_with_error!(&env, RegistryError::ProposalDescriptionTooLong);
@@ -735,7 +819,8 @@ impl ProjectRegistry {
     }
 
     /// Finalise a proposal after voting has ended. Anyone may call this.
-    /// Returns true if the proposal passed (votes_for > votes_against).
+    /// Returns true if the proposal passed (votes_for > votes_against AND
+    /// total votes meet the quorum threshold).
     pub fn execute_proposal(env: Env, proposal_id: u32) -> bool {
         require_current_state(&env);
         let mut proposal: Proposal = storage::read_proposal(&env, proposal_id)
@@ -747,7 +832,12 @@ impl ProjectRegistry {
             panic_with_error!(&env, RegistryError::ProposalAlreadyExecuted);
         }
         proposal.executed = true;
-        let passed = proposal.votes_for > proposal.votes_against;
+
+        // #755 — Require minimum participation (quorum) before a proposal can
+        // pass. Without this, a single vote of any weight carries the proposal.
+        let total_votes = proposal.votes_for + proposal.votes_against;
+        let passed = total_votes >= MIN_QUORUM_VOTES && proposal.votes_for > proposal.votes_against;
+
         storage::write_proposal(&env, proposal_id, &proposal);
         events::proposal_executed(&env, proposal_id, passed);
         passed
@@ -755,11 +845,11 @@ impl ProjectRegistry {
 
     /// Set only the credit-quality score for a project. Admin-only, bounded 0–100.
     /// Emits `ScoreChanged` with the old and new values. Use `update_impact_score` to
-    /// update both scores simultaneously (#6).
-    #[only_owner]
+    /// update both scores simultaneously (#6). Oracle-only (#748).
     pub fn update_credit_quality_score(env: Env, project_id: u32, credit_quality: u32) {
         require_not_paused(&env);
         require_multisig_disabled(&env);
+        Self::require_oracle(&env, &env.current_auth().address().unwrap());
         if credit_quality > MAX_SCORE {
             panic_with_error!(&env, RegistryError::CreditQualityOutOfRange);
         }
@@ -774,28 +864,32 @@ impl ProjectRegistry {
         if env.ledger().timestamp() < next_update_allowed_at_for(&project) {
             panic_with_error!(&env, RegistryError::UpdateTooFrequent);
         }
+    /// Emits `CreditQualityUpdated`, `RateUpdated` when the computed rate changes,
+    /// and `ScoreChanged` with the old and new values. Use `update_impact_score` to
+    /// update both scores simultaneously (#6).
+    #[only_owner]
+    pub fn update_credit_quality_score(env: Env, project_id: u32, credit_quality: u32) {
+        require_not_paused(&env);
+        require_multisig_disabled(&env);
+        update_credit_quality_score_internal(env, project_id, credit_quality);
+    }
 
-        let old_cq = project.credit_quality;
-        if old_cq == credit_quality {
-            return;
-        }
-        let old_rate = compute_rate(project.credit_quality, project.green_impact);
-        project.credit_quality = credit_quality;
-        project.last_update_timestamp = env.ledger().timestamp();
-        let new_rate = compute_rate(credit_quality, project.green_impact);
-        storage::write_project(&env, project_id, &project);
-        events::credit_quality_updated(&env, project_id, credit_quality);
-        events::score_changed(
-            &env,
-            project_id,
-            old_cq,
-            credit_quality,
-            project.green_impact,
-            project.green_impact,
-            old_rate,
-            new_rate,
-        );
-        append_score_history(&env, project_id, credit_quality, project.green_impact);
+    /// Multisig counterpart of `update_credit_quality_score` (#574/#719).
+    ///
+    /// Once `set_multisig_admin` enables the threshold, the plain
+    /// `update_credit_quality_score` path is blocked by `require_multisig_disabled`,
+    /// and the combined `update_impact_score_approved` would overwrite
+    /// `green_impact` as well. This variant updates credit quality alone under
+    /// multi-sig admin approvals.
+    pub fn update_credit_quality_score_approved(
+        env: Env,
+        project_id: u32,
+        credit_quality: u32,
+        approvals: Vec<Address>,
+    ) {
+        require_not_paused(&env);
+        require_admin_approval(&env, approvals);
+        update_credit_quality_score_internal(env, project_id, credit_quality);
     }
 
     /// Return a proposal by ID. Panics with `ProposalNotFound` if unknown.
@@ -809,6 +903,8 @@ impl ProjectRegistry {
 
     /// Deposit `amount` of `token` as collateral for `project_id`.
     /// Only the project owner may deposit; tokens are held by this contract.
+    /// `token` must be on the accepted-collateral allowlist (#603) so a
+    /// worthless or malicious token cannot be recorded as collateral.
     pub fn deposit_collateral(
         env: Env,
         project_id: u32,
@@ -821,6 +917,9 @@ impl ProjectRegistry {
         depositor.require_auth();
         if amount <= 0 {
             panic_with_error!(&env, RegistryError::CollateralNotPositive);
+        }
+        if !is_accepted_collateral(&env, &token) {
+            panic_with_error!(&env, RegistryError::CollateralTokenNotAllowed);
         }
         let project: ProjectData = storage::read_project(&env, project_id)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
@@ -841,7 +940,37 @@ impl ProjectRegistry {
         let prev: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         env.storage().persistent().set(&key, &(prev + amount));
 
+        // Extend TTL on collateral entry to prevent archival (#709)
+        // Use project maturity or a reasonable default
+        let extend_to = if project.maturity_timestamp > 0 {
+            (project.maturity_timestamp as u32) + 100_000
+        } else {
+            env.ledger().sequence() + 1_000_000
+        };
+        env.storage().persistent().extend_ttl(&key, extend_to, extend_to);
+
         events::collateral_deposited(&env, project_id, &token, &depositor, amount);
+    }
+
+    /// Add or remove `token` from the accepted-collateral allowlist (#603).
+    /// Owner-only. `accepted = false` removes the token; existing balances for
+    /// that token can still be released/liquidated — only new deposits are blocked.
+    #[only_owner]
+    pub fn set_accepted_collateral(env: Env, token: Address, accepted: bool) {
+        if accepted {
+            env.storage()
+                .persistent()
+                .set(&DataKey::AcceptedCollateral(token), &true);
+        } else {
+            env.storage()
+                .persistent()
+                .remove(&DataKey::AcceptedCollateral(token));
+        }
+    }
+
+    /// Return true when `token` may be used for new collateral deposits (#603).
+    pub fn is_accepted_collateral_token(env: Env, token: Address) -> bool {
+        is_accepted_collateral(&env, &token)
     }
 
     /// Return the collateral balance for (`project_id`, `token`).
@@ -1105,6 +1234,10 @@ impl ProjectRegistry {
     /// Get the state of a timelock entry.
     pub fn get_timelock(env: Env, id: u32) -> Option<TimelockEntry> {
         storage::read_timelock(&env, id)
+    /// Upgrade requires multisig approval when enabled (#708)
+    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>, approvals: Vec<Address>) {
+        require_admin_approval(&env, approvals);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
     // ── Circuit breaker (#72) ──────────────────────────────────────────────────
@@ -1265,6 +1398,15 @@ fn update_impact_scores_batch_internal(env: Env, updates: Vec<(u32, u32, u32)>) 
     if updates.len() > MAX_BATCH_SCORE_SIZE {
         panic_with_error!(&env, RegistryError::BatchTooLarge);
     }
+    // Reject duplicate project IDs up front so the second entry does not hit
+    // the rate-limit and misdescribe a malformed batch (#715).
+    for i in 0..updates.len() {
+        for j in (i + 1)..updates.len() {
+            if updates.get(i).unwrap().0 == updates.get(j).unwrap().0 {
+                panic_with_error!(&env, RegistryError::DuplicateBatchUpdate);
+            }
+        }
+    }
     for entry in updates.iter() {
         let (project_id, credit_quality, green_impact) = entry;
         update_impact_score_internal(env.clone(), project_id, credit_quality, green_impact);
@@ -1327,6 +1469,51 @@ fn update_impact_score_internal(env: Env, project_id: u32, credit_quality: u32, 
     append_score_history(&env, project_id, credit_quality, green_impact);
 }
 
+/// Shared body for `update_credit_quality_score` and its `_approved` variant.
+/// Emits `CreditQualityUpdated`, `RateUpdated` (when the computed rate moved —
+/// #581/#720, matching `update_impact_score_internal`), and `ScoreChanged`.
+fn update_credit_quality_score_internal(env: Env, project_id: u32, credit_quality: u32) {
+    if credit_quality > MAX_SCORE {
+        panic_with_error!(&env, RegistryError::CreditQualityOutOfRange);
+    }
+    let mut project: ProjectData = storage::read_project(&env, project_id)
+        .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
+
+    if project.status == types::ProjectStatus::Archived {
+        panic_with_error!(&env, RegistryError::ProjectArchived);
+    }
+
+    // Rate-limit oracle updates: reject if too soon since the last update.
+    if env.ledger().timestamp() < next_update_allowed_at_for(&project) {
+        panic_with_error!(&env, RegistryError::UpdateTooFrequent);
+    }
+
+    let old_cq = project.credit_quality;
+    if old_cq == credit_quality {
+        return;
+    }
+    let old_rate = compute_rate(project.credit_quality, project.green_impact);
+    project.credit_quality = credit_quality;
+    project.last_update_timestamp = env.ledger().timestamp();
+    let new_rate = compute_rate(credit_quality, project.green_impact);
+    storage::write_project(&env, project_id, &project);
+    events::credit_quality_updated(&env, project_id, credit_quality);
+    if old_rate != new_rate {
+        events::rate_updated(&env, project_id, new_rate);
+    }
+    events::score_changed(
+        &env,
+        project_id,
+        old_cq,
+        credit_quality,
+        project.green_impact,
+        project.green_impact,
+        old_rate,
+        new_rate,
+    );
+    append_score_history(&env, project_id, credit_quality, project.green_impact);
+}
+
 fn liquidate_collateral_internal(env: Env, project_id: u32, token: Address, recipient: Address) {
     require_not_paused(&env);
     require_current_state(&env);
@@ -1334,6 +1521,24 @@ fn liquidate_collateral_internal(env: Env, project_id: u32, token: Address, reci
         .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
     if project.maturity_date > 0 && env.ledger().timestamp() < project.maturity_date {
         panic_with_error!(&env, RegistryError::ProjectNotMature);
+    }
+    // For open-ended projects (maturity_date == 0), require a default or
+    // impairment status so collateral cannot be liquidated at any moment (#714).
+    if project.maturity_date == 0
+        && project.status != types::ProjectStatus::Defaulted
+        && project.status != types::ProjectStatus::Archived
+    {
+        panic_with_error!(&env, RegistryError::ProjectNotMature);
+    }
+    // Restrict the liquidation recipient to the vault or insurance fund to
+    // prevent arbitrary withdrawal (#714).
+    let vault_addr = env
+        .storage()
+        .instance()
+        .get::<DataKey, Address>(&DataKey::Vault)
+        .unwrap_or_else(|| panic_with_error!(&env, RegistryError::VaultNotConfigured));
+    if recipient != vault_addr {
+        panic_with_error!(&env, RegistryError::InvalidLiquidationRecipient);
     }
     let key = DataKey::Collateral(project_id, token.clone());
     let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
@@ -1404,6 +1609,13 @@ fn require_multisig_disabled(env: &Env) {
     if !multisig::is_multisig_disabled(threshold) {
         panic_with_error!(env, RegistryError::InsufficientApprovals);
     }
+}
+
+fn is_accepted_collateral(env: &Env, token: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AcceptedCollateral(token.clone()))
+        .unwrap_or(false)
 }
 
 fn compute_rate(credit_quality: u32, green_impact: u32) -> u32 {

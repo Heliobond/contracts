@@ -94,6 +94,8 @@ pub enum RegistryError {
     AlreadyCertified = 38,
     /// create_proposal's description exceeds MAX_PROPOSAL_DESCRIPTION_LEN (#455).
     ProposalDescriptionTooLong = 39,
+    /// #713 — create_proposal's description is empty or too short.
+    ProposalDescriptionTooShort = 42,
     /// update_impact_scores_batch received an empty updates list (#445).
     EmptyBatchUpdate = 40,
     /// set_project_status was asked to set or clear `Archived` — use
@@ -118,6 +120,13 @@ pub enum RegistryError {
     TimelockAlreadyExecuted = 49,
     /// Vote weight would cause overflow (#754).
     VoteOverflow = 50,
+    /// deposit_collateral received a token that is not on the accepted-collateral allowlist (#603).
+    CollateralTokenNotAllowed = 46,
+    /// update_impact_scores_batch received the same project_id more than once (#715).
+    DuplicateBatchUpdate = 46,
+    /// liquidate_collateral received a recipient that is not the vault or
+    /// insurance fund (#714).
+    InvalidLiquidationRecipient = 47,
 }
 
 /// Certification state for a green project (#130).
@@ -196,6 +205,8 @@ pub struct ArchiveSummary {
     pub certification_status: CertificationStatus,
     /// Preserved so `verify_metadata_hash` keeps working after compaction (#448).
     pub metadata_hash: BytesN<32>,
+    /// Timestamp of project creation, preserved across compaction (#768).
+    pub created_at: u64,
 }
 
 /// A governance proposal that HBS holders vote on (#134).
@@ -269,6 +280,8 @@ pub enum DataKey {
     MultiSigThreshold,
     /// Score history ring-buffer slot for (project_id, slot_index) (#123).
     ScoreHistorySlot(u32, u32),
+    /// Oracle address authorized to update impact/credit scores (#748).
+    Oracle,
     /// Total score updates ever written for a project (ring-buffer counter) (#123).
     ScoreHistoryTotal(u32),
     /// Circuit breaker pause state (#72).
@@ -284,6 +297,8 @@ pub enum DataKey {
     TimelockQueue,
     /// Next timelock operation ID counter (#749).
     TimelockCounter,
+    /// Whether `token` is on the accepted-collateral allowlist (#603).
+    AcceptedCollateral(Address),
 }
 
 /// Consolidated operational status for monitoring/health-check integrations (#77).

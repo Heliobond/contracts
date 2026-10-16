@@ -185,10 +185,53 @@ pub fn address_to_bytes32(env: &Env, addr: &Address) -> BytesN<32> {
     BytesN::from_array(env, &buf)
 }
 
-/// Decode an Address from 32 bytes via the Env's XDR deserialization.
+/// Decode an Address from 32 bytes produced by {@link address_to_bytes32}.
+///
+/// #758 — `address_to_bytes32` stores the trailing 32 bytes of the Address's
+/// XDR encoding (discarding the leading type discriminant), so the original
+/// 36-40 byte ScAddress XDR cannot be reconstructed. Instead, we try
+/// `Address::from_xdr` first (for legacy 32-byte-padded payloads), and fall
+/// back to constructing an `Address` from the raw 32-byte key by prepending
+/// the appropriate type discriminant based on which format the bytes match.
 pub fn bytes32_to_address(env: &Env, b32: &BytesN<32>) -> Address {
     let raw: Bytes = b32.clone().into();
-    Address::from_xdr(env, &raw).expect("invalid address in bridge payload")
+
+    // Try full XDR decode first (legacy payloads that carry the full ScAddress).
+    if let Ok(addr) = Address::from_xdr(env, &raw) {
+        return addr;
+    }
+
+    // Fallback: the 32 bytes are the trailing key material from
+    // address_to_bytes32. Prepend the ScAddress type discriminant and length
+    // prefix to reconstruct valid XDR.
+    //
+    // ScAddress XDR layout (40 bytes for Account):
+    //   bytes 0-3:  ScVal type tag (0x0A = ScAddress) — we'll use a simplified
+    //   bytes 4-7:  ScAddress discriminant (0 = Account, 1 = Contract)
+    //   bytes 8-39: 32-byte key
+    //
+    // Since we can't know the original type from just the key, we try both:
+    // first assume Account (discriminant 0), then Contract (discriminant 1).
+
+    // Try Account address (discriminant 0)
+    let mut account_xdr = Bytes::new(env);
+    account_xdr.append(&Bytes::from_slice(env, &[0x00, 0x00, 0x00, 0x0A])); // ScAddress type
+    account_xdr.append(&Bytes::from_slice(env, &[0x00, 0x00, 0x00, 0x00])); // Account discriminant
+    account_xdr.append(&raw);
+    if let Ok(addr) = Address::from_xdr(env, &account_xdr) {
+        return addr;
+    }
+
+    // Try Contract address (discriminant 1)
+    let mut contract_xdr = Bytes::new(env);
+    contract_xdr.append(&Bytes::from_slice(env, &[0x00, 0x00, 0x00, 0x0A]));
+    contract_xdr.append(&Bytes::from_slice(env, &[0x00, 0x00, 0x00, 0x01]));
+    contract_xdr.append(&raw);
+    if let Ok(addr) = Address::from_xdr(env, &contract_xdr) {
+        return addr;
+    }
+
+    panic!("invalid address in bridge payload");
 }
 
 /// Serialize a `BridgeTransferPayload` into a `Bytes` payload for Wormhole.
