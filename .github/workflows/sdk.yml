@@ -51,6 +51,18 @@ jobs:
       - name: Resolve version
         id: version
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$INPUT_VERSION" ]; then
+            if ! echo "$INPUT_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+              echo "::error::Invalid version format: '$INPUT_VERSION'. Expected semver (e.g. 1.2.0 or 1.2.0-beta.1)"
+              exit 1
+            fi
+            echo "value=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
           VERSION: ${{ github.event.inputs.version }}
           REF_NAME: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
