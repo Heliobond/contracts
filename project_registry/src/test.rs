@@ -2915,6 +2915,127 @@ fn test_delete_project_against_real_investment_vault() {
     assert!(client.try_get_project(&project_id).is_err());
 }
 
+// ── #735: get_archive_summary, get_all_projects_with_archived, liquidate_collateral_approved ──
+
+#[test]
+fn test_compact_archive_then_get_archive_summary() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let hash = test_metadata_hash(&env);
+
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64, &hash);
+    client.archive_project(&id);
+    client.compact_archive(&id);
+
+    let summary = client.get_archive_summary(&id);
+    assert_eq!(summary.owner, creator);
+    assert_eq!(summary.metadata_hash, hash);
+    // verify_metadata_hash must still work after compaction (#448)
+    assert!(client.verify_metadata_hash(&id, &hash));
+    assert!(!client.verify_metadata_hash(&id, &BytesN::from_array(&env, &[9u8; 32])));
+}
+
+#[test]
+#[should_panic]
+fn test_get_archive_summary_panics_for_uncompacted_project() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64, &test_metadata_hash(&env));
+    // Not archived/compacted — should panic with ProjectNotFound
+    client.get_archive_summary(&id);
+}
+
+#[test]
+fn test_get_all_projects_with_archived_includes_archived() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let hash = test_metadata_hash(&env);
+
+    let id1 = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm1"), &0u64, &hash);
+    let id2 = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm2"), &0u64, &hash);
+
+    // Archive the first project
+    client.archive_project(&id1);
+
+    let all = client.get_all_projects_with_archived();
+    assert_eq!(all.len(), 2);
+    // Both projects should be present, including the archived one
+    let ids: Vec<u32> = all.iter().map(|(id, _)| id).collect();
+    assert!(ids.contains(&id1));
+    assert!(ids.contains(&id2));
+}
+
+#[test]
+fn test_get_all_projects_with_archived_empty() {
+    let (_env, _admin, _whitelister, client) = setup();
+    let all = client.get_all_projects_with_archived();
+    assert_eq!(all.len(), 0);
+}
+
+#[test]
+fn test_liquidate_collateral_approved_with_valid_quorum() {
+    let (env, admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let hash = test_metadata_hash(&env);
+
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64, &hash);
+
+    // Set up multisig with 2 signers, threshold 2
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let signers = soroban_sdk::vec![&env, signer1.clone(), signer2.clone()];
+    client.set_multisig_admin(&signers, &2u32);
+
+    // Deposit collateral
+    let usdc_admin = Address::generate(&env);
+    let usdc_sac = env.register_stellar_asset_contract_v2(usdc_admin).address();
+    let token = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_sac);
+    token.mint(&client.address, &1000i128);
+    client.deposit_collateral(&id, &usdc_sac, &1000i128);
+
+    let recipient = Address::generate(&env);
+
+    // Liquidate with both signers as approvals (threshold met)
+    let approvals = soroban_sdk::vec![&env, signer1.clone(), signer2.clone()];
+    client.liquidate_collateral_approved(&id, &usdc_sac, &recipient, &approvals);
+
+    // Collateral should be transferred to recipient
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &usdc_sac);
+    assert_eq!(token_client.balance(&recipient), 1000);
+}
+
+#[test]
+#[should_panic]
+fn test_liquidate_collateral_approved_with_insufficient_quorum_panics() {
+    let (env, admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let hash = test_metadata_hash(&env);
+
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64, &hash);
+
+    // Set up multisig with 2 signers, threshold 2
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let signers = soroban_sdk::vec![&env, signer1.clone(), signer2.clone()];
+    client.set_multisig_admin(&signers, &2u32);
+
+    // Deposit collateral
+    let usdc_admin = Address::generate(&env);
+    let usdc_sac = env.register_stellar_asset_contract_v2(usdc_admin).address();
+    let token = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_sac);
+    token.mint(&client.address, &1000i128);
+    client.deposit_collateral(&id, &usdc_sac, &1000i128);
+
+    let recipient = Address::generate(&env);
+
+    // Only 1 approval when threshold is 2 — should panic
+    let approvals = soroban_sdk::vec![&env, signer1.clone()];
+    client.liquidate_collateral_approved(&id, &usdc_sac, &recipient, &approvals);
 // ── #732: Governance tests ────────────────────────────────────────────────────
 
 #[test]

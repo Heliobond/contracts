@@ -540,6 +540,11 @@ impl InvestmentVault {
             panic_with_error!(&env, VaultError::MaxSupplyExceeded);
         }
 
+        // #736 — settle the depositor's YieldDebt before minting new shares
+        // so they can only claim yield accrued after this deposit, not yield
+        // that was already earned by earlier holders.
+        settle_yield_debt(&env, &from);
+
         let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
         let token = soroban_sdk::token::TokenClient::new(&env, &usdc_sac);
         token.transfer(&from, env.current_contract_address(), &usdc_amount);
@@ -922,6 +927,16 @@ impl InvestmentVault {
         env.storage()
             .instance()
             .set(&VaultKey::CachedTotalAssets, &(cached_ta - claimable));
+
+        // #738 — decrease unclaimed yield so total_assets stays correct
+        let unclaimed: i128 = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::UnclaimedYield)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&VaultKey::UnclaimedYield, &(unclaimed - claimable));
 
         events::yield_claimed(&env, &from, claimable);
         claimable
@@ -1565,6 +1580,8 @@ impl InvestmentVault {
         if Base::total_supply(&env) + amount > MAX_HBS_SUPPLY {
             panic_with_error!(&env, VaultError::MaxSupplyExceeded);
         }
+        // #736 — settle YieldDebt before minting bridge shares
+        settle_yield_debt(&env, &to);
         Base::mint(&env, &to, amount);
         lock_deposit(&env, &to);
         events::bridge_mint(&env, &to, amount);
@@ -1710,6 +1727,8 @@ impl InvestmentVault {
         if Base::total_supply(&env) + transfer.amount > MAX_HBS_SUPPLY {
             panic_with_error!(&env, VaultError::MaxSupplyExceeded);
         }
+        // #736 — settle YieldDebt before minting bridge shares
+        settle_yield_debt(&env, &to);
         Base::mint(&env, &to, transfer.amount);
         lock_deposit(&env, &to);
         events::bridge_transfer_completed(
@@ -2367,7 +2386,45 @@ fn receive_yield_internal(env: Env, from: Address, amount: i128) {
         .persistent()
         .set(&VaultKey::YieldPerShareAccum, &(accum + delta));
 
+    // #738 — track unclaimed yield so total_assets can exclude it.
+    // The USDC just received is also sitting in the vault's liquid balance
+    // (lifting NAV), and is separately claimable via claim_yield. Without
+    // excluding it, the same yield is counted twice: once as share price
+    // appreciation and once as a claimable amount.
+    let unclaimed: i128 = env
+        .storage()
+        .persistent()
+        .get(&VaultKey::UnclaimedYield)
+        .unwrap_or(0);
+    env.storage()
+        .persistent()
+        .set(&VaultKey::UnclaimedYield, &(unclaimed + amount));
+
     events::yield_received(&env, &from, amount);
+}
+
+/// Checkpoint an account's YieldDebt to the current accumulator (#736, #737).
+///
+/// Must be called BEFORE every balance change (mint, burn, transfer) so the
+/// account's pending yield is settled at the old share balance and they can
+/// never claim yield that accrued before they held their current shares.
+fn settle_yield_debt(env: &Env, account: &Address) {
+    let accum: i128 = env
+        .storage()
+        .persistent()
+        .get(&VaultKey::YieldPerShareAccum)
+        .unwrap_or(0);
+    env.storage()
+        .persistent()
+        .set(&VaultKey::YieldDebt(account.clone()), &accum);
+}
+
+/// Settle both sides of a transfer before the balance change (#737).
+/// Without this, a holder could claim yield, transfer shares to a fresh
+/// address with zero debt, and claim the same yield again.
+fn settle_yield_debt_transfer(env: &Env, from: &Address, to: &Address) {
+    settle_yield_debt(env, from);
+    settle_yield_debt(env, to);
 }
 
 fn claim_insurance_internal(env: Env, project_id: u32, recipient: Address, amount: i128) {
@@ -2517,7 +2574,17 @@ fn read_total_assets(env: &Env) -> i128 {
     let expected = InvestmentVault::get_expected_returns(env.clone());
     // Queued redemptions are already owed to burned shares; they are a
     // liability of the vault, not an asset of the remaining holders (#613).
-    liquid_usdc(env) + investments + expected - queued_liabilities(env)
+    //
+    // #738 — unclaimed yield is a liability to the holders who will claim it,
+    // not an asset of the current share price. Without this subtraction the
+    // same USDC is counted twice: once as NAV (share price) and once as a
+    // separately claimable amount via claim_yield.
+    let unclaimed: i128 = env
+        .storage()
+        .persistent()
+        .get(&VaultKey::UnclaimedYield)
+        .unwrap_or(0);
+    liquid_usdc(env) + investments + expected - queued_liabilities(env) - unclaimed
 }
 
 fn queued_liabilities(env: &Env) -> i128 {
@@ -2857,6 +2924,10 @@ impl FungibleToken for InvestmentVault {
         if round_active {
             panic_with_error!(e, VaultError::FundingRoundActive);
         }
+        // #737 — checkpoint both sides' YieldDebt before the balance change
+        // so the same yield cannot be claimed twice by moving shares to a
+        // fresh address.
+        settle_yield_debt_transfer(e, &from, &to.address());
         Base::transfer(e, &from, &to, amount);
         lock_deposit(e, &to.address());
     }
