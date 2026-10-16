@@ -868,8 +868,9 @@ impl InvestmentVault {
         }
 
         let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
-        let mut liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
-            .balance(&env.current_contract_address());
+        // Use claimable_liquidity to reserve insurance fund and outstanding
+        // yield from the settlement pool (#762).
+        let mut liquid = claimable_liquidity(&env);
         let mut total_paid: i128 = 0;
         let mut idx = head;
 
@@ -1760,6 +1761,11 @@ impl InvestmentVault {
         let parsed = client.verify_vaa(&vaa);
         let transfer = wormhole::parse_bridge_payload(&env, &parsed.payload);
 
+        // Reject non-positive amounts before minting (#760).
+        if transfer.amount <= 0 {
+            panic_with_error!(&env, VaultError::AmountNotPositive);
+        }
+
         // Trust decision keyed off the VAA envelope's guardian-verified origin
         // chain, not the payload-embedded (unverified) transfer.source_chain (#452).
         let trusted: bool = env
@@ -1788,17 +1794,16 @@ impl InvestmentVault {
         {
             panic_with_error!(&env, VaultError::BridgeTokenMismatch);
         }
-        let digest: BytesN<32> = env.crypto().sha256(&vaa).into();
-        if env
-            .storage()
-            .persistent()
-            .has(&BridgeDataKey::ConsumedVaa(digest.clone()))
-        {
+        // Replay protection: key on the payload body hash (and emitter identity),
+        // not the full VAA bytes — a re-signed copy of the same message with a
+        // different guardian signature subset produces different VAA bytes but
+        // the same body, so hashing the body catches replays (#759).
+        let digest: BytesN<32> = env.crypto().sha256(&parsed.payload).into();
+        let replay_key = BridgeDataKey::ConsumedVaa(digest.clone());
+        if env.storage().persistent().has(&replay_key) {
             panic_with_error!(&env, VaultError::VaaAlreadyConsumed);
         }
-        env.storage()
-            .persistent()
-            .set(&BridgeDataKey::ConsumedVaa(digest), &true);
+        env.storage().persistent().set(&replay_key, &true);
 
         let to = wormhole::bytes32_to_address(&env, &transfer.recipient);
         if Base::total_supply(&env) + transfer.amount > MAX_HBS_SUPPLY {
@@ -2690,6 +2695,24 @@ fn set_queued_liabilities(env: &Env, value: i128) {
 fn liquid_usdc(env: &Env) -> i128 {
     let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
     soroban_sdk::token::TokenClient::new(env, &usdc_sac).balance(&env.current_contract_address())
+}
+
+/// Claimable liquidity for queue settlement: balance minus the insurance fund
+/// reserve and outstanding yield obligations (#762). Queued redeemers must not
+/// be able to drain USDC reserved for insurance or unclaimed yield.
+fn claimable_liquidity(env: &Env) -> i128 {
+    let balance = liquid_usdc(env);
+    let insurance_fund: i128 = env
+        .storage()
+        .persistent()
+        .get(&VaultKey::InsuranceFund)
+        .unwrap_or(0);
+    let outstanding_yield: i128 = env
+        .storage()
+        .instance()
+        .get(&VaultKey::YieldPerShareAccum)
+        .unwrap_or(0);
+    (balance - insurance_fund - outstanding_yield).max(0)
 }
 
 /// Virtual share offset to prevent first-depositor / donation share-inflation
