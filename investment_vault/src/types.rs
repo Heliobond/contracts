@@ -142,6 +142,8 @@ pub enum VaultError {
     ProjectNotImpaired = 62,
     /// `claim_insurance` amount exceeds the project's recorded impairment (#700).
     ClaimExceedsImpairment = 63,
+    /// record_compliance_event's `event_type` or `data` exceeds MAX_COMPLIANCE_FIELD_LEN (#718).
+    ComplianceFieldTooLong = 64,
 }
 
 #[contracttype]
