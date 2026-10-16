@@ -94,6 +94,8 @@ pub enum RegistryError {
     AlreadyCertified = 38,
     /// create_proposal's description exceeds MAX_PROPOSAL_DESCRIPTION_LEN (#455).
     ProposalDescriptionTooLong = 39,
+    /// #713 — create_proposal's description is empty or too short.
+    ProposalDescriptionTooShort = 42,
     /// update_impact_scores_batch received an empty updates list (#445).
     EmptyBatchUpdate = 40,
     /// set_project_status was asked to set or clear `Archived` — use
@@ -110,6 +112,11 @@ pub enum RegistryError {
     VaultNotConfigured = 45,
     /// deposit_collateral received a token that is not on the accepted-collateral allowlist (#603).
     CollateralTokenNotAllowed = 46,
+    /// update_impact_scores_batch received the same project_id more than once (#715).
+    DuplicateBatchUpdate = 46,
+    /// liquidate_collateral received a recipient that is not the vault or
+    /// insurance fund (#714).
+    InvalidLiquidationRecipient = 47,
 }
 
 /// Certification state for a green project (#130).

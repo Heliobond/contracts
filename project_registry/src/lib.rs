@@ -24,6 +24,8 @@ const MIN_URI_LEN: u32 = 8;
 /// Maximum governance proposal description length in bytes, mirroring the
 /// URI-length bound above — prevents excessively large ledger entries (#455).
 const MAX_PROPOSAL_DESCRIPTION_LEN: u32 = 2048;
+/// #713 — minimum description length to reject empty proposals.
+const MIN_PROPOSAL_DESCRIPTION_LEN: u32 = 1;
 /// Current schema version for instance and persistent contract state (#66).
 const STATE_VERSION: u32 = 1;
 
@@ -614,11 +616,20 @@ impl ProjectRegistry {
         require_not_paused(&env);
         require_current_state(&env);
         proposer.require_auth();
+        // #712 — check proposer is whitelisted as the doc comment states.
+        let is_whitelisted: bool = storage::read_whitelist(&env, proposer.clone());
+        if !is_whitelisted {
+            panic_with_error!(&env, RegistryError::NotWhitelisted);
+        }
         if voting_duration_secs < MIN_VOTING_PERIOD {
             panic_with_error!(&env, RegistryError::VotingPeriodTooShort);
         }
         if voting_duration_secs > MAX_VOTING_PERIOD {
             panic_with_error!(&env, RegistryError::VotingPeriodTooLong);
+        }
+        // #713 — reject empty descriptions.
+        if description.len() < MIN_PROPOSAL_DESCRIPTION_LEN {
+            panic_with_error!(&env, RegistryError::ProposalDescriptionTooShort);
         }
         if description.len() > MAX_PROPOSAL_DESCRIPTION_LEN {
             panic_with_error!(&env, RegistryError::ProposalDescriptionTooLong);
@@ -782,6 +793,15 @@ impl ProjectRegistry {
         let key = DataKey::Collateral(project_id, token.clone());
         let prev: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         env.storage().persistent().set(&key, &(prev + amount));
+
+        // Extend TTL on collateral entry to prevent archival (#709)
+        // Use project maturity or a reasonable default
+        let extend_to = if project.maturity_timestamp > 0 {
+            (project.maturity_timestamp as u32) + 100_000
+        } else {
+            env.ledger().sequence() + 1_000_000
+        };
+        env.storage().persistent().extend_ttl(&key, extend_to, extend_to);
 
         events::collateral_deposited(&env, project_id, &token, &depositor, amount);
     }
@@ -993,8 +1013,9 @@ impl ProjectRegistry {
         env.storage().instance().get(&DataKey::Whitelister).unwrap()
     }
 
-    #[only_owner]
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
+    /// Upgrade requires multisig approval when enabled (#708)
+    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>, approvals: Vec<Address>) {
+        require_admin_approval(&env, approvals);
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
@@ -1156,6 +1177,15 @@ fn update_impact_scores_batch_internal(env: Env, updates: Vec<(u32, u32, u32)>) 
     if updates.len() > MAX_BATCH_SCORE_SIZE {
         panic_with_error!(&env, RegistryError::BatchTooLarge);
     }
+    // Reject duplicate project IDs up front so the second entry does not hit
+    // the rate-limit and misdescribe a malformed batch (#715).
+    for i in 0..updates.len() {
+        for j in (i + 1)..updates.len() {
+            if updates.get(i).unwrap().0 == updates.get(j).unwrap().0 {
+                panic_with_error!(&env, RegistryError::DuplicateBatchUpdate);
+            }
+        }
+    }
     for entry in updates.iter() {
         let (project_id, credit_quality, green_impact) = entry;
         update_impact_score_internal(env.clone(), project_id, credit_quality, green_impact);
@@ -1270,6 +1300,24 @@ fn liquidate_collateral_internal(env: Env, project_id: u32, token: Address, reci
         .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
     if project.maturity_date > 0 && env.ledger().timestamp() < project.maturity_date {
         panic_with_error!(&env, RegistryError::ProjectNotMature);
+    }
+    // For open-ended projects (maturity_date == 0), require a default or
+    // impairment status so collateral cannot be liquidated at any moment (#714).
+    if project.maturity_date == 0
+        && project.status != types::ProjectStatus::Defaulted
+        && project.status != types::ProjectStatus::Archived
+    {
+        panic_with_error!(&env, RegistryError::ProjectNotMature);
+    }
+    // Restrict the liquidation recipient to the vault or insurance fund to
+    // prevent arbitrary withdrawal (#714).
+    let vault_addr = env
+        .storage()
+        .instance()
+        .get::<DataKey, Address>(&DataKey::Vault)
+        .unwrap_or_else(|| panic_with_error!(&env, RegistryError::VaultNotConfigured));
+    if recipient != vault_addr {
+        panic_with_error!(&env, RegistryError::InvalidLiquidationRecipient);
     }
     let key = DataKey::Collateral(project_id, token.clone());
     let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);

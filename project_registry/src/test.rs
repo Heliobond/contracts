@@ -3086,3 +3086,314 @@ fn test_delete_project_against_real_investment_vault() {
     client.delete_project(&project_id);
     assert!(client.try_get_project(&project_id).is_err());
 }
+
+// ── #735: get_archive_summary, get_all_projects_with_archived, liquidate_collateral_approved ──
+
+#[test]
+fn test_compact_archive_then_get_archive_summary() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let hash = test_metadata_hash(&env);
+
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64, &hash);
+    client.archive_project(&id);
+    client.compact_archive(&id);
+
+    let summary = client.get_archive_summary(&id);
+    assert_eq!(summary.owner, creator);
+    assert_eq!(summary.metadata_hash, hash);
+    // verify_metadata_hash must still work after compaction (#448)
+    assert!(client.verify_metadata_hash(&id, &hash));
+    assert!(!client.verify_metadata_hash(&id, &BytesN::from_array(&env, &[9u8; 32])));
+}
+
+#[test]
+#[should_panic]
+fn test_get_archive_summary_panics_for_uncompacted_project() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64, &test_metadata_hash(&env));
+    // Not archived/compacted — should panic with ProjectNotFound
+    client.get_archive_summary(&id);
+}
+
+#[test]
+fn test_get_all_projects_with_archived_includes_archived() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let hash = test_metadata_hash(&env);
+
+    let id1 = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm1"), &0u64, &hash);
+    let id2 = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm2"), &0u64, &hash);
+
+    // Archive the first project
+    client.archive_project(&id1);
+
+    let all = client.get_all_projects_with_archived();
+    assert_eq!(all.len(), 2);
+    // Both projects should be present, including the archived one
+    let ids: Vec<u32> = all.iter().map(|(id, _)| id).collect();
+    assert!(ids.contains(&id1));
+    assert!(ids.contains(&id2));
+}
+
+#[test]
+fn test_get_all_projects_with_archived_empty() {
+    let (_env, _admin, _whitelister, client) = setup();
+    let all = client.get_all_projects_with_archived();
+    assert_eq!(all.len(), 0);
+}
+
+#[test]
+fn test_liquidate_collateral_approved_with_valid_quorum() {
+    let (env, admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let hash = test_metadata_hash(&env);
+
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64, &hash);
+
+    // Set up multisig with 2 signers, threshold 2
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let signers = soroban_sdk::vec![&env, signer1.clone(), signer2.clone()];
+    client.set_multisig_admin(&signers, &2u32);
+
+    // Deposit collateral
+    let usdc_admin = Address::generate(&env);
+    let usdc_sac = env.register_stellar_asset_contract_v2(usdc_admin).address();
+    let token = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_sac);
+    token.mint(&client.address, &1000i128);
+    client.deposit_collateral(&id, &usdc_sac, &1000i128);
+
+    let recipient = Address::generate(&env);
+
+    // Liquidate with both signers as approvals (threshold met)
+    let approvals = soroban_sdk::vec![&env, signer1.clone(), signer2.clone()];
+    client.liquidate_collateral_approved(&id, &usdc_sac, &recipient, &approvals);
+
+    // Collateral should be transferred to recipient
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &usdc_sac);
+    assert_eq!(token_client.balance(&recipient), 1000);
+}
+
+#[test]
+#[should_panic]
+fn test_liquidate_collateral_approved_with_insufficient_quorum_panics() {
+    let (env, admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let hash = test_metadata_hash(&env);
+
+    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64, &hash);
+
+    // Set up multisig with 2 signers, threshold 2
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let signers = soroban_sdk::vec![&env, signer1.clone(), signer2.clone()];
+    client.set_multisig_admin(&signers, &2u32);
+
+    // Deposit collateral
+    let usdc_admin = Address::generate(&env);
+    let usdc_sac = env.register_stellar_asset_contract_v2(usdc_admin).address();
+    let token = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_sac);
+    token.mint(&client.address, &1000i128);
+    client.deposit_collateral(&id, &usdc_sac, &1000i128);
+
+    let recipient = Address::generate(&env);
+
+    // Only 1 approval when threshold is 2 — should panic
+    let approvals = soroban_sdk::vec![&env, signer1.clone()];
+    client.liquidate_collateral_approved(&id, &usdc_sac, &recipient, &approvals);
+// ── #732: Governance tests ────────────────────────────────────────────────────
+
+#[test]
+fn test_create_proposal_success() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Increase funding cap"),
+        &3600u64,
+    );
+
+    assert_eq!(proposal_id, 1);
+    let proposal = client.get_proposal(&1);
+    assert_eq!(proposal.proposer, proposer);
+    assert_eq!(proposal.votes_for, 0);
+    assert_eq!(proposal.votes_against, 0);
+    assert!(!proposal.executed);
+}
+
+#[test]
+fn test_create_proposal_rejects_too_short_voting_period() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+
+    assert!(
+        client
+            .try_create_proposal(
+                &proposer,
+                &String::from_str(&env, "test"),
+                &0u64,
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn test_create_proposal_rejects_too_long_voting_period() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+
+    assert!(
+        client
+            .try_create_proposal(
+                &proposer,
+                &String::from_str(&env, "test"),
+                &u64::MAX,
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn test_cast_vote_and_execute_proposal() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter_for = Address::generate(&env);
+    let voter_against = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "proposal"),
+        &3600u64,
+    );
+
+    client.cast_vote(&voter_for, &proposal_id, &true, &100i128);
+    client.cast_vote(&voter_against, &proposal_id, &false, &50i128);
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert_eq!(proposal.votes_for, 100);
+    assert_eq!(proposal.votes_against, 50);
+
+    env.ledger().with_mut(|l| l.timestamp += 3601);
+    let passed = client.execute_proposal(&proposal_id);
+    assert!(passed);
+
+    let proposal = client.get_proposal(&proposal_id);
+    assert!(proposal.executed);
+}
+
+#[test]
+fn test_cast_vote_rejects_duplicate_vote() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "proposal"),
+        &3600u64,
+    );
+
+    client.cast_vote(&voter, &proposal_id, &true, &100i128);
+    assert!(
+        client.try_cast_vote(&voter, &proposal_id, &false, &50i128).is_err()
+    );
+}
+
+#[test]
+fn test_cast_vote_rejects_zero_weight() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "proposal"),
+        &3600u64,
+    );
+
+    assert!(client.try_cast_vote(&voter, &proposal_id, &true, &0i128).is_err());
+}
+
+#[test]
+fn test_cast_vote_rejects_after_voting_period() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "proposal"),
+        &3600u64,
+    );
+
+    env.ledger().with_mut(|l| l.timestamp += 3601);
+    assert!(
+        client.try_cast_vote(&voter, &proposal_id, &true, &100i128).is_err()
+    );
+}
+
+#[test]
+fn test_execute_proposal_rejects_before_voting_ends() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "proposal"),
+        &3600u64,
+    );
+
+    assert!(client.try_execute_proposal(&proposal_id).is_err());
+}
+
+#[test]
+fn test_execute_proposal_rejects_double_execution() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "proposal"),
+        &3600u64,
+    );
+
+    env.ledger().with_mut(|l| l.timestamp += 3601);
+    client.execute_proposal(&proposal_id);
+    assert!(client.try_execute_proposal(&proposal_id).is_err());
+}
+
+#[test]
+fn test_execute_proposal_fails_when_more_against_votes() {
+    let (env, _admin, _whitelister, client) = setup();
+    let proposer = Address::generate(&env);
+    let voter_for = Address::generate(&env);
+    let voter_against = Address::generate(&env);
+
+    let proposal_id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "proposal"),
+        &3600u64,
+    );
+
+    client.cast_vote(&voter_for, &proposal_id, &true, &50i128);
+    client.cast_vote(&voter_against, &proposal_id, &false, &100i128);
+
+    env.ledger().with_mut(|l| l.timestamp += 3601);
+
+    let passed = client.execute_proposal(&proposal_id);
+    assert!(!passed);
+}
+
+#[test]
+fn test_get_proposal_not_found() {
+    let (_env, _admin, _whitelister, client) = setup();
+    assert!(client.try_get_proposal(&999).is_err());
+}

@@ -4,3 +4,4 @@
 # - soroban-sdk 26.1.0 declares rust-version 1.91
 channel = "1.91.0"
 targets = ["wasm32v1-none"]
+components = ["rustfmt", "clippy"]
