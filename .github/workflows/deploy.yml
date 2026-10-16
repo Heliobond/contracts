@@ -85,6 +85,16 @@ jobs:
           path: target/wasm32v1-none/release/*.wasm
           retention-days: 7
 
+      # #751: Generate build provenance attestations for release WASMs.
+      # Verifies that the deployed WASM came from this repository's source
+      # code and a specific commit, matching the contractmeta! metadata.
+      - name: Attest build provenance (#751)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            target/wasm32v1-none/release/project_registry.wasm
+            target/wasm32v1-none/release/investment_vault.wasm
+
   deploy:
     name: Deploy to ${{ github.event.inputs.network }}
     needs: build-and-verify
