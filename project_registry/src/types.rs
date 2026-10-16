@@ -94,6 +94,8 @@ pub enum RegistryError {
     AlreadyCertified = 38,
     /// create_proposal's description exceeds MAX_PROPOSAL_DESCRIPTION_LEN (#455).
     ProposalDescriptionTooLong = 39,
+    /// #713 — create_proposal's description is empty or too short.
+    ProposalDescriptionTooShort = 42,
     /// update_impact_scores_batch received an empty updates list (#445).
     EmptyBatchUpdate = 40,
     /// set_project_status was asked to set or clear `Archived` — use

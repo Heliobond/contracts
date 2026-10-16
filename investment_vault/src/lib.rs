@@ -1406,6 +1406,9 @@ impl InvestmentVault {
         if discounted_bps > MAX_MANAGEMENT_FEE_BPS {
             panic_with_error!(&env, VaultError::FeeExceedsMaximum);
         }
+        if threshold < 0 {
+            panic_with_error!(&env, VaultError::InvalidInput);
+        }
         if threshold == 0 {
             // Disable the tier entirely.
             env.storage()
