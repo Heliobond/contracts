@@ -142,6 +142,10 @@ pub enum VaultError {
     ProjectNotImpaired = 62,
     /// `claim_insurance` amount exceeds the project's recorded impairment (#700).
     ClaimExceedsImpairment = 63,
+    /// Deposit deadline has passed (#743).
+    DeadlineExpired = 64,
+    /// Deposit would mint zero shares due to rounding (#744).
+    ZeroShares = 65,
 }
 
 #[contracttype]

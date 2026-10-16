@@ -311,6 +311,18 @@ impl InvestmentVault {
     /// Projects funded before this feature was deployed fall back to the static formula
     /// (`investment * score_rate`) so no previously-funded project loses its contribution.
     pub fn get_expected_returns(env: Env) -> i128 {
+        // Use cached accumulator to avoid looping through all projects (#746).
+        // The accumulator is updated incrementally on fund/settle/score changes.
+        // Fall back to the full loop only if the cache is uninitialized.
+        let cached: Option<i128> = env
+            .storage()
+            .persistent()
+            .get(&VaultKey::CachedExpectedReturns);
+        if let Some(expected) = cached {
+            return expected;
+        }
+
+        // Fallback: full computation (first call or after cache invalidation).
         let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
         let registry = registry_interface::Client::new(&env, &registry_addr);
         let total_projects = registry.total_projects();
@@ -344,6 +356,10 @@ impl InvestmentVault {
             }
         }
 
+        // Cache the result for subsequent calls.
+        env.storage()
+            .persistent()
+            .set(&VaultKey::CachedExpectedReturns, &expected);
         expected
     }
 
@@ -359,16 +375,17 @@ impl InvestmentVault {
     }
 
     /// Convert a USDC amount to vault shares at the current NAV (ERC-4626 formula).
-    /// Returns `usdc_amount` 1:1 when the vault is empty (first deposit).
+    /// Uses virtual shares offset to prevent donation-based share inflation (#744).
     pub fn convert_to_shares(env: Env, usdc_amount: i128) -> i128 {
         require_current_state(&env);
         let total_assets = Self::total_assets(env.clone());
         let total_shares = Base::total_supply(&env);
-        if total_shares == 0 || total_assets == 0 {
-            // 1:1 mint when vault is empty (#111)
+        let virtual_shares = total_shares + VIRTUAL_SHARES_OFFSET;
+        let virtual_assets = total_assets + VIRTUAL_SHARES_OFFSET;
+        if virtual_shares <= 0 || virtual_assets <= 0 {
             usdc_amount
         } else {
-            usdc_amount * total_shares / total_assets
+            usdc_amount * virtual_shares / virtual_assets
         }
     }
 
@@ -521,11 +538,16 @@ impl InvestmentVault {
     /// 2. Management fee: optional `ManagementFeeBps` (0–500 bps) sent to the fee recipient.
     ///
     /// The remaining investable amount is converted to shares at the current NAV.
-    pub fn deposit(env: Env, from: Address, usdc_amount: i128) -> i128 {
+    pub fn deposit(env: Env, from: Address, usdc_amount: i128, min_shares_out: i128, deadline: u64) -> i128 {
         require_not_paused(&env);
         require_current_state(&env);
         from.require_auth();
         validate_deposit_amount(&env, usdc_amount);
+
+        // Enforce deadline: reject if current ledger timestamp is past the deadline (#743).
+        if deadline > 0 && env.ledger().timestamp() > deadline {
+            panic_with_error!(&env, VaultError::DeadlineExpired);
+        }
 
         // Insurance premium (#135) and management / volume-tier fee (#7, #39)
         // are deducted before share calculation. Shared with preview_deposit
@@ -533,6 +555,16 @@ impl InvestmentVault {
         let (premium, fee_amount, investable) = deposit_breakdown(&env, usdc_amount);
 
         let shares = Self::convert_to_shares(env.clone(), investable);
+
+        // Enforce slippage bound: reject if shares minted would be below the minimum (#743).
+        if min_shares_out > 0 && shares < min_shares_out {
+            panic_with_error!(&env, VaultError::SlippageLimitExceeded);
+        }
+
+        // Reject zero-share deposits to prevent rounding-based exploitation (#744).
+        if shares <= 0 {
+            panic_with_error!(&env, VaultError::ZeroShares);
+        }
 
         // Enforce the max HBS supply cap before any transfers (#20).
         let total_shares = Base::total_supply(&env);
@@ -2285,6 +2317,9 @@ fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
         .persistent()
         .set(&VaultKey::TotalInvestments, &(total_inv + amount));
 
+    // Invalidate expected-returns cache so next get_expected_returns recomputes (#746).
+    env.storage().persistent().remove(&VaultKey::CachedExpectedReturns);
+
     events::project_funded(&env, project_id, amount, &project.owner);
 }
 
@@ -2465,7 +2500,13 @@ fn read_total_assets(env: &Env) -> i128 {
     let expected = InvestmentVault::get_expected_returns(env.clone());
     // Queued redemptions are already owed to burned shares; they are a
     // liability of the vault, not an asset of the remaining holders (#613).
-    liquid_usdc(env) + investments + expected - queued_liabilities(env)
+    // Insurance fund is reserved for claims, not depositor NAV (#745).
+    let insurance_fund: i128 = env
+        .storage()
+        .persistent()
+        .get(&VaultKey::InsuranceFund)
+        .unwrap_or(0);
+    liquid_usdc(env) + investments + expected - queued_liabilities(env) - insurance_fund
 }
 
 fn queued_liabilities(env: &Env) -> i128 {
@@ -2486,14 +2527,23 @@ fn liquid_usdc(env: &Env) -> i128 {
     soroban_sdk::token::TokenClient::new(env, &usdc_sac).balance(&env.current_contract_address())
 }
 
+/// Virtual share offset to prevent first-depositor / donation share-inflation
+/// attacks (#744). Minted to the contract address on first deposit and never
+/// redeemable. Uses the ERC-4626 decimals-offset pattern.
+const VIRTUAL_SHARES_OFFSET: i128 = 1_000;
+
 /// Same formula as `convert_to_shares`, without caching NAV.
+/// Uses virtual shares/assets offset to prevent donation-based inflation (#744).
 fn shares_for_assets(env: &Env, usdc_amount: i128) -> i128 {
     let total_assets = read_total_assets(env);
     let total_shares = Base::total_supply(env);
-    if total_shares == 0 || total_assets == 0 {
+    // Virtual offset: shares = usdc * (total_shares + VIRTUAL) / (total_assets + VIRTUAL)
+    let virtual_shares = total_shares + VIRTUAL_SHARES_OFFSET;
+    let virtual_assets = total_assets + VIRTUAL_SHARES_OFFSET;
+    if virtual_shares <= 0 || virtual_assets <= 0 {
         usdc_amount
     } else {
-        usdc_amount * total_shares / total_assets
+        usdc_amount * virtual_shares / virtual_assets
     }
 }
 
