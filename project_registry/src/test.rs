@@ -25,6 +25,24 @@ fn setup() -> (Env, Address, Address, ProjectRegistryClient<'static>) {
     (env, admin, whitelister, client)
 }
 
+/// Register a SAC, mint `amount` to `recipient`, and allowlist it for collateral
+/// deposits (#603). Returns the token address.
+fn accepted_collateral_token(
+    env: &Env,
+    client: &ProjectRegistryClient<'static>,
+    recipient: &Address,
+    amount: i128,
+) -> Address {
+    use soroban_sdk::token::StellarAssetClient;
+    let token_admin = Address::generate(env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin)
+        .address();
+    StellarAssetClient::new(env, &token).mint(recipient, &amount);
+    client.set_accepted_collateral(&token, &true);
+    token
+}
+
 #[test]
 fn test_initialize_sets_admin_and_whitelister() {
     let (_env, _admin, _whitelister, client) = setup();
@@ -679,6 +697,146 @@ fn test_update_credit_quality_score_rejects_plain_call_once_multisig_enabled() {
     client.update_credit_quality_score(&id, &80u32);
 }
 
+// ── #719: update_credit_quality_score_approved multisig counterpart ──────────
+
+#[test]
+fn test_update_credit_quality_score_approved_after_multisig_enabled() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    let signer3 = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmCreditQualityApproved"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    client.set_multisig_admin(
+        &soroban_sdk::vec![&env, signer1.clone(), signer2.clone(), signer3],
+        &2u32,
+    );
+
+    // Plain path is blocked; the _approved path must remain usable and must
+    // leave green_impact untouched.
+    assert!(client.try_update_credit_quality_score(&id, &80u32).is_err());
+
+    client.update_credit_quality_score_approved(
+        &id,
+        &80u32,
+        &soroban_sdk::vec![&env, signer1, signer2],
+    );
+
+    let project = client.get_project(&id);
+    assert_eq!(project.credit_quality, 80);
+    assert_eq!(project.green_impact, 0);
+}
+
+#[test]
+#[should_panic]
+fn test_update_credit_quality_score_approved_rejects_insufficient_approvals() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    let signer1 = Address::generate(&env);
+    let signer2 = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmCreditQualityApproved"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    client.set_multisig_admin(
+        &soroban_sdk::vec![&env, signer1.clone(), signer2],
+        &2u32,
+    );
+    client.update_credit_quality_score_approved(
+        &id,
+        &80u32,
+        &soroban_sdk::vec![&env, signer1],
+    );
+}
+
+// ── #720: update_credit_quality_score must emit RateUpdated when rate moves ──
+
+#[test]
+fn test_update_credit_quality_score_emits_rate_updated() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmRateUpdated"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    client.update_credit_quality_score(&id, &75u32);
+
+    // CreditQualityUpdated + RateUpdated + ScoreChanged.
+    // env.events().all() returns events from the most recent invocation only.
+    let events = env.events().all().filter_by_contract(&client.address);
+    assert!(
+        events.events().len() >= 3,
+        "update_credit_quality_score should emit CreditQualityUpdated, RateUpdated, and ScoreChanged, got {}",
+        events.events().len()
+    );
+}
+
+// ── #603/#721: deposit_collateral accepted-token allowlist ────────────────────
+
+#[test]
+#[should_panic]
+fn test_deposit_collateral_rejects_unlisted_token() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let project_id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    let token_admin = Address::generate(&env);
+    let token_sac = env
+        .register_stellar_asset_contract_v2(token_admin)
+        .address();
+    soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
+
+    // Never allowlisted — a worthless/malicious token must not count as collateral.
+    client.deposit_collateral(&project_id, &creator, &token_sac, &500i128);
+}
+
+#[test]
+fn test_set_accepted_collateral_toggles_allowlist() {
+    let (env, _admin, _whitelister, client) = setup();
+    let creator = Address::generate(&env);
+    client.set_whitelist(&creator, &true);
+    let project_id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
+
+    let token = accepted_collateral_token(&env, &client, &creator, 1_000i128);
+    assert!(client.is_accepted_collateral_token(&token));
+    client.deposit_collateral(&project_id, &creator, &token, &400i128);
+    assert_eq!(client.get_collateral(&project_id, &token), 400i128);
+
+    // Removing the token blocks new deposits but leaves existing balance intact.
+    client.set_accepted_collateral(&token, &false);
+    assert!(!client.is_accepted_collateral_token(&token));
+    assert_eq!(client.get_collateral(&project_id, &token), 400i128);
+    assert!(client
+        .try_deposit_collateral(&project_id, &creator, &token, &100i128)
+        .is_err());
+}
+
 // ── URI length edge cases (#119) ──────────────────────────────────────────────
 
 #[test]
@@ -790,6 +948,7 @@ fn test_deposit_and_get_collateral() {
         .register_stellar_asset_contract_v2(token_admin.clone())
         .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
+    client.set_accepted_collateral(&token_sac, &true);
 
     client.deposit_collateral(&project_id, &creator, &token_sac, &500i128);
 
@@ -814,6 +973,7 @@ fn test_deposit_zero_collateral_panics() {
         .register_stellar_asset_contract_v2(token_admin.clone())
         .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
+    client.set_accepted_collateral(&token_sac, &true);
 
     client.deposit_collateral(&project_id, &creator, &token_sac, &0i128);
 }
@@ -837,6 +997,7 @@ fn test_non_owner_cannot_deposit_collateral() {
         .address();
     let stranger = Address::generate(&env);
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&stranger, &1_000i128);
+    client.set_accepted_collateral(&token_sac, &true);
 
     client.deposit_collateral(&project_id, &stranger, &token_sac, &500i128);
 }
@@ -857,6 +1018,8 @@ fn test_liquidate_collateral_by_admin() {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
+    client.set_accepted_collateral(&token_sac, &true);
+
     client.deposit_collateral(&project_id, &creator, &token_sac, &800i128);
 
     let recipient = Address::generate(&env);
@@ -884,6 +1047,8 @@ fn test_liquidate_collateral_before_maturity_panics() {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
+    client.set_accepted_collateral(&token_sac, &true);
+
     client.deposit_collateral(&project_id, &creator, &token_sac, &800i128);
 
     let recipient = Address::generate(&env);
@@ -907,6 +1072,8 @@ fn test_release_collateral_after_maturity() {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
+    client.set_accepted_collateral(&token_sac, &true);
+
     client.deposit_collateral(&project_id, &creator, &token_sac, &600i128);
 
     env.ledger().set_timestamp(now + 1001);
@@ -935,6 +1102,8 @@ fn test_release_collateral_before_maturity_panics() {
         .register_stellar_asset_contract_v2(admin.clone())
         .address();
     soroban_sdk::token::StellarAssetClient::new(&env, &token_sac).mint(&creator, &1_000i128);
+    client.set_accepted_collateral(&token_sac, &true);
+
     client.deposit_collateral(&project_id, &creator, &token_sac, &500i128);
 
     // Ledger time is still before maturity_date — must panic with ProjectNotMature.
@@ -1685,6 +1854,7 @@ mod integration {
         let usdc = soroban_sdk::token::TokenClient::new(&env, &usdc_sac);
         let balance_before_collateral = usdc.balance(&project_creator);
         StellarAssetClient::new(&env, &usdc_sac).mint(&project_creator, &collateral_amount);
+        registry.set_accepted_collateral(&usdc_sac, &true);
         registry.deposit_collateral(&project_id, &project_creator, &usdc_sac, &collateral_amount);
         assert_eq!(
             registry.get_collateral(&project_id, &usdc_sac),
@@ -2036,6 +2206,8 @@ fn test_compact_storage_removes_zero_collateral() {
         .register_stellar_asset_contract_v2(token_admin.clone())
         .address();
     StellarAssetClient::new(&env, &token).mint(&creator, &1_000i128);
+    client.set_accepted_collateral(&token, &true);
+
     client.deposit_collateral(&id, &creator, &token, &1_000i128);
     assert_eq!(client.get_collateral(&id, &token), 1_000i128);
 
