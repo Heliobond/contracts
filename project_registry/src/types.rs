@@ -232,6 +232,8 @@ pub enum DataKey {
     MultiSigThreshold,
     /// Score history ring-buffer slot for (project_id, slot_index) (#123).
     ScoreHistorySlot(u32, u32),
+    /// Oracle address authorized to update impact/credit scores (#748).
+    Oracle,
     /// Total score updates ever written for a project (ring-buffer counter) (#123).
     ScoreHistoryTotal(u32),
     /// Circuit breaker pause state (#72).

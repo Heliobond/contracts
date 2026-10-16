@@ -1,8 +1,12 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractclient, contractimpl, panic_with_error, token::Client as TokenClient,
+    contract, contractclient, contractimpl, contractmeta, panic_with_error, token::Client as TokenClient,
     Address, BytesN, Env, String, Vec,
 };
+
+// Build metadata per SEP-55 (#751).
+contractmeta!(key = "source_repo", val = "https://github.com/Heliobond/contracts");
+contractmeta!(key = "contract_name", val = "project_registry");
 use stellar_access::ownable::{
     get_owner, set_owner, transfer_ownership as ownable_transfer_ownership, Ownable,
 };
@@ -430,13 +434,52 @@ impl ProjectRegistry {
         }
     }
 
-    /// Update both `credit_quality` and `green_impact` for `project_id`. Admin-only.
+    /// Set the Oracle address authorized to update impact/credit scores (#748).
+    /// Owner-only. Pass `None` to disable Oracle updates (falling back to owner-only).
+    #[only_owner]
+    pub fn set_oracle(env: Env, oracle: Option<Address>) {
+        match oracle {
+            Some(addr) => {
+                env.storage().instance().set(&DataKey::Oracle, &addr);
+            }
+            None => {
+                env.storage().instance().remove(&DataKey::Oracle);
+            }
+        }
+    }
+
+    /// Return the current Oracle address, if any (#748).
+    pub fn get_oracle(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Oracle)
+    }
+
+    /// Require that the caller is the configured Oracle (#748).
+    fn require_oracle(env: &Env, caller: &Address) {
+        caller.require_auth();
+        let oracle: Option<Address> = env.storage().instance().get(&DataKey::Oracle);
+        match oracle {
+            Some(expected) => {
+                if caller != &expected {
+                    panic_with_error!(env, RegistryError::Unauthorized);
+                }
+            }
+            None => {
+                // No Oracle configured — fall back to owner-only.
+                let owner = AdminManager::get_owner(env);
+                if caller != &owner {
+                    panic_with_error!(env, RegistryError::Unauthorized);
+                }
+            }
+        }
+    }
+
+    /// Update both `credit_quality` and `green_impact` for `project_id`. Oracle-only (#748).
     /// Both values must be in the range 0–100. Emits `ProjectUpdated` and `RateUpdated`.
     /// No-op if the new scores are identical to the existing ones.
-    #[only_owner]
     pub fn update_impact_score(env: Env, project_id: u32, credit_quality: u32, green_impact: u32) {
         require_not_paused(&env);
         require_multisig_disabled(&env);
+        Self::require_oracle(&env, &env.current_auth().address().unwrap());
         update_impact_score_internal(env, project_id, credit_quality, green_impact);
     }
 
@@ -452,7 +495,7 @@ impl ProjectRegistry {
         update_impact_score_internal(env, project_id, credit_quality, green_impact);
     }
 
-    /// Update impact scores for multiple projects in a single transaction. Admin-only (#31).
+    /// Update impact scores for multiple projects in a single transaction. Oracle-only (#748).
     ///
     /// Each entry in `updates` is `(project_id, credit_quality, green_impact)`.
     /// Both score values must be in the range 0–100. Panics with `EmptyBatchUpdate`
@@ -464,9 +507,10 @@ impl ProjectRegistry {
     /// Individual project entries that are no-ops (scores identical to current values)
     /// are silently skipped, consistent with `update_impact_score`. Emits `ProjectUpdated`,
     /// `RateUpdated`, and `ScoreChanged` for each project whose scores actually change.
-    #[only_owner]
     pub fn update_impact_scores_batch(env: Env, updates: Vec<(u32, u32, u32)>) {
         require_not_paused(&env);
+        require_multisig_disabled(&env);
+        Self::require_oracle(&env, &env.current_auth().address().unwrap());
         require_multisig_disabled(&env);
         update_impact_scores_batch_internal(env, updates);
     }
@@ -708,11 +752,11 @@ impl ProjectRegistry {
 
     /// Set only the credit-quality score for a project. Admin-only, bounded 0–100.
     /// Emits `ScoreChanged` with the old and new values. Use `update_impact_score` to
-    /// update both scores simultaneously (#6).
-    #[only_owner]
+    /// update both scores simultaneously (#6). Oracle-only (#748).
     pub fn update_credit_quality_score(env: Env, project_id: u32, credit_quality: u32) {
         require_not_paused(&env);
         require_multisig_disabled(&env);
+        Self::require_oracle(&env, &env.current_auth().address().unwrap());
         if credit_quality > MAX_SCORE {
             panic_with_error!(&env, RegistryError::CreditQualityOutOfRange);
         }
