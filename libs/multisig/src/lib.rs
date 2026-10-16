@@ -94,3 +94,195 @@ pub fn require_admin_approval(
 pub fn is_multisig_disabled(threshold: u32) -> bool {
     threshold == 0
 }
+
+// ── #711: unit tests for shared multisig helpers ──────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
+
+    fn make_env() -> Env {
+        Env::default()
+    }
+
+    fn make_signers(env: &Env, n: u32) -> Vec<Address> {
+        let mut v = Vec::new(env);
+        for _ in 0..n {
+            v.push_back(Address::generate(env));
+        }
+        v
+    }
+
+    // ── validate_multisig_config ────────────────────────────────────────────
+
+    #[test]
+    fn config_valid_with_threshold_eq_signers() {
+        let env = make_env();
+        let signers = make_signers(&env, 3);
+        assert!(validate_multisig_config(&signers, 3, 5).is_ok());
+    }
+
+    #[test]
+    fn config_valid_with_threshold_less_than_signers() {
+        let env = make_env();
+        let signers = make_signers(&env, 5);
+        assert!(validate_multisig_config(&signers, 3, 10).is_ok());
+    }
+
+    #[test]
+    fn config_rejects_too_many_signers() {
+        let env = make_env();
+        let signers = make_signers(&env, 6);
+        assert!(matches!(
+            validate_multisig_config(&signers, 3, 5),
+            Err(ConfigError::TooManySigners)
+        ));
+    }
+
+    #[test]
+    fn config_rejects_zero_threshold() {
+        let env = make_env();
+        let signers = make_signers(&env, 3);
+        assert!(matches!(
+            validate_multisig_config(&signers, 0, 5),
+            Err(ConfigError::InvalidThreshold)
+        ));
+    }
+
+    #[test]
+    fn config_rejects_threshold_exceeding_signers() {
+        let env = make_env();
+        let signers = make_signers(&env, 2);
+        assert!(matches!(
+            validate_multisig_config(&signers, 3, 5),
+            Err(ConfigError::InvalidThreshold)
+        ));
+    }
+
+    #[test]
+    fn config_rejects_duplicate_signers() {
+        let env = make_env();
+        let addr = Address::generate(&env);
+        let mut signers = Vec::new(&env);
+        signers.push_back(addr.clone());
+        signers.push_back(addr);
+        assert!(matches!(
+            validate_multisig_config(&signers, 1, 5),
+            Err(ConfigError::DuplicateSigner)
+        ));
+    }
+
+    #[test]
+    fn config_validates_single_signer() {
+        let env = make_env();
+        let signers = make_signers(&env, 1);
+        assert!(validate_multisig_config(&signers, 1, 5).is_ok());
+    }
+
+    #[test]
+    fn config_empty_signers_with_threshold_fails() {
+        let env = make_env();
+        let signers = Vec::new(&env);
+        assert!(matches!(
+            validate_multisig_config(&signers, 1, 5),
+            Err(ConfigError::InvalidThreshold)
+        ));
+    }
+
+    // ── require_admin_approval ──────────────────────────────────────────────
+
+    #[test]
+    fn approval_zero_threshold_requires_owner_auth() {
+        let env = make_env();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let signers = make_signers(&env, 3);
+        let approvals = Vec::new(&env);
+        assert!(require_admin_approval(&owner, 0, &signers, approvals).is_ok());
+    }
+
+    #[test]
+    fn approval_sufficient_approvals_pass() {
+        let env = make_env();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let signers = make_signers(&env, 3);
+        let mut approvals = Vec::new(&env);
+        approvals.push_back(signers.get(0).unwrap());
+        approvals.push_back(signers.get(1).unwrap());
+        assert!(require_admin_approval(&owner, 2, &signers, approvals).is_ok());
+    }
+
+    #[test]
+    fn approval_insufficient_approvals_fails() {
+        let env = make_env();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let signers = make_signers(&env, 3);
+        let mut approvals = Vec::new(&env);
+        approvals.push_back(signers.get(0).unwrap());
+        assert!(matches!(
+            require_admin_approval(&owner, 2, &signers, approvals),
+            Err(ApprovalError::InsufficientApprovals)
+        ));
+    }
+
+    #[test]
+    fn approval_duplicate_approval_fails() {
+        let env = make_env();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let signers = make_signers(&env, 3);
+        let mut approvals = Vec::new(&env);
+        approvals.push_back(signers.get(0).unwrap());
+        approvals.push_back(signers.get(0).unwrap());
+        assert!(matches!(
+            require_admin_approval(&owner, 2, &signers, approvals),
+            Err(ApprovalError::DuplicateApproval)
+        ));
+    }
+
+    #[test]
+    fn approval_non_signer_fails() {
+        let env = make_env();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let signers = make_signers(&env, 3);
+        let outsider = Address::generate(&env);
+        let mut approvals = Vec::new(&env);
+        approvals.push_back(outsider);
+        assert!(matches!(
+            require_admin_approval(&owner, 1, &signers, approvals),
+            Err(ApprovalError::NotSigner)
+        ));
+    }
+
+    #[test]
+    fn approval_threshold_exceeding_signers_fails() {
+        let env = make_env();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let signers = make_signers(&env, 2);
+        let mut approvals = Vec::new(&env);
+        approvals.push_back(signers.get(0).unwrap());
+        approvals.push_back(signers.get(1).unwrap());
+        assert!(matches!(
+            require_admin_approval(&owner, 3, &signers, approvals),
+            Err(ApprovalError::InvalidThreshold)
+        ));
+    }
+
+    // ── is_multisig_disabled ────────────────────────────────────────────────
+
+    #[test]
+    fn multisig_disabled_when_threshold_zero() {
+        assert!(is_multisig_disabled(0));
+    }
+
+    #[test]
+    fn multisig_enabled_when_threshold_positive() {
+        assert!(!is_multisig_disabled(1));
+        assert!(!is_multisig_disabled(5));
+    }
+}
