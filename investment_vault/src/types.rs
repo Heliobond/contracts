@@ -213,6 +213,14 @@ pub enum VaultKey {
     MultiSigThreshold,
     /// Circuit breaker pause state.
     Paused,
+    /// Deposits paused flag (#750).
+    DepositsPaused,
+    /// Deposits paused expiry timestamp (#750).
+    DepositsPausedUntil,
+    /// Withdrawals paused flag (#750).
+    WithdrawalsPaused,
+    /// Withdrawals paused expiry timestamp (#750).
+    WithdrawalsPausedUntil,
     /// Last deposit ledger *timestamp* per address; drives the MIN_LOCK_PERIOD
     /// deposit lock (#33).
     LastDeposit(Address),

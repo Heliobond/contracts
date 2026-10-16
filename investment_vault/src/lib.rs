@@ -38,9 +38,13 @@
 //! - receive_yield(): amount * YIELD_SCALE / total_shares (checked)
 //!
 use soroban_sdk::{
-    contract, contractimpl, panic_with_error, Address, Bytes, BytesN, Env, MuxedAddress, String,
-    Vec,
+    contract, contractimpl, contractmeta, panic_with_error, Address, Bytes, BytesN, Env,
+    MuxedAddress, String, Vec,
 };
+
+// Build metadata per SEP-55 (#751).
+contractmeta!(key = "source_repo", val = "https://github.com/Heliobond/contracts");
+contractmeta!(key = "contract_name", val = "investment_vault");
 use stellar_access::ownable::{
     get_owner, set_owner, transfer_ownership as ownable_transfer_ownership, Ownable,
 };
@@ -107,6 +111,10 @@ const TTL_EXTEND_THRESHOLD_LEDGERS: u32 = 518_400;
 /// Target TTL in ledgers after extension (#388).
 /// At 5 s/ledger this equals ~1 year (6 312 000 ledgers).
 const TTL_EXTEND_TO_LEDGERS: u32 = 6_312_000;
+
+/// Maximum duration a pause lasts before auto-expiring (#750).
+/// Owner must renew to extend. 24 hours in seconds.
+const PAUSE_MAX_DURATION_SECONDS: u64 = 86_400;
 
 mod composability;
 mod events;
@@ -179,6 +187,8 @@ pub const CONTRACT_VERSION: &str = "1.0.0";
 /// State schema version for this contract build. Increment when a migration is required.
 
 #[contract]
+/// Build metadata per SEP-55 (#751). Enables on-chain verification that
+/// a deployed WASM came from this repository's source code.
 pub struct InvestmentVault;
 
 #[contractimpl]
@@ -438,10 +448,9 @@ impl InvestmentVault {
     /// What `withdraw(_, shares_amount, 0)` would do right now:
     /// `(usdc_now, usdc_queued)` — paid immediately, or burned and enqueued
     /// for `claim()` when liquid USDC is short. Exactly one of the two is
-    /// non-zero. Panics with `WithdrawalExceedsLimit` if the graduated
-    /// utilization limit (#45) would reject it, and with the same amount
-    /// errors as `withdraw`. The per-account deposit lock is not checked here;
-    /// see `max_withdraw`.
+    /// non-zero. #747: when utilization exceeds the tier limit, the entire
+    /// withdrawal is queued rather than rejected. The per-account deposit lock
+    /// is not checked here; see `max_withdraw`.
     pub fn preview_withdraw(env: Env, shares_amount: i128) -> (i128, i128) {
         require_not_paused(&env);
         require_current_state(&env);
@@ -454,10 +463,9 @@ impl InvestmentVault {
         let usdc = assets_for_shares(&env, shares_amount);
         check_max_transaction_amount(&env, usdc);
         let liquid = liquid_usdc(&env);
-        if usdc > withdraw_tier_limit(liquid, Self::get_utilization_bps(env.clone())) {
-            panic_with_error!(&env, VaultError::WithdrawalExceedsLimit);
-        }
-        if usdc > liquid {
+        let utilization_bps = Self::get_utilization_bps(env.clone());
+        let max_withdraw = withdraw_tier_limit(liquid, utilization_bps);
+        if usdc > max_withdraw || usdc > liquid {
             (0, usdc)
         } else {
             (usdc, 0)
@@ -731,11 +739,49 @@ impl InvestmentVault {
         if utilization_bps >= UTIL_WARN_BPS {
             events::utilization_warning(&env, utilization_bps);
         }
-        if usdc_returned > max_withdraw {
-            panic_with_error!(&env, VaultError::WithdrawalExceedsLimit);
-        }
         if usdc_returned < min_usdc_return {
             panic_with_error!(&env, VaultError::SlippageLimitExceeded);
+        }
+
+        // #747: When utilization is high and the withdrawal exceeds the tier
+        // limit, queue the excess instead of reverting. The tier limit applies
+        // to the immediately-paid portion; anything beyond is enqueued for
+        // claim() when liquidity is restored. This makes the redemption queue
+        // reachable at all utilization levels, not just below 50%.
+        if usdc_returned > max_withdraw {
+            // Queue the entire withdrawal: burn shares and enqueue a FIFO claim.
+            Base::burn(&env, &from, shares_amount);
+            let tail: u64 = env
+                .storage()
+                .persistent()
+                .get(&VaultKey::QueueTail)
+                .unwrap_or(0);
+            env.storage().persistent().set(
+                &VaultKey::QueueEntry(tail),
+                &QueuedClaim {
+                    from: from.clone(),
+                    usdc_owed: usdc_returned,
+                },
+            );
+            env.storage()
+                .persistent()
+                .set(&VaultKey::QueueTail, &(tail + 1));
+
+            // Record the liability so NAV (and the share price of remaining
+            // holders) is unchanged by this burn (#613).
+            let liabilities = queued_liabilities(&env) + usdc_returned;
+            set_queued_liabilities(&env, liabilities);
+            let cached_ta: i128 = env
+                .storage()
+                .instance()
+                .get(&VaultKey::CachedTotalAssets)
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&VaultKey::CachedTotalAssets, &(cached_ta - usdc_returned));
+
+            events::withdraw_queued(&env, &from, shares_amount, usdc_returned, liabilities);
+            return 0;
         }
 
         if usdc_returned > liquid {
@@ -2881,24 +2927,120 @@ fn check_deposit_lock(env: &Env, address: &Address) {
 
 #[contractimpl]
 impl InvestmentVault {
+    /// Pause deposits only (#750). Owner or emergency admin.
+    /// Paused state expires after `PAUSE_MAX_DURATION_SECONDS` unless renewed.
     #[only_owner]
-    pub fn pause(env: Env) {
-        env.storage().instance().set(&VaultKey::Paused, &true);
+    pub fn pause_deposits(env: Env) {
+        let now = env.ledger().timestamp();
+        env.storage().instance().set(&VaultKey::DepositsPaused, &true);
+        env.storage().instance().set(&VaultKey::DepositsPausedUntil, &(now + PAUSE_MAX_DURATION_SECONDS));
         events::paused(&env);
     }
 
+    /// Pause withdrawals only (#750). Owner or emergency admin.
+    /// Paused state expires after `PAUSE_MAX_DURATION_SECONDS` unless renewed.
     #[only_owner]
-    pub fn unpause(env: Env) {
-        env.storage().instance().set(&VaultKey::Paused, &false);
+    pub fn pause_withdrawals(env: Env) {
+        let now = env.ledger().timestamp();
+        env.storage().instance().set(&VaultKey::WithdrawalsPaused, &true);
+        env.storage().instance().set(&VaultKey::WithdrawalsPausedUntil, &(now + PAUSE_MAX_DURATION_SECONDS));
+        events::paused(&env);
+    }
+
+    /// Pause both deposits and withdrawals (#750). Owner or emergency admin.
+    /// Both paused states expire after `PAUSE_MAX_DURATION_SECONDS` unless renewed.
+    #[only_owner]
+    pub fn pause(env: Env) {
+        let now = env.ledger().timestamp();
+        env.storage().instance().set(&VaultKey::DepositsPaused, &true);
+        env.storage().instance().set(&VaultKey::DepositsPausedUntil, &(now + PAUSE_MAX_DURATION_SECONDS));
+        env.storage().instance().set(&VaultKey::WithdrawalsPaused, &true);
+        env.storage().instance().set(&VaultKey::WithdrawalsPausedUntil, &(now + PAUSE_MAX_DURATION_SECONDS));
+        events::paused(&env);
+    }
+
+    /// Unpause deposits (#750). Owner or emergency admin.
+    #[only_owner]
+    pub fn unpause_deposits(env: Env) {
+        env.storage().instance().set(&VaultKey::DepositsPaused, &false);
+        env.storage().instance().remove(&VaultKey::DepositsPausedUntil);
         events::unpaused(&env);
     }
 
-    /// Return whether the vault is currently paused (#72).
-    pub fn is_paused(env: Env) -> bool {
-        env.storage()
+    /// Unpause withdrawals (#750). Owner or emergency admin.
+    #[only_owner]
+    pub fn unpause_withdrawals(env: Env) {
+        env.storage().instance().set(&VaultKey::WithdrawalsPaused, &false);
+        env.storage().instance().remove(&VaultKey::WithdrawalsPausedUntil);
+        events::unpaused(&env);
+    }
+
+    /// Unpause both deposits and withdrawals (#750). Owner or emergency admin.
+    #[only_owner]
+    pub fn unpause(env: Env) {
+        env.storage().instance().set(&VaultKey::DepositsPaused, &false);
+        env.storage().instance().remove(&VaultKey::DepositsPausedUntil);
+        env.storage().instance().set(&VaultKey::WithdrawalsPaused, &false);
+        env.storage().instance().remove(&VaultKey::WithdrawalsPausedUntil);
+        events::unpaused(&env);
+    }
+
+    /// Return whether deposits are currently paused (#750).
+    pub fn is_deposits_paused(env: Env) -> bool {
+        let paused: bool = env
+            .storage()
             .instance()
-            .get(&VaultKey::Paused)
-            .unwrap_or(false)
+            .get(&VaultKey::DepositsPaused)
+            .unwrap_or(false);
+        if !paused {
+            return false;
+        }
+        // Check expiry (#750): pause expires unless renewed.
+        let paused_until: Option<u64> = env
+            .storage()
+            .instance()
+            .get(&VaultKey::DepositsPausedUntil);
+        if let Some(until) = paused_until {
+            if env.ledger().timestamp() >= until {
+                // Auto-expire
+                env.storage().instance().set(&VaultKey::DepositsPaused, &false);
+                env.storage().instance().remove(&VaultKey::DepositsPausedUntil);
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Return whether withdrawals are currently paused (#750).
+    pub fn is_withdrawals_paused(env: Env) -> bool {
+        let paused: bool = env
+            .storage()
+            .instance()
+            .get(&VaultKey::WithdrawalsPaused)
+            .unwrap_or(false);
+        if !paused {
+            return false;
+        }
+        // Check expiry (#750): pause expires unless renewed.
+        let paused_until: Option<u64> = env
+            .storage()
+            .instance()
+            .get(&VaultKey::WithdrawalsPausedUntil);
+        if let Some(until) = paused_until {
+            if env.ledger().timestamp() >= until {
+                // Auto-expire
+                env.storage().instance().set(&VaultKey::WithdrawalsPaused, &false);
+                env.storage().instance().remove(&VaultKey::WithdrawalsPausedUntil);
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Return whether the vault is currently paused (#72, #750).
+    /// True if either deposits or withdrawals are paused.
+    pub fn is_paused(env: Env) -> bool {
+        Self::is_deposits_paused(env.clone()) || Self::is_withdrawals_paused(env)
     }
 
     /// Set (or clear, via `None`) the emergency-admin address. Owner-only (#43).
