@@ -27,13 +27,4 @@ panic = "abort"
 codegen-units = 1
 lto = true
 
-# Manual-use-only profile, not referenced by any script/Makefile target/CI job
-# (#423): use it locally when you need a release-shaped build (same
-# optimization level, size, and gas characteristics as `release`) but with
-# debug_assert!/overflow-check-style assertions still active, e.g. to
-# reproduce a suspected release-only bug or sanity-check assumptions against
-# a near-production build without the noise of a full debug build.
-# Build with: `cargo build --profile release-with-logs`
-[profile.release-with-logs]
-inherits = "release"
-debug-assertions = true
+
