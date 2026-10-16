@@ -128,6 +128,8 @@ pub enum VaultError {
     NegativeMaxTransactionAmount = 55,
     /// get_compliance_event: no event exists for the requested sequence number (#402).
     ComplianceEventNotFound = 56,
+    /// Multisig is enabled; use the _with_approvals/_approved variant instead (#764).
+    MultisigEnabledUseApprovedVariant = 57,
     /// get_latest_snapshot: no reporting snapshot has been taken yet (#402).
     NoSnapshotTaken = 57,
     /// transfer_ownership: no owner is currently set on the contract (#402).
@@ -219,6 +221,8 @@ pub enum VaultKey {
     MultiSigThreshold,
     /// Circuit breaker pause state.
     Paused,
+    /// Tracks who paused the contract: "owner" or "emergency" (#763).
+    PausedBy,
     /// Deposits paused flag (#750).
     DepositsPaused,
     /// Deposits paused expiry timestamp (#750).
