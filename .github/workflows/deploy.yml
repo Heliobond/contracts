@@ -36,7 +36,7 @@ jobs:
       vault_wasm: ${{ steps.paths.outputs.vault }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -82,7 +82,7 @@ jobs:
           echo "vault=target/wasm32v1-none/release/investment_vault.wasm"     >> "$GITHUB_OUTPUT"
 
       - name: Upload wasm artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wasm-${{ github.sha }}
           path: target/wasm32v1-none/release/*.wasm
@@ -92,7 +92,7 @@ jobs:
       # Verifies that the deployed WASM came from this repository's source
       # code and a specific commit, matching the contractmeta! metadata.
       - name: Attest build provenance (#751)
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             target/wasm32v1-none/release/project_registry.wasm
@@ -105,7 +105,7 @@ jobs:
     environment: ${{ github.event.inputs.network }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install Stellar CLI
         run: |
@@ -116,7 +116,7 @@ jobs:
           sudo mv /tmp/stellar /usr/local/bin/stellar
 
       - name: Download wasm artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: wasm-${{ github.sha }}
           path: target/wasm32v1-none/release/
@@ -269,7 +269,7 @@ jobs:
             "$NOTIFY_WEBHOOK_URL"
 
       - name: Open a tracking issue (#253)
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const network = context.payload.inputs?.network || 'unknown';
