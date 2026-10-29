@@ -18,7 +18,7 @@
     "example:deposit": "tsx examples/deposit.ts"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^14.0.0",
+    "@stellar/stellar-sdk": "^17.4.0",
     "buffer": "^6.0.3"
   },
   "devDependencies": {
