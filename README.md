@@ -261,10 +261,15 @@ Set the following environment variables then run `make deploy-testnet`:
 export STELLAR_SECRET_KEY=S...       # deployer secret key
 export ADMIN_ADDRESS=G...            # admin/owner address
 export WHITELISTER_ADDRESS=G...      # whitelister address
-export USDC_SAC_ADDRESS=G...         # USDC Stellar Asset Contract on testnet
+export USDC_SAC_ADDRESS=C...         # USDC Stellar Asset Contract (SAC) contract ID on testnet
 
 make deploy-testnet
 ```
+
+> **Note on `USDC_SAC_ADDRESS`**: The `InvestmentVault` constructor interacts with the USDC token via `TokenClient::new(&env, &usdc_sac)`, which requires the Stellar Asset Contract ID (starting with `C...`), **not** the issuing account's public key (starting with `G...`). To derive the contract ID for testnet or mainnet USDC, use:
+> ```bash
+> stellar contract id asset --asset USDC:<USDC_ISSUER_G_ACCOUNT> --network testnet
+> ```
 
 The command builds both contracts, deploys `ProjectRegistry` first, captures its contract ID, then deploys `InvestmentVault` wiring it to the registry. Both contract IDs and their WASM hashes are printed to the terminal and written to **`deploy/testnet.json`**:
 

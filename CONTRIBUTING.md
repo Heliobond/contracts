@@ -181,6 +181,15 @@ See [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) for the autom
 
 ---
 
+## Contributor Bounties & Payout Transparency
+
+Heliobond participates in GrantFox and community bounty campaigns. Contributor payments are tracked and disbursed through verified on-chain settlements:
+- **Campaign Pool**: FoxPoints and bounty rewards are settled directly to contributors' registered Stellar account addresses upon PR merge.
+- **On-Chain Ledger Audit**: All transactions and payout distributions can be independently verified on the Stellar ledger using [Stellar Expert](https://stellar.expert).
+- **Claim Status**: Pull requests merged into `main` that reference open bounty issues automatically qualify for campaign point distribution.
+
+---
+
 ## Reporting issues
 
 Bugs and ideas: [open an issue](https://github.com/heliobond/contracts/issues/new). Security problems: see [SECURITY.md](./SECURITY.md) — report privately, not in a public issue.
