@@ -62,7 +62,7 @@ mod wasm_smoke {
         let shares = vault.deposit(&investor, &10_000_000_000_i128, &0i128, &u64::MAX);
         assert!(shares > 0);
         assert_eq!(vault.balance(&investor), shares);
-        assert_eq!(vault.total_assets(), 10_000_000_000_i128);
+        assert_eq!(vault.total_assets(), 9_950_000_000_i128);
 
         let registry = registry_wasm::Client::new(&env, &registry_id);
         let creator = Address::generate(&env);
@@ -81,6 +81,7 @@ mod wasm_smoke {
 
         env.ledger().with_mut(|li| {
             li.sequence_number += 1;
+            li.timestamp += 86_401;
         });
         // May be paid immediately or enqueued (returns 0) depending on
         // liquidity remaining after fund_project — either is valid, the

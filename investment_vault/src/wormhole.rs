@@ -6,7 +6,7 @@
 //! The Wormhole integration uses a multi-stage burn-and-mint architecture for cross-chain HBS share transfers:
 //!
 //! 1. **Outbound Initiation (`initiate_bridge_transfer`)**:
-//!    - User calls `initiate_bridge_transfer` specifying amount, target chain ID, recipient address (32-byte format), and a nonce.
+//!    - User calls `initiate_bridge_transfer` specifying amount, target chain ID, recipient key (32 bytes), recipient kind (0 account, 1 contract), and a nonce.
 //!    - Vault burns the corresponding HBS tokens from the user's account.
 //!    - Vault constructs a [`BridgeTransferPayload`] and serializes it into binary format.
 //!    - Vault calls `publish_message` on the configured Wormhole core contract, emitting an `OnChainMessage` event with a unique sequence number.
@@ -137,6 +137,7 @@ pub trait BridgeInterface {
 pub struct BridgeTransferPayload {
     pub token_address: BytesN<32>,
     pub recipient: BytesN<32>,
+    pub recipient_kind: u32,
     pub amount: i128,
     pub source_chain: u32,
     pub target_chain: u32,
@@ -164,7 +165,7 @@ pub enum BridgeDataKey {
 // Serialization helpers
 // ---------------------------------------------------------------------------
 
-const PAYLOAD_PREFIX: &[u8] = b"HBS\x00";
+const PAYLOAD_PREFIX: &[u8] = b"HBS\x01";
 
 /// Encode an Address into 32 bytes via the Env's XDR serialization.
 ///
@@ -186,53 +187,23 @@ pub fn address_to_bytes32(env: &Env, addr: &Address) -> BytesN<32> {
     BytesN::from_array(env, &buf)
 }
 
-/// Decode an Address from 32 bytes produced by {@link address_to_bytes32}.
-///
-/// #758 — `address_to_bytes32` stores the trailing 32 bytes of the Address's
-/// XDR encoding (discarding the leading type discriminant), so the original
-/// 36-40 byte ScAddress XDR cannot be reconstructed. Instead, we try
-/// `Address::from_xdr` first (for legacy 32-byte-padded payloads), and fall
-/// back to constructing an `Address` from the raw 32-byte key by prepending
-/// the appropriate type discriminant based on which format the bytes match.
-pub fn bytes32_to_address(env: &Env, b32: &BytesN<32>) -> Address {
-    let raw: Bytes = b32.clone().into();
+/// The ScAddress discriminant carried by this address's ScVal XDR.
+pub fn address_kind(env: &Env, address: &Address) -> u32 {
+    address.to_xdr(env).get(7).unwrap() as u32
+}
 
-    // Try full XDR decode first (legacy payloads that carry the full ScAddress).
-    if let Ok(addr) = Address::from_xdr(env, &raw) {
-        return addr;
+/// Reconstruct an address using the authenticated payload's explicit kind.
+pub fn bytes32_to_address(env: &Env, b32: &BytesN<32>, kind: u32) -> Address {
+    if kind > 1 {
+        panic_with_error!(env, VaultError::BridgeBadRecipient);
     }
-
-    // Fallback: the 32 bytes are the trailing key material from
-    // address_to_bytes32. Prepend the ScAddress type discriminant and length
-    // prefix to reconstruct valid XDR.
-    //
-    // ScAddress XDR layout (40 bytes for Account):
-    //   bytes 0-3:  ScVal type tag (0x0A = ScAddress) — we'll use a simplified
-    //   bytes 4-7:  ScAddress discriminant (0 = Account, 1 = Contract)
-    //   bytes 8-39: 32-byte key
-    //
-    // Since we can't know the original type from just the key, we try both:
-    // first assume Account (discriminant 0), then Contract (discriminant 1).
-
-    // Try Account address (discriminant 0)
-    let mut account_xdr = Bytes::new(env);
-    account_xdr.append(&Bytes::from_slice(env, &[0x00, 0x00, 0x00, 0x0A])); // ScAddress type
-    account_xdr.append(&Bytes::from_slice(env, &[0x00, 0x00, 0x00, 0x00])); // Account discriminant
-    account_xdr.append(&raw);
-    if let Ok(addr) = Address::from_xdr(env, &account_xdr) {
-        return addr;
+    let mut encoded = Bytes::from_slice(env, &[0, 0, 0, 18, 0, 0, 0, kind as u8]);
+    if kind == 0 {
+        encoded.append(&Bytes::from_slice(env, &[0, 0, 0, 0]));
     }
-
-    // Try Contract address (discriminant 1)
-    let mut contract_xdr = Bytes::new(env);
-    contract_xdr.append(&Bytes::from_slice(env, &[0x00, 0x00, 0x00, 0x0A]));
-    contract_xdr.append(&Bytes::from_slice(env, &[0x00, 0x00, 0x00, 0x01]));
-    contract_xdr.append(&raw);
-    if let Ok(addr) = Address::from_xdr(env, &contract_xdr) {
-        return addr;
-    }
-
-    panic_with_error!(env, VaultError::BridgeBadRecipient);
+    encoded.append(&b32.clone().into());
+    Address::from_xdr(env, &encoded)
+        .unwrap_or_else(|_| panic_with_error!(env, VaultError::BridgeBadRecipient))
 }
 
 /// Serialize a `BridgeTransferPayload` into a `Bytes` payload for Wormhole.
@@ -243,6 +214,10 @@ pub fn serialize_bridge_payload(env: &Env, p: &BridgeTransferPayload) -> Bytes {
     let token: [u8; 32] = p.token_address.clone().into();
     buf.append(&Bytes::from_slice(env, &token));
 
+    if p.recipient_kind > 1 {
+        panic_with_error!(env, VaultError::BridgeBadRecipient);
+    }
+    buf.push_back(p.recipient_kind as u8);
     let rec: [u8; 32] = p.recipient.clone().into();
     buf.append(&Bytes::from_slice(env, &rec));
 
@@ -253,16 +228,16 @@ pub fn serialize_bridge_payload(env: &Env, p: &BridgeTransferPayload) -> Bytes {
     buf
 }
 
-/// Minimum valid payload length: 4 (prefix) + 32 (token) + 32 (recipient) +
-/// 16 (amount) + 4 (source_chain) + 4 (target_chain) + 8 (nonce) = 100 bytes.
-const MIN_PAYLOAD_LEN: u32 = 100;
+/// Exact version 1 payload length: 4 (prefix) + 32 (token) + 32 (recipient) +
+/// 1 (recipient kind) + 16 (amount) + 4 (source_chain) + 4 (target_chain) + 8 (nonce) = 101 bytes.
+const MIN_PAYLOAD_LEN: u32 = 101;
 
 /// Parse a `BridgeTransferPayload` from raw Wormhole payload bytes.
 ///
 /// # Panics
 ///
-/// Panics if the payload is shorter than [`MIN_PAYLOAD_LEN`] bytes or does not
-/// start with the [`PAYLOAD_PREFIX`] magic bytes (`HBS\x00`).
+/// Panics if the payload length differs from [`MIN_PAYLOAD_LEN`] or does not
+/// start with the [`PAYLOAD_PREFIX`] versioned magic bytes (`HBS\x01`).
 pub fn parse_bridge_payload(env: &Env, raw: &Bytes) -> BridgeTransferPayload {
     let prefix_len: u32 = 4;
 
@@ -270,6 +245,10 @@ pub fn parse_bridge_payload(env: &Env, raw: &Bytes) -> BridgeTransferPayload {
     let len = raw.len();
     if len < MIN_PAYLOAD_LEN {
         panic_with_error!(env, VaultError::BridgePayloadTooShort);
+    }
+
+    if len != MIN_PAYLOAD_LEN {
+        panic_with_error!(env, VaultError::BridgePayloadInvalidLength);
     }
 
     // Validate the magic prefix to reject payloads that are not HBS transfers.
@@ -287,6 +266,11 @@ pub fn parse_bridge_payload(env: &Env, raw: &Bytes) -> BridgeTransferPayload {
     }
     offset += 32;
 
+    let recipient_kind = raw.get(offset).unwrap() as u32;
+    if recipient_kind > 1 {
+        panic_with_error!(env, VaultError::BridgeBadRecipient);
+    }
+    offset += 1;
     let mut rec_arr = [0u8; 32];
     for i in 0..32u32 {
         rec_arr[i as usize] = raw.get(offset + i).unwrap_or(0);
@@ -319,9 +303,86 @@ pub fn parse_bridge_payload(env: &Env, raw: &Bytes) -> BridgeTransferPayload {
     BridgeTransferPayload {
         token_address: BytesN::from_array(env, &token_arr),
         recipient: BytesN::from_array(env, &rec_arr),
+        recipient_kind,
         amount: i128::from_be_bytes(amount_buf),
         source_chain: u32::from_be_bytes(src_buf),
         target_chain: u32::from_be_bytes(tgt_buf),
         nonce: u64::from_be_bytes(nonce_buf),
+    }
+}
+
+#[cfg(test)]
+mod payload_tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, String};
+
+    fn payload(env: &Env) -> BridgeTransferPayload {
+        BridgeTransferPayload {
+            token_address: BytesN::from_array(env, &[1; 32]),
+            recipient: BytesN::from_array(env, &[2; 32]),
+            recipient_kind: 1,
+            amount: 123,
+            source_chain: chain_id::ETHEREUM,
+            target_chain: chain_id::STELLAR,
+            nonce: 17,
+        }
+    }
+
+    #[test]
+    fn account_and_contract_recipients_round_trip() {
+        let env = Env::default();
+        let account = Address::from_string(&String::from_str(
+            &env,
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        ));
+        let contract = Address::generate(&env);
+        for (kind, recipient) in [(0, account), (1, contract)] {
+            assert_eq!(address_kind(&env, &recipient), kind);
+            let mut transfer = payload(&env);
+            transfer.recipient = address_to_bytes32(&env, &recipient);
+            transfer.recipient_kind = kind;
+            let wire = serialize_bridge_payload(&env, &transfer);
+            assert_eq!(wire.len(), 101);
+            let parsed = parse_bridge_payload(&env, &wire);
+            assert_eq!(parsed, transfer);
+            assert_eq!(
+                bytes32_to_address(&env, &parsed.recipient, parsed.recipient_kind),
+                recipient
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #66)")]
+    fn legacy_untagged_payload_is_rejected() {
+        let env = Env::default();
+        parse_bridge_payload(&env, &Bytes::from_array(&env, &[0; 100]));
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #67)")]
+    fn unknown_version_is_rejected() {
+        let env = Env::default();
+        let mut wire = serialize_bridge_payload(&env, &payload(&env));
+        wire.set(3, 2);
+        parse_bridge_payload(&env, &wire);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #68)")]
+    fn unknown_recipient_kind_is_rejected() {
+        let env = Env::default();
+        let mut wire = serialize_bridge_payload(&env, &payload(&env));
+        wire.set(36, 2);
+        parse_bridge_payload(&env, &wire);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #71)")]
+    fn trailing_bytes_are_rejected() {
+        let env = Env::default();
+        let mut wire = serialize_bridge_payload(&env, &payload(&env));
+        wire.push_back(0);
+        parse_bridge_payload(&env, &wire);
     }
 }

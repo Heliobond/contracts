@@ -107,6 +107,8 @@ pub enum VaultError {
     BridgePayloadBadPrefix = 67,
     /// Bridge payload contains an invalid recipient address (#761).
     BridgeBadRecipient = 68,
+    /// Bridge payload length differs from the versioned wire format.
+    BridgePayloadInvalidLength = 71,
     /// batch_fund_projects received an empty fundings list (#445).
     EmptyBatchFunding = 47,
     /// A batch deposit or fund-projects request exceeds the configured maximum
@@ -201,6 +203,8 @@ pub enum VaultKey {
     Bridge,
     /// Flash loan fee in basis points.
     FlashLoanFee,
+    /// Locks vault operations while flash-loan USDC is outstanding.
+    FlashLoanActive,
     /// Carbon credit oracle contract address.
     CarbonOracle,
     /// Carbon credit price in USD micro-units.

@@ -195,8 +195,8 @@ Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 | `bridge_burn(from: Address, amount: i128)` | `from` | none | Amount positive. |
 | `set_wormhole_core(core: Address)` | owner | none | Configures Wormhole core. |
 | `set_trusted_emitter(chain_id: u32, emitter_address: BytesN<32>, trusted: bool)` | owner | none | Updates trusted emitter map. |
-| `initiate_bridge_transfer(from: Address, amount: i128, target_chain: u32, recipient: BytesN<32>, nonce: u64)` | `from` | `u64` | Burns HBS and publishes Wormhole message. |
-| `complete_bridge_transfer(vaa: Bytes)` | none | none | Verifies VAA, trusted emitter, replay guard, mints HBS. |
+| `initiate_bridge_transfer(from: Address, amount: i128, target_chain: u32, recipient: BytesN<32>, recipient_kind: u32, nonce: u64)` | `from` | `u64` | Burns HBS and publishes a version 1 Wormhole message. `recipient_kind` is 0 for account or 1 for contract. |
+| `complete_bridge_transfer(vaa: Bytes)` | none | none | Verifies VAA, trusted emitter and replay guard, then mints HBS. Requires the exact 101-byte `HBS\x01` payload with recipient kind 0 (account) or 1 (contract). Legacy untagged payloads are rejected. |
 | `set_flash_loan_fee(fee_bps: i128)` | owner | none | 0..1000 bps. |
 | `flash_loan_fee()` | none | `i128` | Defaults to 30 bps. |
 | `execute_flash_loan(initiator: Address, borrower: Address, amount: i128, data: Bytes)` | `initiator` | none | Calls borrower callback and collects amount plus fee. |
@@ -211,7 +211,7 @@ Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 | `max_transaction_amount()` | none | `i128` | Defaults to 0. |
 | `record_compliance_event(event_type: String, data: String)` | owner | none | Appends event. |
 | `get_compliance_event(seq: u64)` | none | `ComplianceEventData` | Panics if missing. |
-| `get_compliance_events(from: u64, to: u64)` | none | `Vec<ComplianceEventData>` | Inclusive range; skips missing entries. |
+| `get_compliance_events(from: u64, to: u64)` | none | `Vec<ComplianceEventData>` | Inclusive range; skips missing entries. Returns at most 99 events per call to fit the protocol storage footprint. |
 | `take_reporting_snapshot()` | owner | none | Captures latest reporting metrics. |
 | `get_latest_snapshot()` | none | `ReportingSnapshotData` | Panics if no snapshot exists. |
 | `export_regulatory_data()` | none | `RegulatoryReport` | Includes latest snapshot and up to 50 recent events. |

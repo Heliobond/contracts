@@ -102,6 +102,24 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
 
+    #[soroban_sdk::contract]
+    struct ApprovalTestContract;
+    #[soroban_sdk::contractimpl]
+    impl ApprovalTestContract {}
+
+    fn check_approval(
+        env: &Env,
+        owner: &Address,
+        threshold: u32,
+        signers: &Vec<Address>,
+        approvals: Vec<Address>,
+    ) -> Result<(), ApprovalError> {
+        let contract = env.register(ApprovalTestContract, ());
+        env.as_contract(&contract, || {
+            require_admin_approval(owner, threshold, signers, approvals)
+        })
+    }
+
     fn make_env() -> Env {
         Env::default()
     }
@@ -199,7 +217,7 @@ mod tests {
         let owner = Address::generate(&env);
         let signers = make_signers(&env, 3);
         let approvals = Vec::new(&env);
-        assert!(require_admin_approval(&owner, 0, &signers, approvals).is_ok());
+        assert!(check_approval(&env, &owner, 0, &signers, approvals).is_ok());
     }
 
     #[test]
@@ -211,7 +229,7 @@ mod tests {
         let mut approvals = Vec::new(&env);
         approvals.push_back(signers.get(0).unwrap());
         approvals.push_back(signers.get(1).unwrap());
-        assert!(require_admin_approval(&owner, 2, &signers, approvals).is_ok());
+        assert!(check_approval(&env, &owner, 2, &signers, approvals).is_ok());
     }
 
     #[test]
@@ -223,7 +241,7 @@ mod tests {
         let mut approvals = Vec::new(&env);
         approvals.push_back(signers.get(0).unwrap());
         assert!(matches!(
-            require_admin_approval(&owner, 2, &signers, approvals),
+            check_approval(&env, &owner, 2, &signers, approvals),
             Err(ApprovalError::InsufficientApprovals)
         ));
     }
@@ -238,7 +256,7 @@ mod tests {
         approvals.push_back(signers.get(0).unwrap());
         approvals.push_back(signers.get(0).unwrap());
         assert!(matches!(
-            require_admin_approval(&owner, 2, &signers, approvals),
+            check_approval(&env, &owner, 2, &signers, approvals),
             Err(ApprovalError::DuplicateApproval)
         ));
     }
@@ -253,7 +271,7 @@ mod tests {
         let mut approvals = Vec::new(&env);
         approvals.push_back(outsider);
         assert!(matches!(
-            require_admin_approval(&owner, 1, &signers, approvals),
+            check_approval(&env, &owner, 1, &signers, approvals),
             Err(ApprovalError::NotSigner)
         ));
     }
@@ -268,7 +286,7 @@ mod tests {
         approvals.push_back(signers.get(0).unwrap());
         approvals.push_back(signers.get(1).unwrap());
         assert!(matches!(
-            require_admin_approval(&owner, 3, &signers, approvals),
+            check_approval(&env, &owner, 3, &signers, approvals),
             Err(ApprovalError::InvalidThreshold)
         ));
     }

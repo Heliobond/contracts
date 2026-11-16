@@ -47,11 +47,16 @@ mod tests {
     use super::*;
     use soroban_sdk::testutils::{Address as _, Ledger};
 
+    #[soroban_sdk::contract]
+    struct StorageTestContract;
+    #[soroban_sdk::contractimpl]
+    impl StorageTestContract {}
+
     #[test]
     fn total_deposited_survives_inactivity() {
         let env = Env::default();
         // Storage is only reachable from inside a contract context.
-        let contract_id = env.register(crate::InvestmentVault, ());
+        let contract_id = env.register(StorageTestContract, ());
         let account = Address::generate(&env);
         env.as_contract(&contract_id, || {
             write_total_deposited(&env, account.clone(), 1000);
