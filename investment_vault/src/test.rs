@@ -655,6 +655,7 @@ fn test_vault_deposit_cost_estimate() {
     assert!(resources.instructions > 0);
     let fee = env.cost_estimate().fee();
     assert!(fee.total > 0);
+    std::println!("deposit_fee_components {:?}", fee);
     std::println!(
         "gas_budget investment_vault.deposit instructions={} fee={}",
         resources.instructions,
