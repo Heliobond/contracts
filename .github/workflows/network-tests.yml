@@ -21,6 +21,8 @@ on:
   schedule:
     - cron: "0 6 * * *" # daily at 06:00 UTC
 
+permissions: {}
+
 concurrency:
   group: network-tests-${{ github.ref }}
   cancel-in-progress: true
@@ -33,37 +35,64 @@ jobs:
   # Skip on failed upstream CI runs
   guard:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
+      sha: ${{ steps.check.outputs.sha }}
+      run_id: ${{ steps.check.outputs.run_id }}
+      run_attempt: ${{ steps.check.outputs.run_attempt }}
     steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - id: check
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.workflow_run.conclusion }}" = "success" ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: python3 scripts/ci_wasm_artifact.py guard
 
   deploy-and-test:
     name: Deploy & smoke-test on ${{ github.event.inputs.network || 'testnet' }}
     needs: guard
     if: needs.guard.outputs.should_run == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
     environment: testnet
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
+          persist-credentials: false
+
+      - name: Download validated main CI WASM
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: verified-contract-wasm-${{ needs.guard.outputs.sha }}
+          path: target/wasm32v1-none/release
+          repository: Heliobond/contracts
+          run-id: ${{ needs.guard.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify artifact run, commit and file hashes
+        if: github.event_name == 'workflow_run'
+        env:
+          EXPECTED_SHA: ${{ needs.guard.outputs.sha }}
+          EXPECTED_RUN_ID: ${{ needs.guard.outputs.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ needs.guard.outputs.run_attempt }}
+        run: python3 scripts/ci_wasm_artifact.py verify
 
       - name: Install Rust
+        if: github.event_name != 'workflow_run'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32v1-none
 
       - name: Cache cargo
+        if: github.event_name != 'workflow_run'
         uses: Swatinem/rust-cache@v2
 
       - name: Install Stellar CLI
@@ -76,9 +105,10 @@ jobs:
           stellar --version
 
       - name: Build contracts
+        if: github.event_name != 'workflow_run'
         run: stellar contract build
 
-      # Verify deploy manifest matches freshly-built WASM (#398). This catches
+      # Verify deploy manifest matches the validated or freshly-built WASM (#398). This catches
       # drift between what the repo would build today and what was last recorded
       # as deployed — independent of an active deploy.
       - name: Check deploy manifest hashes
