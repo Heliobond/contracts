@@ -44,7 +44,7 @@ jobs:
       run_id: ${{ steps.check.outputs.run_id }}
       run_attempt: ${{ steps.check.outputs.run_attempt }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - id: check
@@ -62,14 +62,14 @@ jobs:
     environment: testnet
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.guard.outputs.sha }}
           persist-credentials: false
 
       - name: Download validated main CI WASM
         if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: verified-contract-wasm-${{ needs.guard.outputs.sha }}
           path: target/wasm32v1-none/release
