@@ -60,7 +60,13 @@ def verify(directory, sha, run_id, attempt):
     if path.is_symlink():
         raise ValueError("Artifact manifest must be a regular file")
     actual = json.loads(path.read_text())
-    if actual != manifest(directory, sha, run_id, attempt):
+    expected = manifest(directory, sha, run_id, attempt)
+    producer_attempt = actual.get("run_attempt") if isinstance(actual, dict) else None
+    if not isinstance(producer_attempt, str) or not re.fullmatch(r"[1-9][0-9]*", producer_attempt):
+        raise ValueError("Invalid artifact producer attempt")
+    # Partial reruns retain artifacts from passed jobs; future attempts cannot serve old events.
+    expected["run_attempt"] = producer_attempt
+    if actual != expected or int(producer_attempt) > int(attempt):
         raise ValueError("Artifact manifest does not match the expected repository, SHA, run, attempt or file digests")
 
 

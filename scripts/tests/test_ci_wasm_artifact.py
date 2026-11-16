@@ -83,7 +83,9 @@ class ArtifactTests(unittest.TestCase):
             path = directory / artifact.MANIFEST
             path.write_text(json.dumps(data))
             artifact.verify(directory, SHA, RUN, "1")
-            for key, value in (("sha", "b" * 40), ("run_id", "124"), ("run_attempt", "2"),
+            artifact.verify(directory, SHA, RUN, "2")
+            for key, value in (("sha", "b" * 40), ("run_id", "124"), ("run_attempt", "2"), ("run_attempt", "0"),
+                               ("run_attempt", None),
                                ("repository", "fork/contracts"), ("files", {})):
                 with self.subTest(key=key):
                     changed = copy.deepcopy(data)
