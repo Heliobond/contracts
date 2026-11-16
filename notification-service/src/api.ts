@@ -178,11 +178,9 @@ export function createApi(
 
     // Enforce at least one notification channel
     if (!mergedPreference.email && !mergedPreference.webhook_url) {
-      return res
-        .status(400)
-        .json({
-          error: "At least one of email or webhook_url must be provided",
-        });
+      return res.status(400).json({
+        error: "At least one of email or webhook_url must be provided",
+      });
     }
 
     // Ensure webhook_url is explicitly included for the DB parameter (null -> empty string)
