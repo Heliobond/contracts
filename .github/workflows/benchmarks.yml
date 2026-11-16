@@ -38,7 +38,7 @@ jobs:
       - name: Install Stellar CLI
         env:
           STELLAR_CLI_VERSION: "26.1.0"
-          STELLAR_CLI_SHA256: "PLACEHOLDER_UPDATE_ON_VERSION_BUMP"
+          STELLAR_CLI_SHA256: "e18d5a7629102e1ccc07241acbcbebfc05b1c02476ce7d3204ba2d7418be5c0c"
         run: |
           url="https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
           curl -sSL -o /tmp/stellar-cli.tar.gz "$url"
@@ -55,30 +55,33 @@ jobs:
       # reported in the test output, then compare them against a stored baseline.
       - name: Run benchmark tests (PR branch)
         run: |
-          cargo test --all --quiet -- --nocapture bench 2>&1 | tee /tmp/bench-pr.txt || true
+          cargo test --all --quiet -- --nocapture bench 2>&1 | tee /tmp/bench-pr.txt
           echo "--- PR branch benchmark output ---"
           cat /tmp/bench-pr.txt
 
       # ── Baseline comparison (PRs only) ────────────────────────────────────────
       - name: Build baseline contracts (base branch)
         if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git fetch origin ${{ github.base_ref }}
-          git stash
-          git checkout origin/${{ github.base_ref }}
-          CARGO_TARGET_DIR=/tmp/base-target stellar contract build
-          git checkout -
-          git stash pop || true
+          # Bootstrap only the known uncompilable main revision against the repaired CI baseline.
+          # Remove this case after main advances. Every other base is built without substitution.
+          if [ "$BASE_SHA" = cc21876ecc118a0cd75047bc9b775f37dff555e4 ]; then
+            BASE_SHA=36c812a62bc6858c866080638f6f053e834f1b06
+            echo "::notice::Bootstrapping comparisons from repaired baseline $BASE_SHA"
+          fi
+          git worktree add /tmp/benchmark-base "$BASE_SHA"
+          cd /tmp/benchmark-base
+          stellar contract build
 
       - name: Run benchmark tests (base branch)
         if: github.event_name == 'pull_request'
+        working-directory: /tmp/benchmark-base
         run: |
-          cargo test \
-            --all --quiet \
-            --target-dir /tmp/base-target \
-            -- --nocapture bench 2>&1 | tee /tmp/bench-base.txt || true
-          echo "--- Base branch benchmark output ---"
-          cat /tmp/bench-base.txt
+          set -o pipefail
+          cargo test --all --quiet --target-dir /tmp/base-target \
+            -- --nocapture bench 2>&1 | tee /tmp/bench-base.txt
 
       - name: Compare benchmark results
         if: github.event_name == 'pull_request'
@@ -163,7 +166,7 @@ jobs:
 
           pattern = re.compile(r'bench_(\w+):\s*(\d+)\s*instructions', re.IGNORECASE)
           results = {}
-          for path in ('/tmp/bench-pr.txt', '/tmp/bench-base.txt'):
+          for path in ('/tmp/bench-pr.txt',):
               if not os.path.exists(path):
                   continue
               with open(path) as f:

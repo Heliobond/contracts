@@ -56,7 +56,7 @@ fn test_create_project_by_whitelisted_address() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
 
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
 
     let project_id = client.create_project(
         &creator,
@@ -92,7 +92,7 @@ fn test_create_project_by_non_whitelisted_panics() {
 fn test_sequential_project_ids() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
 
     let id1 = client.create_project(
         &creator,
@@ -116,7 +116,7 @@ fn test_sequential_project_ids() {
 fn test_update_impact_score() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -153,7 +153,7 @@ fn test_multisig_update_impact_score_approved() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let signer3 = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmMultiSig"),
@@ -186,7 +186,7 @@ fn test_update_scores_batch_approved_after_multisig_enabled() {
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let signer3 = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmBatchApproved"),
@@ -218,7 +218,7 @@ fn test_multisig_update_impact_score_rejects_insufficient_approvals() {
     let creator = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmMultiSig"),
@@ -239,7 +239,7 @@ fn test_multisig_update_impact_score_rejects_replayed_approval() {
     let creator = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmReplay"),
@@ -267,7 +267,7 @@ fn test_multisig_update_impact_score_rejects_replayed_approval() {
 fn bench_registry_create_and_score_project() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmBench"),
@@ -288,7 +288,7 @@ fn bench_registry_create_and_score_project() {
 fn test_update_impact_score_noop_identical_values() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -316,7 +316,7 @@ fn test_update_score_non_admin_panics() {
     env.mock_all_auths();
     let contract_id = env.register(ProjectRegistry, (&admin, &whitelister));
     let client = ProjectRegistryClient::new(&env, &contract_id);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -346,7 +346,7 @@ fn test_update_score_non_admin_panics() {
 fn test_get_all_projects() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm1"),
@@ -373,7 +373,7 @@ fn test_get_projects_page_returns_stable_ordering_across_pages() {
     // get_all_projects returns them in.
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     for i in 1..=5u32 {
         client.create_project(
             &creator,
@@ -414,7 +414,7 @@ fn test_get_projects_page_returns_stable_ordering_across_pages() {
 fn test_get_projects_page_limit_larger_than_total_projects() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm1"),
@@ -446,7 +446,7 @@ fn test_get_projects_page_limit_larger_than_total_projects() {
 fn test_get_projects_page_zero_limit_returns_empty() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -464,7 +464,7 @@ fn test_get_projects_page_zero_limit_returns_empty() {
 fn test_get_projects_page_offset_beyond_counter_returns_empty() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     for i in 1..=5u32 {
         client.create_project(
             &creator,
@@ -497,7 +497,7 @@ fn test_update_impact_score_nonexistent_project_panics() {
 fn test_certify_project() {
     let (env, _admin, whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -516,7 +516,7 @@ fn test_certify_project() {
 fn test_certify_already_certified_project_panics() {
     let (env, _admin, whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -532,7 +532,7 @@ fn test_certify_already_certified_project_panics() {
 fn test_maturity_date_is_mature() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
 
     // Set maturity 1000 seconds in future relative to current ledger time
     let now = env.ledger().timestamp();
@@ -556,7 +556,7 @@ fn test_maturity_date_is_mature() {
 fn test_update_credit_quality_score_success() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -577,7 +577,7 @@ fn test_update_credit_quality_score_success() {
 fn test_update_credit_quality_score_out_of_range_panics() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -591,7 +591,7 @@ fn test_update_credit_quality_score_out_of_range_panics() {
 fn test_update_credit_quality_score_boundary_values() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -610,7 +610,7 @@ fn test_update_credit_quality_score_boundary_values() {
 fn test_update_credit_quality_independent_of_green_impact() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -630,7 +630,7 @@ fn test_update_credit_quality_independent_of_green_impact() {
 fn test_credit_quality_score_changes_rate_correctly() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -655,7 +655,7 @@ fn test_credit_quality_score_changes_rate_correctly() {
 fn test_update_credit_quality_score_noop_identical_values() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -682,7 +682,7 @@ fn test_update_credit_quality_score_rejects_plain_call_once_multisig_enabled() {
     let creator = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmCreditQualityMultisig"),
@@ -697,16 +697,16 @@ fn test_update_credit_quality_score_rejects_plain_call_once_multisig_enabled() {
     client.update_credit_quality_score(&id, &80u32);
 }
 
-// ── #719: update_credit_quality_score_approved multisig counterpart ──────────
+// ── #719: update_credit_quality_approved multisig counterpart ──────────
 
 #[test]
-fn test_update_credit_quality_score_approved_after_multisig_enabled() {
+fn test_update_credit_quality_approved_after_multisig_enabled() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
     let signer3 = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmCreditQualityApproved"),
@@ -723,11 +723,7 @@ fn test_update_credit_quality_score_approved_after_multisig_enabled() {
     // leave green_impact untouched.
     assert!(client.try_update_credit_quality_score(&id, &80u32).is_err());
 
-    client.update_credit_quality_score_approved(
-        &id,
-        &80u32,
-        &soroban_sdk::vec![&env, signer1, signer2],
-    );
+    client.update_credit_quality_approved(&id, &80u32, &soroban_sdk::vec![&env, signer1, signer2]);
 
     let project = client.get_project(&id);
     assert_eq!(project.credit_quality, 80);
@@ -736,12 +732,12 @@ fn test_update_credit_quality_score_approved_after_multisig_enabled() {
 
 #[test]
 #[should_panic]
-fn test_update_credit_quality_score_approved_rejects_insufficient_approvals() {
+fn test_update_credit_quality_approved_rejects_insufficient_approvals() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
     let signer1 = Address::generate(&env);
     let signer2 = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmCreditQualityApproved"),
@@ -749,15 +745,8 @@ fn test_update_credit_quality_score_approved_rejects_insufficient_approvals() {
         &test_metadata_hash(&env),
     );
 
-    client.set_multisig_admin(
-        &soroban_sdk::vec![&env, signer1.clone(), signer2],
-        &2u32,
-    );
-    client.update_credit_quality_score_approved(
-        &id,
-        &80u32,
-        &soroban_sdk::vec![&env, signer1],
-    );
+    client.set_multisig_admin(&soroban_sdk::vec![&env, signer1.clone(), signer2], &2u32);
+    client.update_credit_quality_approved(&id, &80u32, &soroban_sdk::vec![&env, signer1]);
 }
 
 // ── #720: update_credit_quality_score must emit RateUpdated when rate moves ──
@@ -766,7 +755,7 @@ fn test_update_credit_quality_score_approved_rejects_insufficient_approvals() {
 fn test_update_credit_quality_score_emits_rate_updated() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmRateUpdated"),
@@ -793,7 +782,7 @@ fn test_update_credit_quality_score_emits_rate_updated() {
 fn test_deposit_collateral_rejects_unlisted_token() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let project_id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -815,7 +804,7 @@ fn test_deposit_collateral_rejects_unlisted_token() {
 fn test_set_accepted_collateral_toggles_allowlist() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let project_id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -843,7 +832,7 @@ fn test_set_accepted_collateral_toggles_allowlist() {
 fn test_uri_exactly_min_length_accepted() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     // 8 chars exactly equals MIN_URI_LEN
     let id = client.create_project(
         &creator,
@@ -859,7 +848,7 @@ fn test_uri_exactly_min_length_accepted() {
 fn test_uri_below_min_length_panics() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     // 7 chars — one below MIN_URI_LEN
     client.create_project(
         &creator,
@@ -874,7 +863,7 @@ fn test_uri_below_min_length_panics() {
 fn test_create_project_empty_uri_panics() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     client.create_project(
         &creator,
         &String::from_str(&env, ""),
@@ -887,7 +876,7 @@ fn test_create_project_empty_uri_panics() {
 fn test_uri_exactly_max_length_accepted() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     // 512-byte stack buffer: prefix + 'A' padding — no alloc needed
     let mut buf = [b'A'; 512];
     buf[..9].copy_from_slice(b"ipfs://Qm");
@@ -905,7 +894,7 @@ fn test_uri_exactly_max_length_accepted() {
 fn test_uri_with_special_characters_and_unicode_accepted() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let uri = String::from_str(&env, "ipfs://QmSolar-%E2%98%80-東京?panel=42&region=na");
 
     let id = client.create_project(&creator, &uri, &0u64, &test_metadata_hash(&env));
@@ -921,7 +910,7 @@ fn test_uri_with_special_characters_and_unicode_accepted() {
 fn test_uri_above_max_length_panics() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     // 513-byte stack buffer — one above MAX_URI_LEN
     let mut buf = [b'A'; 513];
     buf[..9].copy_from_slice(b"ipfs://Qm");
@@ -935,7 +924,7 @@ fn test_uri_above_max_length_panics() {
 fn test_deposit_and_get_collateral() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let project_id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -960,7 +949,7 @@ fn test_deposit_and_get_collateral() {
 fn test_deposit_zero_collateral_panics() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let project_id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -983,7 +972,7 @@ fn test_deposit_zero_collateral_panics() {
 fn test_non_owner_cannot_deposit_collateral() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let project_id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1006,11 +995,11 @@ fn test_non_owner_cannot_deposit_collateral() {
 fn test_liquidate_collateral_by_admin() {
     let (env, admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let project_id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
-        &0u64,
+        &100u64,
         &test_metadata_hash(&env),
     );
 
@@ -1023,6 +1012,8 @@ fn test_liquidate_collateral_by_admin() {
     client.deposit_collateral(&project_id, &creator, &token_sac, &800i128);
 
     let recipient = Address::generate(&env);
+    client.set_vault(&recipient);
+    env.ledger().with_mut(|li| li.timestamp = 100);
     client.liquidate_collateral(&project_id, &token_sac, &recipient);
 
     assert_eq!(client.get_collateral(&project_id, &token_sac), 0i128);
@@ -1033,7 +1024,7 @@ fn test_liquidate_collateral_by_admin() {
 fn test_liquidate_collateral_before_maturity_panics() {
     let (env, admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
 
     let now = env.ledger().timestamp();
     let project_id = client.create_project(
@@ -1059,7 +1050,7 @@ fn test_liquidate_collateral_before_maturity_panics() {
 fn test_release_collateral_after_maturity() {
     let (env, admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let now = env.ledger().timestamp();
     let project_id = client.create_project(
         &creator,
@@ -1089,7 +1080,7 @@ fn test_release_collateral_after_maturity() {
 fn test_release_collateral_before_maturity_panics() {
     let (env, admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let now = env.ledger().timestamp();
     let project_id = client.create_project(
         &creator,
@@ -1116,7 +1107,7 @@ fn test_release_collateral_before_maturity_panics() {
 fn test_interest_rate_zero_scores_is_base_rate() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1131,7 +1122,7 @@ fn test_interest_rate_zero_scores_is_base_rate() {
 fn test_interest_rate_perfect_scores_is_minimum() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1147,7 +1138,7 @@ fn test_interest_rate_perfect_scores_is_minimum() {
 fn test_interest_rate_mid_scores() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1163,7 +1154,7 @@ fn test_interest_rate_mid_scores() {
 fn test_interest_rate_boundary_combined_score_50() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1179,7 +1170,7 @@ fn test_interest_rate_boundary_combined_score_50() {
 fn test_interest_rate_boundary_combined_score_1() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1195,7 +1186,7 @@ fn test_interest_rate_boundary_combined_score_1() {
 fn test_interest_rate_boundary_combined_score_99() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1211,7 +1202,7 @@ fn test_interest_rate_boundary_combined_score_99() {
 fn test_interest_rate_boundary_asymmetric_0_100() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1227,7 +1218,7 @@ fn test_interest_rate_boundary_asymmetric_0_100() {
 fn test_interest_rate_boundary_asymmetric_100_0() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1245,7 +1236,7 @@ fn test_interest_rate_boundary_asymmetric_100_0() {
 fn test_create_project_emits_event() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
 
     client.create_project(
         &creator,
@@ -1268,7 +1259,7 @@ fn test_set_whitelist_emits_event() {
     let (env, _admin, _whitelister, client) = setup();
     let account = Address::generate(&env);
 
-    client.set_whitelist(&account, &true);
+    client.set_whitelist(&account, &true, &0u64);
 
     let events = env.events().all().filter_by_contract(&client.address);
     assert_eq!(
@@ -1282,7 +1273,7 @@ fn test_set_whitelist_emits_event() {
 fn test_update_impact_score_emits_event() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1304,7 +1295,7 @@ fn test_update_impact_score_emits_event() {
 fn test_score_changed_event_contains_old_and_new_values() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1319,7 +1310,7 @@ fn test_score_changed_event_contains_old_and_new_values() {
 fn test_score_changed_event_credit_quality_path() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1336,7 +1327,7 @@ fn test_score_changed_event_credit_quality_path() {
     // Verify ScoreChanged event is emitted
     let events = env.events().all().filter_by_contract(&client.address);
     assert!(
-        events.events().len() >= 1,
+        !events.events().is_empty(),
         "update_credit_quality_score should emit at least one event"
     );
 }
@@ -1345,7 +1336,7 @@ fn test_score_changed_event_credit_quality_path() {
 fn test_certify_project_emits_event() {
     let (env, _admin, whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1367,7 +1358,7 @@ fn test_certify_project_emits_event() {
 fn test_set_creator_reputation_emits_event() {
     let (env, _admin, whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
 
     client.set_creator_reputation(&whitelister, &creator, &75u32);
 
@@ -1494,7 +1485,7 @@ fn test_registry_constructor_deployment_cost_estimate_and_initial_state() {
     assert_eq!(vault.total_supply(), 0);
     assert!(!vault.is_trading_enabled());
 
-    registry.set_whitelist(&project_creator, &true);
+    registry.set_whitelist(&project_creator, &true, &0u64);
     let project_id = registry.create_project(
         &project_creator,
         &String::from_str(&env, "ipfs://QmInitTest"),
@@ -1519,7 +1510,7 @@ fn test_new_whitelister_can_set_whitelist() {
     client.set_whitelister(&new_whitelister);
 
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1551,7 +1542,7 @@ fn test_set_whitelister_is_admin_only() {
 fn test_update_impact_score_boundary_values() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1577,7 +1568,7 @@ fn test_update_impact_score_boundary_values() {
 fn test_update_impact_score_exceeds_100_panics_credit_quality() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1593,7 +1584,7 @@ fn test_update_impact_score_exceeds_100_panics_credit_quality() {
 fn test_update_impact_score_exceeds_100_panics_green_impact() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1609,7 +1600,7 @@ fn test_update_impact_score_exceeds_100_panics_green_impact() {
 fn test_update_impact_score_max_value_panics() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1627,9 +1618,9 @@ fn test_multiple_creators_sequential_ids() {
     let creator2 = Address::generate(&env);
     let creator3 = Address::generate(&env);
 
-    client.set_whitelist(&creator1, &true);
-    client.set_whitelist(&creator2, &true);
-    client.set_whitelist(&creator3, &true);
+    client.set_whitelist(&creator1, &true, &0u64);
+    client.set_whitelist(&creator2, &true, &0u64);
+    client.set_whitelist(&creator3, &true, &0u64);
 
     let id1 = client.create_project(
         &creator1,
@@ -1651,7 +1642,7 @@ fn test_multiple_creators_sequential_ids() {
     );
 
     // Revoke whitelist for creator2, shouldn't affect existing projects
-    client.set_whitelist(&creator2, &false);
+    client.set_whitelist(&creator2, &false, &0u64);
     let id4 = client.create_project(
         &creator3,
         &String::from_str(&env, "ipfs://Qm4"),
@@ -1691,9 +1682,9 @@ fn test_interleaved_creators_sequential_ids() {
     let bob = Address::generate(&env);
     let carol = Address::generate(&env);
 
-    client.set_whitelist(&alice, &true);
-    client.set_whitelist(&bob, &true);
-    client.set_whitelist(&carol, &true);
+    client.set_whitelist(&alice, &true, &0u64);
+    client.set_whitelist(&bob, &true, &0u64);
+    client.set_whitelist(&carol, &true, &0u64);
 
     // Interleave: alice, bob, carol, alice, bob, carol
     let id1 = client.create_project(
@@ -1766,6 +1757,7 @@ mod integration {
     fn test_full_heliobond_flow() {
         let env = Env::default();
         env.mock_all_auths();
+        env.ledger().with_mut(|li| li.timestamp = 1);
 
         let admin = Address::generate(&env);
         let whitelister = Address::generate(&env);
@@ -1787,11 +1779,11 @@ mod integration {
         let vault = InvestmentVaultClient::new(&env, &vault_id);
 
         // Create a project (no maturity date)
-        registry.set_whitelist(&project_creator, &true);
+        registry.set_whitelist(&project_creator, &true, &0u64);
         let project_id = registry.create_project(
             &project_creator,
             &String::from_str(&env, "ipfs://QmHeliobond"),
-            &0u64,
+            &100u64,
             &test_metadata_hash(&env),
         );
         assert_eq!(project_id, 1);
@@ -1800,7 +1792,7 @@ mod integration {
         // (full deposit minus 0.5% insurance premium).
         let deposit_amount = 20_000_000_000i128;
         let investable = deposit_amount - deposit_amount * 50 / 10_000; // 19_900_000_000
-        let shares = vault.deposit(&investor, &deposit_amount);
+        let shares = vault.deposit(&investor, &deposit_amount, &0i128, &u64::MAX);
         assert_eq!(shares, investable);
         assert_eq!(vault.balance(&investor), investable);
 
@@ -1814,19 +1806,21 @@ mod integration {
         let expected_returns = vault.get_expected_returns();
         assert_eq!(expected_returns, 3_500_000_000i128);
 
-        // total_assets = 1500 liquid + 500 investments + 350 expected_returns = 2350
+        // total_assets = 1500 liquid + 500 investments + 350 expected_returns - 10 reserve = 2340
         let total = vault.total_assets();
-        assert_eq!(total, 23_500_000_000i128);
+        assert_eq!(total, 23_400_000_000i128);
 
         // Investor withdraws half their shares (995 out of 1990)
-        // total_assets = 2350, total_supply = 1990
-        // returned = 995 * 2350 / 1990 = 1175 USDC (insurance pool is part of total assets)
+        // total_assets = 2340, total_supply = 1990
+        // returned = 995 * 2340 / 1990 = 1170 USDC; reserves remain excluded.
         let half_shares = shares / 2;
         env.ledger().with_mut(|li| {
             li.sequence_number += 1;
         });
+        let lock_expiry = vault.get_deposit_lock_expiry(&investor);
+        env.ledger().with_mut(|li| li.timestamp = lock_expiry);
         let returned = vault.withdraw(&investor, &half_shares, &0);
-        assert_eq!(returned, 11_750_000_000i128);
+        assert_eq!(returned, 11_700_000_000i128);
 
         // Remaining shares = half of investable
         assert_eq!(vault.balance(&investor), investable / 2);
@@ -1862,10 +1856,10 @@ mod integration {
         );
         assert_eq!(usdc.balance(&project_creator), balance_before_collateral);
 
-        // This project was created with maturity_date = 0 ("no maturity date
-        // set"), so release_collateral's maturity check never blocks it —
-        // matches is_mature(project_id) == false throughout.
-        assert!(!registry.is_mature(&project_id));
+        // Mature the project before releasing its collateral.
+        env.ledger()
+            .with_mut(|li| li.timestamp = li.timestamp.max(100));
+        assert!(registry.is_mature(&project_id));
         registry.release_collateral(&project_id, &project_creator, &usdc_sac);
         assert_eq!(registry.get_collateral(&project_id, &usdc_sac), 0);
         assert_eq!(
@@ -1881,7 +1875,7 @@ mod integration {
 fn test_score_history_records_entry_on_update() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1902,7 +1896,7 @@ fn test_score_history_records_entry_on_update() {
 fn test_score_history_noop_does_not_append() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1921,7 +1915,7 @@ fn test_score_history_noop_does_not_append() {
 fn test_score_history_multiple_updates_ordered() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1931,10 +1925,10 @@ fn test_score_history_multiple_updates_ordered() {
 
     client.update_impact_score(&id, &10u32, &20u32);
     env.ledger()
-        .set_timestamp(env.ledger().timestamp().saturating_add(1));
+        .set_timestamp(env.ledger().timestamp().saturating_add(MIN_UPDATE_INTERVAL));
     client.update_impact_score(&id, &30u32, &40u32);
     env.ledger()
-        .set_timestamp(env.ledger().timestamp().saturating_add(1));
+        .set_timestamp(env.ledger().timestamp().saturating_add(MIN_UPDATE_INTERVAL));
     client.update_impact_score(&id, &50u32, &60u32);
 
     let history = client.get_score_history(&id);
@@ -1954,7 +1948,7 @@ fn test_score_history_multiple_updates_ordered() {
 fn test_score_history_wraps_around_past_max_score_history() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -1996,7 +1990,7 @@ fn test_score_history_wraps_around_past_max_score_history() {
 fn test_credit_quality_score_history_recorded() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -2035,7 +2029,7 @@ fn test_registry_pause_and_unpause() {
 fn test_create_project_records_created_at() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     env.ledger().with_mut(|li| li.timestamp = 12345);
     let id = client.create_project(
         &creator,
@@ -2052,7 +2046,7 @@ fn test_verify_metadata_hash_matches_recorded_hash() {
     // #44
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let hash = BytesN::from_array(&env, &[9u8; 32]);
     let id = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm"), &0u64, &hash);
 
@@ -2092,7 +2086,7 @@ fn test_emergency_pause_rejects_non_emergency_admin() {
 fn test_create_project_blocked_when_paused() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     client.pause();
     client.create_project(
         &creator,
@@ -2107,7 +2101,7 @@ fn test_create_project_blocked_when_paused() {
 fn test_update_impact_score_blocked_when_paused() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -2122,7 +2116,7 @@ fn test_update_impact_score_blocked_when_paused() {
 fn test_getters_work_when_paused() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -2134,7 +2128,7 @@ fn test_getters_work_when_paused() {
     let project = client.get_project(&id);
     assert_eq!(project.owner, creator);
     assert_eq!(client.total_projects(), 1);
-    assert_eq!(client.is_paused(), true);
+    assert!(client.is_paused());
 }
 
 // ── Persistent-storage TTL extension on write (#328) ──────────────────────────
@@ -2145,7 +2139,7 @@ fn test_project_write_extends_ttl_beyond_creation() {
 
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmTtl"),
@@ -2189,7 +2183,7 @@ fn test_compact_storage_removes_zero_collateral() {
 
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
 
     // Use a future maturity date so collateral can be released at maturity
     let maturity = env.ledger().timestamp() + 10_000;
@@ -2271,7 +2265,7 @@ fn test_compact_storage_accepts_pairs_within_cap() {
 fn test_set_project_status_transitions_and_emits_event() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmStatus"),
@@ -2300,7 +2294,7 @@ fn test_set_project_status_transitions_and_emits_event() {
 fn test_set_project_status_rejects_noop() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmStatusNoop"),
@@ -2317,7 +2311,7 @@ fn test_set_project_status_rejects_noop() {
 fn test_set_project_status_rejects_archived_target_and_source() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmStatusArch"),
@@ -2369,7 +2363,7 @@ fn test_stale_stored_version_blocks_normal_calls() {
     // accidentally running new logic against an old storage layout." (#275)
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
 
     // Simulate a deployment whose stored schema version is ahead of this
     // build's compiled STATE_VERSION (e.g. rolled back to older code after a
@@ -2422,7 +2416,7 @@ fn test_transfer_ownership_emits_event() {
 fn test_all_only_owner_functions_reject_non_admin_caller() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let project_id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmAdminOnly"),
@@ -2496,7 +2490,7 @@ fn test_all_only_owner_functions_reject_non_admin_caller() {
 fn test_pause_blocks_mutations_but_not_getters() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
 
     // Create a project before pausing — succeeds.
     let id = client.create_project(
@@ -2524,7 +2518,7 @@ fn test_pause_blocks_mutations_but_not_getters() {
     let project = client.get_project(&id);
     assert_eq!(project.owner, creator);
     assert_eq!(client.total_projects(), 1);
-    assert_eq!(client.is_paused(), true);
+    assert!(client.is_paused());
     assert_eq!(client.state_version(), client.stored_state_version());
 }
 
@@ -2553,7 +2547,7 @@ fn test_migrate_state_rejects_unknown_future_target_version() {
 fn bench_registry_get_all_projects_50() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
 
     for _ in 0..50 {
         client.create_project(
@@ -2602,7 +2596,7 @@ proptest! {
         let contract_id = env.register(ProjectRegistry, (&admin, &whitelister));
         let client = ProjectRegistryClient::new(&env, &contract_id);
         let creator = Address::generate(&env);
-        client.set_whitelist(&creator, &true);
+        client.set_whitelist(&creator, &true, &0u64);
 
         let uri = String::from_str(&env, &make_uri(len));
         let id = client.create_project(&creator, &uri, &0u64, &test_metadata_hash(&env));
@@ -2620,7 +2614,7 @@ proptest! {
         let contract_id = env.register(ProjectRegistry, (&admin, &whitelister));
         let client = ProjectRegistryClient::new(&env, &contract_id);
         let creator = Address::generate(&env);
-        client.set_whitelist(&creator, &true);
+        client.set_whitelist(&creator, &true, &0u64);
 
         let uri = String::from_str(&env, &make_uri(len));
         let result = client.try_create_project(&creator, &uri, &0u64, &test_metadata_hash(&env));
@@ -2716,9 +2710,9 @@ fn test_health_check_default_state() {
     let status = client.health_check();
 
     assert_eq!(status.state_version, 1);
-    assert_eq!(status.is_paused, false);
+    assert!(!status.is_paused);
     assert_eq!(status.total_projects, 0);
-    assert_eq!(status.has_emergency_admin, false);
+    assert!(!status.has_emergency_admin);
 }
 
 /// health_check reflects total_projects after creation.
@@ -2726,7 +2720,7 @@ fn test_health_check_default_state() {
 fn test_health_check_reflects_project_count() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
 
     client.create_project(
         &creator,
@@ -2755,7 +2749,7 @@ fn test_health_check_reflects_paused_state() {
     client.emergency_pause(&emergency_admin);
 
     let status = client.health_check();
-    assert_eq!(status.is_paused, true);
+    assert!(status.is_paused);
 }
 
 /// health_check reports has_emergency_admin when one is configured.
@@ -2766,7 +2760,7 @@ fn test_health_check_reflects_emergency_admin() {
     client.set_emergency_admin(&Some(emergency_admin));
 
     let status = client.health_check();
-    assert_eq!(status.has_emergency_admin, true);
+    assert!(status.has_emergency_admin);
 }
 
 // ── Persistent TTL on non-Project keys (#552) ──────────────────────────────────
@@ -2790,6 +2784,7 @@ fn test_write_persistent_extends_arch_and_has_voted_ttl() {
             &env,
             &arch_key,
             &ArchiveSummary {
+                created_at: 0,
                 owner: voter.clone(),
                 final_credit_quality: 0,
                 final_green_impact: 0,
@@ -2831,7 +2826,7 @@ fn test_creator_reputation_write_extends_ttl() {
 fn test_score_history_write_extends_ttl() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmHistTtl"),
@@ -2856,7 +2851,7 @@ fn test_score_history_write_extends_ttl() {
 
 fn scored_project_at(env: &Env, client: &ProjectRegistryClient, t0: u64) -> u32 {
     let creator = Address::generate(env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let id = client.create_project(
         &creator,
         &String::from_str(env, "ipfs://Qm"),
@@ -2900,7 +2895,7 @@ fn test_update_interval_rejects_half_hour_update() {
 fn test_next_update_allowed_at() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let fresh = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
@@ -2932,6 +2927,14 @@ struct MockVault;
 
 #[soroban_sdk::contractimpl]
 impl MockVault {
+    pub fn set_balance(env: Env, account: Address, amount: i128) {
+        env.storage().instance().set(&account, &amount);
+    }
+
+    pub fn balance(env: Env, account: Address) -> i128 {
+        env.storage().instance().get(&account).unwrap_or(0)
+    }
+
     pub fn set_investment(env: Env, project_id: u32, amount: i128) {
         env.storage().instance().set(&project_id, &amount);
     }
@@ -2947,7 +2950,7 @@ fn contract_error(err: RegistryError) -> soroban_sdk::Error {
 
 fn create_test_project(env: &Env, client: &ProjectRegistryClient) -> u32 {
     let creator = Address::generate(env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     client.create_project(
         &creator,
         &String::from_str(env, "ipfs://QmDelete"),
@@ -3010,7 +3013,7 @@ fn test_delete_project_fails_closed_without_vault() {
 #[test]
 fn test_delete_project_rejects_active_investments() {
     let (env, client, vault, project_id) = setup_with_mock_vault();
-    vault.set_investment(&project_id, &5_000_0000000i128);
+    vault.set_investment(&project_id, &50_000_000_000_i128);
 
     assert_eq!(
         client.try_delete_project(&project_id),
@@ -3073,14 +3076,21 @@ fn test_delete_project_checks_only_the_target_project() {
 fn test_create_proposal_stores_description_and_voting_period() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voting_secs: u64 = 86_400; // exactly MIN_VOTING_PERIOD
 
-    let proposal_id =
-        client.create_proposal(&proposer, &String::from_str(&env, "Increase funding"), &voting_secs);
+    let proposal_id = client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Increase funding"),
+        &voting_secs,
+    );
 
     assert_eq!(proposal_id, 1);
     let proposal = client.get_proposal(&1);
-    assert_eq!(proposal.description, String::from_str(&env, "Increase funding"));
+    assert_eq!(
+        proposal.description,
+        String::from_str(&env, "Increase funding")
+    );
     assert_eq!(proposal.proposer, proposer);
     assert_eq!(proposal.votes_for, 0);
     assert_eq!(proposal.votes_against, 0);
@@ -3092,6 +3102,7 @@ fn test_create_proposal_stores_description_and_voting_period() {
 fn test_create_proposal_sequential_ids() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     let id1 = client.create_proposal(&proposer, &String::from_str(&env, "First"), &86_400);
     let id2 = client.create_proposal(&proposer, &String::from_str(&env, "Second"), &86_400);
@@ -3105,6 +3116,7 @@ fn test_create_proposal_sequential_ids() {
 fn test_create_proposal_rejects_voting_period_too_short() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     client.create_proposal(&proposer, &String::from_str(&env, "Too short"), &86_399);
 }
 
@@ -3113,20 +3125,33 @@ fn test_create_proposal_rejects_voting_period_too_short() {
 fn test_create_proposal_rejects_voting_period_too_long() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
-    client.create_proposal(&proposer, &String::from_str(&env, "Too long"), &(30 * 86_400 + 1));
+    client.set_whitelist(&proposer, &true, &0);
+    client.create_proposal(
+        &proposer,
+        &String::from_str(&env, "Too long"),
+        &(30 * 86_400 + 1),
+    );
 }
 
 #[test]
 fn test_cast_vote_accumulates_for_and_against() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter_a = Address::generate(&env);
     let voter_b = Address::generate(&env);
 
-    let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Vote test"), &86_400);
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter_a, &100i128);
+    balances.set_balance(&voter_b, &30i128);
 
-    client.cast_vote(&voter_a, &proposal_id, &true, &100i128);
-    client.cast_vote(&voter_b, &proposal_id, &false, &30i128);
+    let proposal_id =
+        client.create_proposal(&proposer, &String::from_str(&env, "Vote test"), &86_400);
+
+    client.cast_vote(&voter_a, &proposal_id, &true);
+    client.cast_vote(&voter_b, &proposal_id, &false);
 
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.votes_for, 100);
@@ -3135,13 +3160,14 @@ fn test_cast_vote_accumulates_for_and_against() {
 
 #[test]
 #[should_panic]
-fn test_cast_vote_rejects_zero_weight() {
+fn test_cast_vote_rejects_zero_weight_legacy() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter = Address::generate(&env);
 
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Vote"), &86_400);
-    client.cast_vote(&voter, &proposal_id, &true, &0i128);
+    client.cast_vote(&voter, &proposal_id, &true);
 }
 
 #[test]
@@ -3149,10 +3175,16 @@ fn test_cast_vote_rejects_zero_weight() {
 fn test_cast_vote_rejects_negative_weight() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter = Address::generate(&env);
 
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter, &-1i128);
+
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Vote"), &86_400);
-    client.cast_vote(&voter, &proposal_id, &true, &-5i128);
+    client.cast_vote(&voter, &proposal_id, &true);
 }
 
 #[test]
@@ -3160,26 +3192,40 @@ fn test_cast_vote_rejects_negative_weight() {
 fn test_cast_vote_rejects_double_vote() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter = Address::generate(&env);
 
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter, &100i128);
+
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Vote"), &86_400);
-    client.cast_vote(&voter, &proposal_id, &true, &100i128);
-    client.cast_vote(&voter, &proposal_id, &false, &50i128);
+    client.cast_vote(&voter, &proposal_id, &true);
+    client.cast_vote(&voter, &proposal_id, &false);
 }
 
 #[test]
 fn test_execute_proposal_passes_when_more_for_than_against() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter_a = Address::generate(&env);
     let voter_b = Address::generate(&env);
 
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter_a, &100i128);
+    balances.set_balance(&voter_b, &30i128);
+
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Pass"), &86_400);
-    client.cast_vote(&voter_a, &proposal_id, &true, &100i128);
-    client.cast_vote(&voter_b, &proposal_id, &false, &30i128);
+    client.cast_vote(&voter_a, &proposal_id, &true);
+    client.cast_vote(&voter_b, &proposal_id, &false);
 
     let proposal = client.get_proposal(&proposal_id);
-    env.ledger().with_mut(|l| l.timestamp = proposal.voting_ends_at + 1);
+    env.ledger()
+        .with_mut(|l| l.timestamp = proposal.voting_ends_at + 1);
 
     let passed = client.execute_proposal(&proposal_id);
     assert!(passed);
@@ -3190,15 +3236,23 @@ fn test_execute_proposal_passes_when_more_for_than_against() {
 fn test_execute_proposal_fails_when_more_against_than_for() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter_a = Address::generate(&env);
     let voter_b = Address::generate(&env);
 
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter_a, &30i128);
+    balances.set_balance(&voter_b, &100i128);
+
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Fail"), &86_400);
-    client.cast_vote(&voter_a, &proposal_id, &true, &10i128);
-    client.cast_vote(&voter_b, &proposal_id, &false, &20i128);
+    client.cast_vote(&voter_a, &proposal_id, &true);
+    client.cast_vote(&voter_b, &proposal_id, &false);
 
     let proposal = client.get_proposal(&proposal_id);
-    env.ledger().with_mut(|l| l.timestamp = proposal.voting_ends_at + 1);
+    env.ledger()
+        .with_mut(|l| l.timestamp = proposal.voting_ends_at + 1);
 
     let passed = client.execute_proposal(&proposal_id);
     assert!(!passed);
@@ -3210,6 +3264,7 @@ fn test_execute_proposal_fails_when_more_against_than_for() {
 fn test_execute_proposal_rejects_while_voting_still_open() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Early"), &86_400);
     client.execute_proposal(&proposal_id);
@@ -3217,13 +3272,15 @@ fn test_execute_proposal_rejects_while_voting_still_open() {
 
 #[test]
 #[should_panic]
-fn test_execute_proposal_rejects_double_execution() {
+fn test_execute_proposal_rejects_double_execution_legacy() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Twice"), &86_400);
     let proposal = client.get_proposal(&proposal_id);
-    env.ledger().with_mut(|l| l.timestamp = proposal.voting_ends_at + 1);
+    env.ledger()
+        .with_mut(|l| l.timestamp = proposal.voting_ends_at + 1);
 
     client.execute_proposal(&proposal_id);
     client.execute_proposal(&proposal_id);
@@ -3233,6 +3290,7 @@ fn test_execute_proposal_rejects_double_execution() {
 fn test_get_proposal_returns_stored_data() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     client.create_proposal(&proposer, &String::from_str(&env, "Hello"), &86_400);
     let proposal = client.get_proposal(&1);
@@ -3275,10 +3333,15 @@ fn test_delete_project_against_real_investment_vault() {
 fn test_compact_archive_then_get_archive_summary() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let hash = test_metadata_hash(&env);
 
-    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64, &hash);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmTest"),
+        &0u64,
+        &hash,
+    );
     client.archive_project(&id);
     client.compact_archive(&id);
 
@@ -3295,8 +3358,13 @@ fn test_compact_archive_then_get_archive_summary() {
 fn test_get_archive_summary_panics_for_uncompacted_project() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
-    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64, &test_metadata_hash(&env));
+    client.set_whitelist(&creator, &true, &0u64);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmTest"),
+        &0u64,
+        &test_metadata_hash(&env),
+    );
     // Not archived/compacted — should panic with ProjectNotFound
     client.get_archive_summary(&id);
 }
@@ -3305,11 +3373,21 @@ fn test_get_archive_summary_panics_for_uncompacted_project() {
 fn test_get_all_projects_with_archived_includes_archived() {
     let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let hash = test_metadata_hash(&env);
 
-    let id1 = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm1"), &0u64, &hash);
-    let id2 = client.create_project(&creator, &String::from_str(&env, "ipfs://Qm2"), &0u64, &hash);
+    let id1 = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm1"),
+        &0u64,
+        &hash,
+    );
+    let id2 = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://Qm2"),
+        &0u64,
+        &hash,
+    );
 
     // Archive the first project
     client.archive_project(&id1);
@@ -3317,7 +3395,7 @@ fn test_get_all_projects_with_archived_includes_archived() {
     let all = client.get_all_projects_with_archived();
     assert_eq!(all.len(), 2);
     // Both projects should be present, including the archived one
-    let ids: Vec<u32> = all.iter().map(|(id, _)| id).collect();
+    let ids: std::vec::Vec<u32> = all.iter().map(|(id, _)| id).collect();
     assert!(ids.contains(&id1));
     assert!(ids.contains(&id2));
 }
@@ -3331,12 +3409,17 @@ fn test_get_all_projects_with_archived_empty() {
 
 #[test]
 fn test_liquidate_collateral_approved_with_valid_quorum() {
-    let (env, admin, _whitelister, client) = setup();
+    let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let hash = test_metadata_hash(&env);
 
-    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64, &hash);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmTest"),
+        &100u64,
+        &hash,
+    );
 
     // Set up multisig with 2 signers, threshold 2
     let signer1 = Address::generate(&env);
@@ -3348,10 +3431,13 @@ fn test_liquidate_collateral_approved_with_valid_quorum() {
     let usdc_admin = Address::generate(&env);
     let usdc_sac = env.register_stellar_asset_contract_v2(usdc_admin).address();
     let token = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_sac);
-    token.mint(&client.address, &1000i128);
-    client.deposit_collateral(&id, &usdc_sac, &1000i128);
+    token.mint(&creator, &1000i128);
+    client.set_accepted_collateral(&usdc_sac, &true);
+    client.deposit_collateral(&id, &creator, &usdc_sac, &1000i128);
 
     let recipient = Address::generate(&env);
+    client.set_vault(&recipient);
+    env.ledger().with_mut(|li| li.timestamp = 100);
 
     // Liquidate with both signers as approvals (threshold met)
     let approvals = soroban_sdk::vec![&env, signer1.clone(), signer2.clone()];
@@ -3365,12 +3451,17 @@ fn test_liquidate_collateral_approved_with_valid_quorum() {
 #[test]
 #[should_panic]
 fn test_liquidate_collateral_approved_with_insufficient_quorum_panics() {
-    let (env, admin, _whitelister, client) = setup();
+    let (env, _admin, _whitelister, client) = setup();
     let creator = Address::generate(&env);
-    client.set_whitelist(&creator, &true);
+    client.set_whitelist(&creator, &true, &0u64);
     let hash = test_metadata_hash(&env);
 
-    let id = client.create_project(&creator, &String::from_str(&env, "ipfs://QmTest"), &0u64, &hash);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://QmTest"),
+        &0u64,
+        &hash,
+    );
 
     // Set up multisig with 2 signers, threshold 2
     let signer1 = Address::generate(&env);
@@ -3383,24 +3474,27 @@ fn test_liquidate_collateral_approved_with_insufficient_quorum_panics() {
     let usdc_sac = env.register_stellar_asset_contract_v2(usdc_admin).address();
     let token = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_sac);
     token.mint(&client.address, &1000i128);
-    client.deposit_collateral(&id, &usdc_sac, &1000i128);
+    client.deposit_collateral(&id, &creator, &usdc_sac, &1000i128);
 
     let recipient = Address::generate(&env);
 
     // Only 1 approval when threshold is 2 — should panic
     let approvals = soroban_sdk::vec![&env, signer1.clone()];
     client.liquidate_collateral_approved(&id, &usdc_sac, &recipient, &approvals);
+}
+
 // ── #732: Governance tests ────────────────────────────────────────────────────
 
 #[test]
 fn test_create_proposal_success() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     let proposal_id = client.create_proposal(
         &proposer,
         &String::from_str(&env, "Increase funding cap"),
-        &3600u64,
+        &86_400u64,
     );
 
     assert_eq!(proposal_id, 1);
@@ -3415,55 +3509,49 @@ fn test_create_proposal_success() {
 fn test_create_proposal_rejects_too_short_voting_period() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
-    assert!(
-        client
-            .try_create_proposal(
-                &proposer,
-                &String::from_str(&env, "test"),
-                &0u64,
-            )
-            .is_err()
-    );
+    assert!(client
+        .try_create_proposal(&proposer, &String::from_str(&env, "test"), &0u64,)
+        .is_err());
 }
 
 #[test]
 fn test_create_proposal_rejects_too_long_voting_period() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
-    assert!(
-        client
-            .try_create_proposal(
-                &proposer,
-                &String::from_str(&env, "test"),
-                &u64::MAX,
-            )
-            .is_err()
-    );
+    assert!(client
+        .try_create_proposal(&proposer, &String::from_str(&env, "test"), &u64::MAX,)
+        .is_err());
 }
 
 #[test]
 fn test_cast_vote_and_execute_proposal() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter_for = Address::generate(&env);
     let voter_against = Address::generate(&env);
 
-    let proposal_id = client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "proposal"),
-        &3600u64,
-    );
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter_for, &100i128);
+    balances.set_balance(&voter_against, &50i128);
 
-    client.cast_vote(&voter_for, &proposal_id, &true, &100i128);
-    client.cast_vote(&voter_against, &proposal_id, &false, &50i128);
+    let proposal_id =
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
+
+    client.cast_vote(&voter_for, &proposal_id, &true);
+    client.cast_vote(&voter_against, &proposal_id, &false);
 
     let proposal = client.get_proposal(&proposal_id);
     assert_eq!(proposal.votes_for, 100);
     assert_eq!(proposal.votes_against, 50);
 
-    env.ledger().with_mut(|l| l.timestamp += 3601);
+    env.ledger().with_mut(|l| l.timestamp += 86_401);
     let passed = client.execute_proposal(&proposal_id);
     assert!(passed);
 
@@ -3475,63 +3563,61 @@ fn test_cast_vote_and_execute_proposal() {
 fn test_cast_vote_rejects_duplicate_vote() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter = Address::generate(&env);
 
-    let proposal_id = client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "proposal"),
-        &3600u64,
-    );
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter, &100i128);
 
-    client.cast_vote(&voter, &proposal_id, &true, &100i128);
-    assert!(
-        client.try_cast_vote(&voter, &proposal_id, &false, &50i128).is_err()
-    );
+    let proposal_id =
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
+
+    client.cast_vote(&voter, &proposal_id, &true);
+    assert!(client.try_cast_vote(&voter, &proposal_id, &false).is_err());
 }
 
 #[test]
 fn test_cast_vote_rejects_zero_weight() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter = Address::generate(&env);
 
-    let proposal_id = client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "proposal"),
-        &3600u64,
-    );
+    let proposal_id =
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
 
-    assert!(client.try_cast_vote(&voter, &proposal_id, &true, &0i128).is_err());
+    assert!(client.try_cast_vote(&voter, &proposal_id, &true).is_err());
 }
 
 #[test]
 fn test_cast_vote_rejects_after_voting_period() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter = Address::generate(&env);
 
-    let proposal_id = client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "proposal"),
-        &3600u64,
-    );
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter, &100i128);
 
-    env.ledger().with_mut(|l| l.timestamp += 3601);
-    assert!(
-        client.try_cast_vote(&voter, &proposal_id, &true, &100i128).is_err()
-    );
+    let proposal_id =
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
+
+    env.ledger().with_mut(|l| l.timestamp += 86_401);
+    assert!(client.try_cast_vote(&voter, &proposal_id, &true).is_err());
 }
 
 #[test]
 fn test_execute_proposal_rejects_before_voting_ends() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
-    let proposal_id = client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "proposal"),
-        &3600u64,
-    );
+    let proposal_id =
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
 
     assert!(client.try_execute_proposal(&proposal_id).is_err());
 }
@@ -3540,14 +3626,12 @@ fn test_execute_proposal_rejects_before_voting_ends() {
 fn test_execute_proposal_rejects_double_execution() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
-    let proposal_id = client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "proposal"),
-        &3600u64,
-    );
+    let proposal_id =
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
 
-    env.ledger().with_mut(|l| l.timestamp += 3601);
+    env.ledger().with_mut(|l| l.timestamp += 86_401);
     client.execute_proposal(&proposal_id);
     assert!(client.try_execute_proposal(&proposal_id).is_err());
 }
@@ -3556,19 +3640,23 @@ fn test_execute_proposal_rejects_double_execution() {
 fn test_execute_proposal_fails_when_more_against_votes() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter_for = Address::generate(&env);
     let voter_against = Address::generate(&env);
 
-    let proposal_id = client.create_proposal(
-        &proposer,
-        &String::from_str(&env, "proposal"),
-        &3600u64,
-    );
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter_for, &50i128);
+    balances.set_balance(&voter_against, &100i128);
 
-    client.cast_vote(&voter_for, &proposal_id, &true, &50i128);
-    client.cast_vote(&voter_against, &proposal_id, &false, &100i128);
+    let proposal_id =
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
 
-    env.ledger().with_mut(|l| l.timestamp += 3601);
+    client.cast_vote(&voter_for, &proposal_id, &true);
+    client.cast_vote(&voter_against, &proposal_id, &false);
+
+    env.ledger().with_mut(|l| l.timestamp += 86_401);
 
     let passed = client.execute_proposal(&proposal_id);
     assert!(!passed);
@@ -3578,4 +3666,33 @@ fn test_execute_proposal_fails_when_more_against_votes() {
 fn test_get_proposal_not_found() {
     let (_env, _admin, _whitelister, client) = setup();
     assert!(client.try_get_proposal(&999).is_err());
+}
+
+#[test]
+fn score_updates_require_the_configured_oracle() {
+    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+    let (env, admin, _, client) = setup();
+    let creator = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    client.set_whitelist(&creator, &true, &0);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://oracle-test"),
+        &0,
+        &test_metadata_hash(&env),
+    );
+    client.set_oracle(&Some(oracle.clone()));
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "update_credit_quality_score",
+            args: (id, 80u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(client.try_update_credit_quality_score(&id, &80).is_err());
+    env.mock_all_auths();
+    client.update_credit_quality_score(&id, &80);
+    assert_eq!(env.auths()[0].0, oracle);
 }

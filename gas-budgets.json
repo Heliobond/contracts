@@ -4,8 +4,9 @@
     "fee": 1000
   },
   "investment_vault.deposit": {
+    "note": "Measured fee 7,582,325 includes 6,104,468 persistent-entry rent and 1,276,392 temporary-entry rent after lifetime storage TTL fixes. Fee cap gives 12% headroom; instruction cap is unchanged.",
     "instructions": 1500000,
-    "fee": 3000000
+    "fee": 8500000
   },
   "investment_vault.fund_project": {
     "cross_contract_calls": 1,

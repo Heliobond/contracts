@@ -43,7 +43,10 @@ use soroban_sdk::{
 };
 
 // Build metadata per SEP-55 (#751).
-contractmeta!(key = "source_repo", val = "https://github.com/Heliobond/contracts");
+contractmeta!(
+    key = "source_repo",
+    val = "https://github.com/Heliobond/contracts"
+);
 contractmeta!(key = "contract_name", val = "investment_vault");
 use stellar_access::ownable::{
     get_owner, set_owner, transfer_ownership as ownable_transfer_ownership, Ownable,
@@ -304,7 +307,7 @@ impl InvestmentVault {
         require_admin_approval(&env, approvals);
         let mut seen = Vec::new(&env);
         for funding in fundings.iter() {
-            if seen.contains(&funding.0) {
+            if seen.contains(funding.0) {
                 panic_with_error!(&env, VaultError::DuplicateProjectId);
             }
             seen.push_back(funding.0);
@@ -333,7 +336,7 @@ impl InvestmentVault {
         }
 
         // Fallback: full computation (first call or after cache invalidation).
-        let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
+        let registry_addr: Address = storage::read_registry(&env);
         let registry = registry_interface::Client::new(&env, &registry_addr);
         let total_projects = registry.total_projects();
         let now = env.ledger().timestamp();
@@ -389,7 +392,7 @@ impl InvestmentVault {
         let total_shares = Base::total_supply(&env);
         let virtual_shares = total_shares + VIRTUAL_SHARES_OFFSET;
         let virtual_assets = total_assets + VIRTUAL_SHARES_OFFSET;
-        if virtual_shares <= 0 || virtual_assets <= 0 {
+        if virtual_shares == virtual_assets || virtual_shares <= 0 || virtual_assets <= 0 {
             usdc_amount
         } else {
             usdc_amount * virtual_shares / virtual_assets
@@ -434,7 +437,9 @@ impl InvestmentVault {
     /// Panics with the same errors `deposit` would (non-positive, below
     /// minimum, above maximum, max-transaction cap, supply cap, paused).
     pub fn preview_deposit(env: Env, usdc_amount: i128) -> i128 {
-        require_not_paused(&env);
+        if Self::is_deposits_paused(env.clone()) {
+            panic_with_error!(&env, VaultError::Paused);
+        }
         require_current_state(&env);
         validate_deposit_amount(&env, usdc_amount);
         let (_, _, investable) = deposit_breakdown(&env, usdc_amount);
@@ -479,7 +484,7 @@ impl InvestmentVault {
     /// the minimum withdrawal.
     pub fn max_withdraw(env: Env, account: Address) -> i128 {
         require_current_state(&env);
-        if vault_paused(&env) || is_deposit_locked(&env, &account) {
+        if Self::is_withdrawals_paused(env.clone()) || is_deposit_locked(&env, &account) {
             return 0;
         }
         let shares = Base::balance(&env, &account);
@@ -487,7 +492,10 @@ impl InvestmentVault {
             return 0;
         }
         let mut max = assets_for_shares(&env, shares);
-        let limit = withdraw_tier_limit(liquid_usdc(&env), Self::get_utilization_bps(env.clone()));
+        let limit = withdraw_tier_limit(
+            claimable_liquidity(&env),
+            Self::get_utilization_bps(env.clone()),
+        );
         if max > limit {
             max = limit;
         }
@@ -507,7 +515,7 @@ impl InvestmentVault {
     /// `MaxSupplyExceeded`.
     pub fn max_deposit(env: Env, _account: Address) -> i128 {
         require_current_state(&env);
-        if vault_paused(&env) {
+        if Self::is_deposits_paused(env.clone()) {
             return 0;
         }
         let mut max = MAX_DEPOSIT;
@@ -543,8 +551,16 @@ impl InvestmentVault {
     /// 2. Management fee: optional `ManagementFeeBps` (0–500 bps) sent to the fee recipient.
     ///
     /// The remaining investable amount is converted to shares at the current NAV.
-    pub fn deposit(env: Env, from: Address, usdc_amount: i128, min_shares_out: i128, deadline: u64) -> i128 {
-        require_not_paused(&env);
+    pub fn deposit(
+        env: Env,
+        from: Address,
+        usdc_amount: i128,
+        min_shares_out: i128,
+        deadline: u64,
+    ) -> i128 {
+        if Self::is_deposits_paused(env.clone()) {
+            panic_with_error!(&env, VaultError::Paused);
+        }
         require_current_state(&env);
         from.require_auth();
         validate_deposit_amount(&env, usdc_amount);
@@ -582,7 +598,7 @@ impl InvestmentVault {
         // that was already earned by earlier holders.
         settle_yield_debt(&env, &from);
 
-        let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
+        let usdc_sac: Address = storage::read_usdc_sac(&env);
         let token = soroban_sdk::token::TokenClient::new(&env, &usdc_sac);
         token.transfer(&from, env.current_contract_address(), &usdc_amount);
 
@@ -608,20 +624,8 @@ impl InvestmentVault {
 
         // Track cumulative deposits for portfolio analytics; TTL is extended on
         // every deposit and portfolio read (#132, #388).
-        let prev_dep: i128 = env
-            .storage()
-            .persistent()
-            .get(&VaultKey::TotalDeposited(from.clone()))
-            .unwrap_or(0);
-        let key = VaultKey::TotalDeposited(from.clone());
-        env.storage()
-            .persistent()
-            .set(&key, &(prev_dep + usdc_amount));
-        env.storage().persistent().extend_ttl(
-            &key,
-            TTL_EXTEND_THRESHOLD_LEDGERS,
-            TTL_EXTEND_TO_LEDGERS,
-        ); // Add rent check/extend
+        let prev_dep = storage::read_total_deposited(&env, from.clone()).unwrap_or(0);
+        storage::write_total_deposited(&env, from.clone(), prev_dep + usdc_amount);
 
         // Update cached total assets: only the investable amount stays in the
         // vault — the fee was already transferred to the fee recipient and the
@@ -658,7 +662,13 @@ impl InvestmentVault {
         }
         let mut minted = Vec::new(&env);
         for deposit in deposits.iter() {
-            minted.push_back(Self::deposit(env.clone(), deposit.0, deposit.1));
+            minted.push_back(Self::deposit(
+                env.clone(),
+                deposit.0,
+                deposit.1,
+                0,
+                u64::MAX,
+            ));
         }
         minted
     }
@@ -673,7 +683,7 @@ impl InvestmentVault {
             .persistent()
             .get(&VaultKey::TotalInvestments)
             .unwrap_or(0);
-        let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
+        let usdc_sac: Address = storage::read_usdc_sac(&env);
         let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
             .balance(&env.current_contract_address());
         let total_actual = liquid + total_investments;
@@ -689,11 +699,7 @@ impl InvestmentVault {
     /// emergency admin is configured into a single call, so monitoring/alerting
     /// integrations don't need to poll each getter separately.
     pub fn health_check(env: Env) -> HealthStatus {
-        let is_paused: bool = env
-            .storage()
-            .instance()
-            .get(&VaultKey::Paused)
-            .unwrap_or(false);
+        let is_paused = Self::is_paused(env.clone());
         let has_emergency_admin: bool = env
             .storage()
             .instance()
@@ -714,7 +720,9 @@ impl InvestmentVault {
     /// the full redemption, shares are burned immediately and the claim is enqueued
     /// in FIFO order — call `claim()` once liquidity is restored.
     pub fn withdraw(env: Env, from: Address, shares_amount: i128, min_usdc_return: i128) -> i128 {
-        require_not_paused(&env);
+        if Self::is_withdrawals_paused(env.clone()) {
+            panic_with_error!(&env, VaultError::Paused);
+        }
         require_current_state(&env);
         check_deposit_lock(&env, &from);
         // Note: from.require_auth() is called inside Base::burn
@@ -728,9 +736,8 @@ impl InvestmentVault {
         let usdc_returned = Self::convert_to_assets(env.clone(), shares_amount);
         check_max_transaction_amount(&env, usdc_returned);
 
-        let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
-        let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
-            .balance(&env.current_contract_address());
+        let usdc_sac = storage::read_usdc_sac(&env);
+        let liquid = claimable_liquidity(&env);
 
         // Graduated withdrawal limit based on vault utilization (#45).
         // Protects remaining investors from bank-run scenarios when most USDC is deployed.
@@ -867,7 +874,7 @@ impl InvestmentVault {
             return 0; // queue is empty
         }
 
-        let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
+        let usdc_sac: Address = storage::read_usdc_sac(&env);
         // Use claimable_liquidity to reserve insurance fund and outstanding
         // yield from the settlement pool (#762).
         let mut liquid = claimable_liquidity(&env);
@@ -983,7 +990,7 @@ impl InvestmentVault {
             .persistent()
             .set(&VaultKey::YieldDebt(from.clone()), &accum);
 
-        let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
+        let usdc_sac: Address = storage::read_usdc_sac(&env);
         let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
             .balance(&env.current_contract_address());
         if claimable > liquid {
@@ -1047,19 +1054,7 @@ impl InvestmentVault {
             shares * BPS_SCALE / total_shares
         };
 
-        let total_deposited_key = VaultKey::TotalDeposited(account.clone());
-        let total_deposited: i128 = env
-            .storage()
-            .persistent()
-            .get(&total_deposited_key)
-            .unwrap_or(0);
-        if env.storage().persistent().has(&total_deposited_key) {
-            env.storage().persistent().extend_ttl(
-                &total_deposited_key,
-                TTL_EXTEND_THRESHOLD_LEDGERS,
-                TTL_EXTEND_TO_LEDGERS,
-            );
-        }
+        let total_deposited = storage::read_total_deposited(&env, account.clone()).unwrap_or(0);
 
         PortfolioInfo {
             shares,
@@ -1138,7 +1133,7 @@ impl InvestmentVault {
     /// Multi-asset vaults should extend this by adding accepted_assets to config.
     pub fn accepted_asset(env: Env) -> Address {
         require_current_state(&env);
-        env.storage().instance().get(&VaultKey::UsdcSac).unwrap()
+        storage::read_usdc_sac(&env)
     }
 
     // ── Management fee (#7) ───────────────────────────────────────────────────
@@ -1288,7 +1283,7 @@ impl InvestmentVault {
         // Validate that the new address is a deployed ProjectRegistry by calling it.
         // Panics at call time if the address is not a valid registry contract.
         registry_interface::Client::new(&env, &new_registry).total_projects();
-        let old: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
+        let old: Address = storage::read_registry(&env);
         env.storage()
             .instance()
             .set(&VaultKey::Registry, &new_registry);
@@ -1298,7 +1293,7 @@ impl InvestmentVault {
     /// Return the current ProjectRegistry contract address.
     pub fn get_registry(env: Env) -> Address {
         require_current_state(&env);
-        env.storage().instance().get(&VaultKey::Registry).unwrap()
+        storage::read_registry(&env)
     }
 
     /// Return HBS token metadata for DEX listing and secondary market integration.
@@ -1356,12 +1351,12 @@ impl InvestmentVault {
         }
 
         let applied = amount.min(outstanding);
-        let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
+        let usdc_sac: Address = storage::read_usdc_sac(&env);
         let token_client = soroban_sdk::token::TokenClient::new(&env, &usdc_sac);
 
         // Transfer only the amount that will be applied, not the full amount.
         // This prevents over-payments from staying in the vault as unaccounted liquid USDC (#765).
-        token_client.transfer(&from, &env.current_contract_address(), &applied);
+        token_client.transfer(&from, env.current_contract_address(), &applied);
 
         // Refund any excess if the payer sent more than outstanding
         if amount > applied {
@@ -1395,7 +1390,7 @@ impl InvestmentVault {
         require_current_state(&env);
         require_not_settled(&env, project_id);
 
-        let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
+        let registry_addr: Address = storage::read_registry(&env);
         if !registry_interface::Client::new(&env, &registry_addr).is_mature(&project_id) {
             panic_with_error!(&env, VaultError::ProjectNotMature);
         }
@@ -1422,7 +1417,7 @@ impl InvestmentVault {
         let outstanding = read_i128(&env, &VaultKey::ProjectInvestment(project_id));
         let repaid = read_i128(&env, &VaultKey::ProjectRepaid(project_id));
         let impairment = read_i128(&env, &VaultKey::ProjectImpairment(project_id));
-        let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
+        let registry_addr: Address = storage::read_registry(&env);
         let mature = registry_interface::Client::new(&env, &registry_addr).is_mature(&project_id);
         ProjectPosition {
             funded: outstanding + repaid + impairment,
@@ -1461,7 +1456,7 @@ impl InvestmentVault {
     /// correlate by position.
     pub fn get_all_project_investments(env: Env) -> Vec<(u32, i128)> {
         require_current_state(&env);
-        let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
+        let registry_addr: Address = storage::read_registry(&env);
         let total = registry_interface::Client::new(&env, &registry_addr).total_projects();
         let mut results = Vec::new(&env);
         for id in 1..=total {
@@ -1525,7 +1520,8 @@ impl InvestmentVault {
             panic_with_error!(&env, VaultError::FeeExceedsMaximum);
         }
         if threshold < 0 {
-            panic_with_error!(&env, VaultError::InvalidInput);
+            panic_with_error!(&env, VaultError::NegativeMaxTransactionAmount);
+        }
         // The discounted rate must not exceed the *current* management fee,
         // not just the absolute cap — otherwise a "discount" tier can charge
         // more than the base fee (#717).
@@ -1678,7 +1674,6 @@ impl InvestmentVault {
     /// Burn HBS shares to initiate an outbound cross-chain bridge transfer (#184).
     pub fn bridge_burn(env: Env, from: Address, amount: i128) {
         require_current_state(&env);
-        from.require_auth();
         if amount <= 0 {
             panic_with_error!(&env, VaultError::AmountNotPositive);
         }
@@ -1724,10 +1719,10 @@ impl InvestmentVault {
         amount: i128,
         target_chain: u32,
         recipient: BytesN<32>,
+        recipient_kind: u32,
         nonce: u64,
     ) -> u64 {
         require_current_state(&env);
-        from.require_auth();
         if amount <= 0 {
             panic_with_error!(&env, VaultError::AmountNotPositive);
         }
@@ -1742,6 +1737,7 @@ impl InvestmentVault {
         let payload = wormhole::BridgeTransferPayload {
             token_address,
             recipient: recipient.clone(),
+            recipient_kind,
             amount,
             source_chain: wormhole::chain_id::STELLAR,
             target_chain,
@@ -1815,7 +1811,7 @@ impl InvestmentVault {
         }
         env.storage().persistent().set(&replay_key, &true);
 
-        let to = wormhole::bytes32_to_address(&env, &transfer.recipient);
+        let to = wormhole::bytes32_to_address(&env, &transfer.recipient, transfer.recipient_kind);
         if Base::total_supply(&env) + transfer.amount > MAX_HBS_SUPPLY {
             panic_with_error!(&env, VaultError::MaxSupplyExceeded);
         }
@@ -1899,43 +1895,39 @@ impl InvestmentVault {
         amount: i128,
         data: Bytes,
     ) {
+        require_not_paused(&env);
         require_current_state(&env);
         if amount <= 0 {
             panic_with_error!(&env, VaultError::AmountNotPositive);
         }
         initiator.require_auth();
 
-        // Check supply cap BEFORE computing fee to prevent overflow (#706)
-        let total_supply = Base::total_supply(&env);
-        if amount > MAX_HBS_SUPPLY - total_supply {
-            panic_with_error!(&env, VaultError::MaxSupplyExceeded);
-        }
-
         let fee_bps = Self::flash_loan_fee(env.clone()) as i128;
-        // Use checked_mul to prevent overflow (#706)
-        let fee = amount.checked_mul(fee_bps)
+        let fee = amount
+            .checked_mul(fee_bps)
             .and_then(|v| v.checked_div(BPS_SCALE))
-            .unwrap_or_else(|| panic_with_error!(&env, VaultError::MaxSupplyExceeded));
-
-        let vault = env.current_contract_address();
-
-        if total_supply + amount + fee > MAX_HBS_SUPPLY {
-            panic_with_error!(&env, VaultError::MaxSupplyExceeded);
+            .unwrap_or_else(|| panic_with_error!(&env, VaultError::FlashLoanFeeOutOfRange));
+        if amount > claimable_liquidity(&env) {
+            panic_with_error!(&env, VaultError::InsufficientLiquid);
         }
-
-        // Mint only the principal amount - fee stays in vault (#705)
-        Base::mint(&env, &borrower, amount);
-
-        let client = FlashLoanReceiverClient::new(&env, &borrower);
-        let ok = client.flash_loan_callback(&initiator, &vault, &amount, &fee, &data);
-        if !ok {
+        let vault = env.current_contract_address();
+        let token_address = storage::read_usdc_sac(&env);
+        let token = soroban_sdk::token::TokenClient::new(&env, &token_address);
+        let balance_before = token.balance(&vault);
+        let required_balance = balance_before
+            .checked_add(fee)
+            .unwrap_or_else(|| panic_with_error!(&env, VaultError::FlashLoanFeeOutOfRange));
+        // Block vault reentry while its NAV is temporarily reduced by the loan.
+        env.storage()
+            .instance()
+            .set(&VaultKey::FlashLoanActive, &true);
+        token.transfer(&vault, &borrower, &amount);
+        let ok = FlashLoanReceiverClient::new(&env, &borrower)
+            .flash_loan_callback(&initiator, &vault, &amount, &fee, &data);
+        if !ok || token.balance(&vault) < required_balance {
             panic_with_error!(&env, VaultError::FlashLoanCallbackFailed);
         }
-
-        // Borrower repays principal + fee; fee stays in vault as revenue (#705)
-        Base::transfer(&env, &borrower, &MuxedAddress::from(&vault), amount + fee);
-        // Burn only the principal, keep fee in vault
-        Base::burn(&env, &vault, amount);
+        env.storage().instance().remove(&VaultKey::FlashLoanActive);
 
         events::flash_loan(&env, &initiator, &borrower, amount, fee);
     }
@@ -2020,7 +2012,7 @@ impl InvestmentVault {
         if amount <= 0 {
             panic_with_error!(&env, VaultError::AmountNotPositive);
         }
-        let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
+        let registry_addr: Address = storage::read_registry(&env);
         let registry = registry_interface::Client::new(&env, &registry_addr);
         let project = registry.get_project(&project_id);
 
@@ -2118,7 +2110,8 @@ impl InvestmentVault {
 
     const MAX_COMPLIANCE_EVENTS: u64 = 1000;
     /// Maximum number of events `get_compliance_events` returns per call (#511, #707).
-    const MAX_COMPLIANCE_EVENTS_PER_QUERY: u64 = 100;
+    // Leave one footprint entry for the contract instance within the 100-entry limit.
+    const MAX_COMPLIANCE_EVENTS_PER_QUERY: u64 = 99;
     /// Maximum length in bytes for `event_type` and `data` fields in
     /// `record_compliance_event` (#718).
     const MAX_COMPLIANCE_FIELD_LEN: u32 = 256;
@@ -2341,7 +2334,7 @@ fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
     check_max_transaction_amount(&env, amount);
     require_not_settled(&env, project_id);
 
-    let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
+    let registry_addr: Address = storage::read_registry(&env);
     let registry = registry_interface::Client::new(&env, &registry_addr);
 
     // The registry's own getters (including get_project) remain callable
@@ -2400,7 +2393,7 @@ fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
         panic_with_error!(&env, VaultError::InvestmentCapExceeded);
     }
 
-    let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
+    let usdc_sac: Address = storage::read_usdc_sac(&env);
     let liquid = soroban_sdk::token::TokenClient::new(&env, &usdc_sac)
         .balance(&env.current_contract_address());
 
@@ -2449,13 +2442,16 @@ fn fund_project_internal(env: Env, project_id: u32, amount: i128) {
         .set(&VaultKey::TotalInvestments, &(total_inv + amount));
 
     // Invalidate expected-returns cache so next get_expected_returns recomputes (#746).
-    env.storage().persistent().remove(&VaultKey::CachedExpectedReturns);
+    env.storage()
+        .persistent()
+        .remove(&VaultKey::CachedExpectedReturns);
 
     events::project_funded(&env, project_id, amount, &project.owner);
 }
 
 fn receive_yield_internal(env: Env, from: Address, amount: i128) {
     require_current_state(&env);
+    from.require_auth();
     if amount <= 0 {
         panic_with_error!(&env, VaultError::YieldAmountNotPositive);
     }
@@ -2464,7 +2460,7 @@ fn receive_yield_internal(env: Env, from: Address, amount: i128) {
         panic_with_error!(&env, VaultError::NoSharesOutstanding);
     }
 
-    let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
+    let usdc_sac: Address = storage::read_usdc_sac(&env);
     soroban_sdk::token::TokenClient::new(&env, &usdc_sac).transfer(
         &from,
         env.current_contract_address(),
@@ -2569,7 +2565,7 @@ fn claim_insurance_internal(env: Env, project_id: u32, recipient: Address, amoun
         .persistent()
         .set(&VaultKey::InsuranceFund, &(fund - amount));
 
-    let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
+    let usdc_sac: Address = storage::read_usdc_sac(&env);
     soroban_sdk::token::TokenClient::new(&env, &usdc_sac).transfer(
         &env.current_contract_address(),
         &recipient,
@@ -2646,6 +2642,14 @@ fn read_state_version(env: &Env) -> u32 {
 }
 
 fn require_current_state(env: &Env) {
+    if env
+        .storage()
+        .instance()
+        .get(&VaultKey::FlashLoanActive)
+        .unwrap_or(false)
+    {
+        panic_with_error!(env, VaultError::FlashLoanCallbackFailed);
+    }
     if read_state_version(env) != STATE_VERSION {
         panic_with_error!(env, VaultError::UnsupportedStateVersion);
     }
@@ -2675,7 +2679,6 @@ fn read_total_assets(env: &Env) -> i128 {
         .persistent()
         .get(&VaultKey::InsuranceFund)
         .unwrap_or(0);
-    liquid_usdc(env) + investments + expected - queued_liabilities(env) - insurance_fund
     //
     // #738 — unclaimed yield is a liability to the holders who will claim it,
     // not an asset of the current share price. Without this subtraction the
@@ -2686,7 +2689,7 @@ fn read_total_assets(env: &Env) -> i128 {
         .persistent()
         .get(&VaultKey::UnclaimedYield)
         .unwrap_or(0);
-    liquid_usdc(env) + investments + expected - queued_liabilities(env) - unclaimed
+    liquid_usdc(env) + investments + expected - queued_liabilities(env) - insurance_fund - unclaimed
 }
 
 fn queued_liabilities(env: &Env) -> i128 {
@@ -2703,7 +2706,7 @@ fn set_queued_liabilities(env: &Env, value: i128) {
 }
 
 fn liquid_usdc(env: &Env) -> i128 {
-    let usdc_sac: Address = env.storage().instance().get(&VaultKey::UsdcSac).unwrap();
+    let usdc_sac: Address = storage::read_usdc_sac(env);
     soroban_sdk::token::TokenClient::new(env, &usdc_sac).balance(&env.current_contract_address())
 }
 
@@ -2719,8 +2722,8 @@ fn claimable_liquidity(env: &Env) -> i128 {
         .unwrap_or(0);
     let outstanding_yield: i128 = env
         .storage()
-        .instance()
-        .get(&VaultKey::YieldPerShareAccum)
+        .persistent()
+        .get(&VaultKey::UnclaimedYield)
         .unwrap_or(0);
     (balance - insurance_fund - outstanding_yield).max(0)
 }
@@ -2738,7 +2741,7 @@ fn shares_for_assets(env: &Env, usdc_amount: i128) -> i128 {
     // Virtual offset: shares = usdc * (total_shares + VIRTUAL) / (total_assets + VIRTUAL)
     let virtual_shares = total_shares + VIRTUAL_SHARES_OFFSET;
     let virtual_assets = total_assets + VIRTUAL_SHARES_OFFSET;
-    if virtual_shares <= 0 || virtual_assets <= 0 {
+    if virtual_shares == virtual_assets || virtual_shares <= 0 || virtual_assets <= 0 {
         usdc_amount
     } else {
         usdc_amount * virtual_shares / virtual_assets
@@ -2797,13 +2800,9 @@ fn deposit_breakdown(env: &Env, usdc_amount: i128) -> (i128, i128, i128) {
     let volume_threshold: Option<i128> =
         env.storage().instance().get(&VaultKey::VolumeTierThreshold);
     let volume_tier_bps: Option<u32> = env.storage().instance().get(&VaultKey::VolumeTierFeeBps);
-    let effective_fee_bps = logic::logic::calculate_dynamic_fee_bps(
-        usdc_amount,
-        fee_bps,
-        volume_threshold,
-        volume_tier_bps,
-    );
-    let fee_amount = usdc_amount * (effective_fee_bps as i128) / BPS_SCALE;
+    let effective_fee_bps =
+        logic::calculate_dynamic_fee_bps(usdc_amount, fee_bps, volume_threshold, volume_tier_bps);
+    let fee_amount = logic::calculate_performance_fee(usdc_amount, effective_fee_bps);
     (premium, fee_amount, usdc_amount - premium - fee_amount)
 }
 
@@ -2847,6 +2846,8 @@ fn vault_paused(env: &Env) -> bool {
         .instance()
         .get(&VaultKey::Paused)
         .unwrap_or(false)
+        || InvestmentVault::is_deposits_paused(env.clone())
+        || InvestmentVault::is_withdrawals_paused(env.clone())
 }
 
 /// Non-panicking form of `check_deposit_lock` (#33).
@@ -2870,12 +2871,7 @@ fn check_max_transaction_amount(env: &Env, amount: i128) {
 }
 
 fn require_not_paused(env: &Env) {
-    let paused: bool = env
-        .storage()
-        .instance()
-        .get(&VaultKey::Paused)
-        .unwrap_or(false);
-    if paused {
+    if vault_paused(env) {
         panic_with_error!(env, VaultError::Paused);
     }
 }
@@ -2891,10 +2887,10 @@ fn require_emergency_admin(env: &Env, caller: &Address) {
 /// Shared transfer restriction checks used by both `transfer` and
 /// `transfer_from` (#739). Blocks transfers to the vault's own address and
 /// transfers during an active funding round.
-fn check_transfer_restrictions(e: &Env, to: &MuxedAddress) {
+fn check_transfer_restrictions(e: &Env, to: &Address) {
     // Soroban has no zero address; the vault's own address is the closest
     // equivalent — shares sent here can never be recovered (#118).
-    if to.address() == e.current_contract_address() {
+    if *to == e.current_contract_address() {
         panic_with_error!(e, VaultError::TransferToVaultBlocked);
     }
     // Block share transfers while a funding round is active to prevent
@@ -2964,9 +2960,17 @@ impl InvestmentVault {
     /// Paused state expires after `PAUSE_MAX_DURATION_SECONDS` unless renewed.
     #[only_owner]
     pub fn pause_deposits(env: Env) {
+        env.storage()
+            .instance()
+            .set(&VaultKey::PausedBy, &String::from_str(&env, "owner"));
         let now = env.ledger().timestamp();
-        env.storage().instance().set(&VaultKey::DepositsPaused, &true);
-        env.storage().instance().set(&VaultKey::DepositsPausedUntil, &(now + PAUSE_MAX_DURATION_SECONDS));
+        env.storage()
+            .instance()
+            .set(&VaultKey::DepositsPaused, &true);
+        env.storage().instance().set(
+            &VaultKey::DepositsPausedUntil,
+            &(now + PAUSE_MAX_DURATION_SECONDS),
+        );
         events::paused(&env);
     }
 
@@ -2974,9 +2978,17 @@ impl InvestmentVault {
     /// Paused state expires after `PAUSE_MAX_DURATION_SECONDS` unless renewed.
     #[only_owner]
     pub fn pause_withdrawals(env: Env) {
+        env.storage()
+            .instance()
+            .set(&VaultKey::PausedBy, &String::from_str(&env, "owner"));
         let now = env.ledger().timestamp();
-        env.storage().instance().set(&VaultKey::WithdrawalsPaused, &true);
-        env.storage().instance().set(&VaultKey::WithdrawalsPausedUntil, &(now + PAUSE_MAX_DURATION_SECONDS));
+        env.storage()
+            .instance()
+            .set(&VaultKey::WithdrawalsPaused, &true);
+        env.storage().instance().set(
+            &VaultKey::WithdrawalsPausedUntil,
+            &(now + PAUSE_MAX_DURATION_SECONDS),
+        );
         events::paused(&env);
     }
 
@@ -2984,42 +2996,81 @@ impl InvestmentVault {
     /// Both paused states expire after `PAUSE_MAX_DURATION_SECONDS` unless renewed.
     #[only_owner]
     pub fn pause(env: Env) {
+        env.storage()
+            .instance()
+            .set(&VaultKey::PausedBy, &String::from_str(&env, "owner"));
         let now = env.ledger().timestamp();
-        env.storage().instance().set(&VaultKey::DepositsPaused, &true);
-        env.storage().instance().set(&VaultKey::DepositsPausedUntil, &(now + PAUSE_MAX_DURATION_SECONDS));
-        env.storage().instance().set(&VaultKey::WithdrawalsPaused, &true);
-        env.storage().instance().set(&VaultKey::WithdrawalsPausedUntil, &(now + PAUSE_MAX_DURATION_SECONDS));
+        env.storage()
+            .instance()
+            .set(&VaultKey::DepositsPaused, &true);
+        env.storage().instance().set(
+            &VaultKey::DepositsPausedUntil,
+            &(now + PAUSE_MAX_DURATION_SECONDS),
+        );
+        env.storage()
+            .instance()
+            .set(&VaultKey::WithdrawalsPaused, &true);
+        env.storage().instance().set(
+            &VaultKey::WithdrawalsPausedUntil,
+            &(now + PAUSE_MAX_DURATION_SECONDS),
+        );
         events::paused(&env);
     }
 
     /// Unpause deposits (#750). Owner or emergency admin.
     #[only_owner]
     pub fn unpause_deposits(env: Env) {
-        env.storage().instance().set(&VaultKey::DepositsPaused, &false);
-        env.storage().instance().remove(&VaultKey::DepositsPausedUntil);
+        env.storage()
+            .instance()
+            .set(&VaultKey::DepositsPaused, &false);
+        env.storage()
+            .instance()
+            .remove(&VaultKey::DepositsPausedUntil);
         events::unpaused(&env);
     }
 
     /// Unpause withdrawals (#750). Owner or emergency admin.
     #[only_owner]
     pub fn unpause_withdrawals(env: Env) {
-        env.storage().instance().set(&VaultKey::WithdrawalsPaused, &false);
-        env.storage().instance().remove(&VaultKey::WithdrawalsPausedUntil);
+        env.storage()
+            .instance()
+            .set(&VaultKey::WithdrawalsPaused, &false);
+        env.storage()
+            .instance()
+            .remove(&VaultKey::WithdrawalsPausedUntil);
         events::unpaused(&env);
     }
 
     /// Unpause both deposits and withdrawals (#750). Owner or emergency admin.
     #[only_owner]
     pub fn unpause(env: Env) {
-        env.storage().instance().set(&VaultKey::DepositsPaused, &false);
-        env.storage().instance().remove(&VaultKey::DepositsPausedUntil);
-        env.storage().instance().set(&VaultKey::WithdrawalsPaused, &false);
-        env.storage().instance().remove(&VaultKey::WithdrawalsPausedUntil);
+        env.storage().instance().remove(&VaultKey::Paused);
+        env.storage().instance().remove(&VaultKey::PausedBy);
+        env.storage()
+            .instance()
+            .set(&VaultKey::DepositsPaused, &false);
+        env.storage()
+            .instance()
+            .remove(&VaultKey::DepositsPausedUntil);
+        env.storage()
+            .instance()
+            .set(&VaultKey::WithdrawalsPaused, &false);
+        env.storage()
+            .instance()
+            .remove(&VaultKey::WithdrawalsPausedUntil);
         events::unpaused(&env);
     }
 
     /// Return whether deposits are currently paused (#750).
     pub fn is_deposits_paused(env: Env) -> bool {
+        if env
+            .storage()
+            .instance()
+            .get(&VaultKey::Paused)
+            .unwrap_or(false)
+        {
+            return true;
+        }
         let paused: bool = env
             .storage()
             .instance()
@@ -3029,15 +3080,17 @@ impl InvestmentVault {
             return false;
         }
         // Check expiry (#750): pause expires unless renewed.
-        let paused_until: Option<u64> = env
-            .storage()
-            .instance()
-            .get(&VaultKey::DepositsPausedUntil);
+        let paused_until: Option<u64> =
+            env.storage().instance().get(&VaultKey::DepositsPausedUntil);
         if let Some(until) = paused_until {
             if env.ledger().timestamp() >= until {
                 // Auto-expire
-                env.storage().instance().set(&VaultKey::DepositsPaused, &false);
-                env.storage().instance().remove(&VaultKey::DepositsPausedUntil);
+                env.storage()
+                    .instance()
+                    .set(&VaultKey::DepositsPaused, &false);
+                env.storage()
+                    .instance()
+                    .remove(&VaultKey::DepositsPausedUntil);
                 return false;
             }
         }
@@ -3046,6 +3099,14 @@ impl InvestmentVault {
 
     /// Return whether withdrawals are currently paused (#750).
     pub fn is_withdrawals_paused(env: Env) -> bool {
+        if env
+            .storage()
+            .instance()
+            .get(&VaultKey::Paused)
+            .unwrap_or(false)
+        {
+            return true;
+        }
         let paused: bool = env
             .storage()
             .instance()
@@ -3062,8 +3123,12 @@ impl InvestmentVault {
         if let Some(until) = paused_until {
             if env.ledger().timestamp() >= until {
                 // Auto-expire
-                env.storage().instance().set(&VaultKey::WithdrawalsPaused, &false);
-                env.storage().instance().remove(&VaultKey::WithdrawalsPausedUntil);
+                env.storage()
+                    .instance()
+                    .set(&VaultKey::WithdrawalsPaused, &false);
+                env.storage()
+                    .instance()
+                    .remove(&VaultKey::WithdrawalsPausedUntil);
                 return false;
             }
         }
@@ -3073,7 +3138,12 @@ impl InvestmentVault {
     /// Return whether the vault is currently paused (#72, #750).
     /// True if either deposits or withdrawals are paused.
     pub fn is_paused(env: Env) -> bool {
-        Self::is_deposits_paused(env.clone()) || Self::is_withdrawals_paused(env)
+        env.storage()
+            .instance()
+            .get(&VaultKey::Paused)
+            .unwrap_or(false)
+            || Self::is_deposits_paused(env.clone())
+            || Self::is_withdrawals_paused(env)
     }
 
     /// Set (or clear, via `None`) the emergency-admin address. Owner-only (#43).
@@ -3103,7 +3173,9 @@ impl InvestmentVault {
         caller.require_auth();
         require_emergency_admin(&env, &caller);
         env.storage().instance().set(&VaultKey::Paused, &true);
-        env.storage().instance().set(&VaultKey::PausedBy, &"emergency");
+        env.storage()
+            .instance()
+            .set(&VaultKey::PausedBy, &String::from_str(&env, "emergency"));
         events::paused(&env);
     }
 
@@ -3116,7 +3188,7 @@ impl InvestmentVault {
         // If the owner paused it, only the owner can unpause.
         let paused_by: Option<String> = env.storage().instance().get(&VaultKey::PausedBy);
         if paused_by != Some(String::from_str(&env, "emergency")) {
-            panic_with_error!(&env, VaultError::Unauthorized);
+            panic_with_error!(&env, VaultError::NotEmergencyAdmin);
         }
         env.storage().instance().set(&VaultKey::Paused, &false);
         env.storage().instance().remove(&VaultKey::PausedBy);
@@ -3134,7 +3206,7 @@ impl InvestmentVault {
     #[only_owner]
     pub fn compact_storage(env: Env) -> u32 {
         require_current_state(&env);
-        let registry_addr: Address = env.storage().instance().get(&VaultKey::Registry).unwrap();
+        let registry_addr: Address = storage::read_registry(&env);
         let registry = registry_interface::Client::new(&env, &registry_addr);
         let total = registry.total_projects();
 
@@ -3164,22 +3236,7 @@ impl FungibleToken for InvestmentVault {
 
     fn transfer(e: &Env, from: Address, to: MuxedAddress, amount: i128) {
         require_current_state(e);
-        check_transfer_restrictions(e, &to);
-        // Soroban has no zero address; the vault's own address is the closest
-        // equivalent — shares sent here can never be recovered (#118).
-        if to.address() == e.current_contract_address() {
-            panic_with_error!(e, VaultError::TransferToVaultBlocked);
-        }
-        // Block share transfers while a funding round is active to prevent
-        // vault-accounting manipulation during project funding (#38).
-        let round_active: bool = e
-            .storage()
-            .instance()
-            .get(&VaultKey::FundingRoundActive)
-            .unwrap_or(false);
-        if round_active {
-            panic_with_error!(e, VaultError::FundingRoundActive);
-        }
+        check_transfer_restrictions(e, &to.address());
         // #737 — checkpoint both sides' YieldDebt before the balance change
         // so the same yield cannot be claimed twice by moving shares to a
         // fresh address.
@@ -3192,9 +3249,10 @@ impl FungibleToken for InvestmentVault {
     }
 
     // #739 — transfer_from must apply the same restrictions as transfer.
-    fn transfer_from(e: &Env, spender: Address, from: Address, to: MuxedAddress, amount: i128) {
+    fn transfer_from(e: &Env, spender: Address, from: Address, to: Address, amount: i128) {
         require_current_state(e);
         check_transfer_restrictions(e, &to);
+        settle_yield_debt_transfer(e, &from, &to);
         Base::transfer_from(e, &spender, &from, &to, amount);
         // #740 — No lock_deposit on recipient (see transfer).
     }

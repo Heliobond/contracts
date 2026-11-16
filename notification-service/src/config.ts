@@ -60,7 +60,12 @@ export function loadConfig(): ServiceConfig {
           port: requirePositiveInt("SMTP_PORT", process.env.SMTP_PORT, 587),
           secure: process.env.SMTP_SECURE === "true",
           ...(process.env.SMTP_USER && process.env.SMTP_PASS
-            ? { auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } }
+            ? {
+                auth: {
+                  user: process.env.SMTP_USER,
+                  pass: process.env.SMTP_PASS,
+                },
+              }
             : {}),
         }
       : undefined,

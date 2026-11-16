@@ -70,13 +70,7 @@ export class Notifier {
 
         // Cross-restart dedup: check the persistent DB in case the in-memory
         // Set was cleared by a process restart (#335).
-        if (
-          this.store.hasBeenNotified(
-            addr,
-            event.project_id,
-            event.ledger,
-          )
-        ) {
+        if (this.store.hasBeenNotified(addr, event.project_id, event.ledger)) {
           this.rememberRecipient(recipientKey);
           continue;
         }
@@ -86,12 +80,22 @@ export class Notifier {
 
         if (hasEmail && this.transporter && pref.email) {
           await this.sendEmail(pref.email, subject, text);
-          this.store.recordNotification(addr, event.project_id, "email", event.ledger);
+          this.store.recordNotification(
+            addr,
+            event.project_id,
+            "email",
+            event.ledger,
+          );
           this.metrics?.recordNotificationSent();
         }
         if (hasWebhook && pref.webhook_url) {
           await this.sendWebhook(pref.webhook_url, event, addr);
-          this.store.recordNotification(addr, event.project_id, "webhook", event.ledger);
+          this.store.recordNotification(
+            addr,
+            event.project_id,
+            "webhook",
+            event.ledger,
+          );
           this.metrics?.recordNotificationSent();
         }
         this.rememberRecipient(recipientKey);

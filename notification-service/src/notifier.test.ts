@@ -151,8 +151,8 @@ describe("Notifier retry behavior on a failed delivery", () => {
   });
 
   it("does not record a notification or dedup key when webhook returns a server error", async () => {
-    fetchMock.mockImplementationOnce(async () =>
-      new Response("Internal Server Error", { status: 500 }),
+    fetchMock.mockImplementationOnce(
+      async () => new Response("Internal Server Error", { status: 500 }),
     );
 
     const store = makeStore();
@@ -194,13 +194,13 @@ describe("Notifier retry behavior on a failed delivery", () => {
     } as unknown as Store;
 
     // First attempt: webhook fails
-    fetchMock.mockImplementationOnce(async () =>
-      new Response("bad gateway", { status: 502 }),
+    fetchMock.mockImplementationOnce(
+      async () => new Response("bad gateway", { status: 502 }),
     );
 
     // Redelivery: webhook succeeds
-    fetchMock.mockImplementationOnce(async () =>
-      new Response(null, { status: 200 }),
+    fetchMock.mockImplementationOnce(
+      async () => new Response(null, { status: 200 }),
     );
 
     // Use a config without email transport — webhook-only path
@@ -358,7 +358,9 @@ describe("Notifier min_delta threshold filtering", () => {
 
     const notifier = new Notifier(config, store);
 
-    await notifier.notifyInvestors(rateOnlyEvent, [preference.investor_address]);
+    await notifier.notifyInvestors(rateOnlyEvent, [
+      preference.investor_address,
+    ]);
 
     // Should notify because rate delta (1500) exceeds min_delta (100)
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -386,7 +388,9 @@ describe("Notifier min_delta threshold filtering", () => {
 
     const notifier = new Notifier(config, store);
 
-    await notifier.notifyInvestors(rateOnlyEvent, [preference.investor_address]);
+    await notifier.notifyInvestors(rateOnlyEvent, [
+      preference.investor_address,
+    ]);
 
     // Should NOT notify because rate delta (10) < min_delta (20)
     expect(fetchMock).not.toHaveBeenCalled();
@@ -409,11 +413,16 @@ describe("Notifier bounded-eviction (#396)", () => {
 
     // Send 5050 unique events — 50 more than the cap — to trigger eviction
     for (let i = 0; i < 5050; i++) {
-      const event = makeEvent({ ledger: 100 + i, timestamp: 1_700_000_000 + i });
+      const event = makeEvent({
+        ledger: 100 + i,
+        timestamp: 1_700_000_000 + i,
+      });
       await notifier.notifyInvestors(event, [preference.investor_address]);
     }
 
-    const recipients = (notifier as any).notifiedRecipients as Set<string>;
+    const recipients = (
+      notifier as unknown as { notifiedRecipients: Set<string> }
+    ).notifiedRecipients;
     expect(recipients.size).toBeLessThanOrEqual(5000);
   });
 
@@ -422,11 +431,16 @@ describe("Notifier bounded-eviction (#396)", () => {
 
     // Fill to exactly 5000
     for (let i = 0; i < 5000; i++) {
-      const event = makeEvent({ ledger: 100 + i, timestamp: 1_700_000_000 + i });
+      const event = makeEvent({
+        ledger: 100 + i,
+        timestamp: 1_700_000_000 + i,
+      });
       await notifier.notifyInvestors(event, [preference.investor_address]);
     }
 
-    const recipients = (notifier as any).notifiedRecipients as Set<string>;
+    const recipients = (
+      notifier as unknown as { notifiedRecipients: Set<string> }
+    ).notifiedRecipients;
     const firstKey = recipients.values().next().value;
 
     // Add one more to trigger eviction
@@ -435,6 +449,7 @@ describe("Notifier bounded-eviction (#396)", () => {
 
     expect(recipients.size).toBeLessThanOrEqual(5000);
     // The oldest entry should have been evicted
-    expect(recipients.has(firstKey)).toBe(false);
+    expect(firstKey).toBeDefined();
+    expect(recipients.has(firstKey!)).toBe(false);
   });
 });

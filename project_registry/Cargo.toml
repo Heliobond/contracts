@@ -2,6 +2,7 @@
 name = "project-registry"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -10,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 soroban-sdk = { workspace = true }
 stellar-access = { workspace = true }
 stellar-macros = { workspace = true }
-multisig = { path = "../libs/multisig" }
+multisig = { path = "../libs/multisig", version = "0.1.0" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
@@ -26,4 +27,4 @@ proptest = "1.0"
 # same reproducibility rationale as the workspace's soroban-sdk/stellar-*
 # pins.
 sha2 = "=0.10.9"
-investment-vault = { path = "../investment_vault" }
+investment-vault = { path = "../investment_vault", version = "0.1.0" }

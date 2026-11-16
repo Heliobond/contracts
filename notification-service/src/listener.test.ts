@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ServiceConfig, ScoreChangedEvent } from "./types";
-import { Store } from "./db";
 
 // Hoisted mock references — accessible before module evaluation
-const { getLatestLedgerMock, getEventsMock, getNetworkMock } = vi.hoisted(() => ({
-  getLatestLedgerMock: vi.fn(),
-  getEventsMock: vi.fn(),
-  getNetworkMock: vi.fn(),
-}));
+const { getLatestLedgerMock, getEventsMock, getNetworkMock } = vi.hoisted(
+  () => ({
+    getLatestLedgerMock: vi.fn(),
+    getEventsMock: vi.fn(),
+    getNetworkMock: vi.fn(),
+  }),
+);
 
 vi.mock("@stellar/stellar-sdk", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@stellar/stellar-sdk")>();
@@ -25,8 +26,8 @@ vi.mock("@stellar/stellar-sdk", async (importOriginal) => {
 });
 
 // Static imports pick up the mocked module
-import { xdr, nativeToScVal } from "@stellar/stellar-sdk";
-import { decodeScoreChanged, pollScoreChanges, decodeVaultEvent, pollVaultEvents } from "./listener";
+import { Contract, StrKey, xdr, nativeToScVal } from "@stellar/stellar-sdk";
+import { decodeScoreChanged, pollScoreChanges } from "./listener";
 
 const LEDGER = 12345;
 const TIMESTAMP = 1_700_000_000;
@@ -91,28 +92,6 @@ function buildDataMap(fields: Record<string, number>): xdr.ScVal {
         }),
     );
   return xdr.ScVal.scvMap(entries);
-}
-
-function buildVaultEvent(
-  eventName: string,
-  projectId: number,
-  investor: string,
-  contractId?: Buffer,
-): xdr.ContractEvent {
-  const topics = [
-    nativeToScVal(eventName, { type: "symbol" }),
-    nativeToScVal(projectId, { type: "u32" }),
-    nativeToScVal(investor, { type: "address" }),
-  ];
-  const v0 = new xdr.ContractEventV0({ topics, data: xdr.ScVal.scvVoid() });
-  const body = unionOf<xdr.ContractEventBody>(xdr.ContractEventBody, 0, v0);
-  const ext = unionOf<xdr.ExtensionPoint>(xdr.ExtensionPoint, 0, undefined);
-  return new xdr.ContractEvent({
-    ext,
-    contractId: contractId ?? null,
-    type: xdr.ContractEventType.contract(),
-    body,
-  });
 }
 
 describe("decodeScoreChanged", () => {
@@ -238,7 +217,7 @@ describe("decodeScoreChanged", () => {
 // expectedContractId check (Buffer.from(event.contractId()).toString("hex")),
 // now that fetchEvents actually passes it through (#432).
 const TEST_REGISTRY_CONTRACT_ID_HEX =
-  "abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567";
+  "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 
 describe("pollScoreChanges reconnects after a dropped RPC connection", () => {
   const config: ServiceConfig = {
@@ -276,20 +255,26 @@ describe("pollScoreChanges reconnects after a dropped RPC connection", () => {
       .mockResolvedValueOnce({ sequence: 100 });
 
     // Second poll returns an event
-    getEventsMock
-      .mockResolvedValueOnce({
-        events: [
-          {
-            value: buildScoreChangedEvent(
-              ["score_changed", 7],
-              buildDataMap(FULL_SCORES),
+    getEventsMock.mockResolvedValueOnce({
+      events: [
+        {
+          contractId: new Contract(
+            StrKey.encodeContract(
               Buffer.from(TEST_REGISTRY_CONTRACT_ID_HEX, "hex"),
             ),
-            ledger: 100,
-            timestamp: TIMESTAMP,
-          },
-        ],
-      });
+          ),
+          topic: [
+            nativeToScVal("score_changed", { type: "symbol" }),
+            nativeToScVal(7, { type: "u32" }),
+          ],
+          value: buildDataMap(FULL_SCORES),
+          ledger: 100,
+          ledgerClosedAt: new Date(TIMESTAMP * 1000).toISOString(),
+          inSuccessfulContractCall: true,
+          pagingToken: "100-1",
+        },
+      ],
+    });
 
     const handle = await pollScoreChanges(
       config,
@@ -307,6 +292,13 @@ describe("pollScoreChanges reconnects after a dropped RPC connection", () => {
     await handle.stop();
 
     expect(getLatestLedgerMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(getEventsMock).toHaveBeenCalledWith({
+      startLedger: 100,
+      filters: [
+        { contractIds: [config.registry_contract_id], type: "contract" },
+      ],
+      limit: 100,
+    });
     expect(processed).toHaveLength(1);
     expect(processed[0].project_id).toBe(7);
   });
@@ -386,243 +378,3 @@ describe("pollScoreChanges network passphrase check", () => {
     errorSpy.mockRestore();
   });
 });
-
-// ── Issue #? : vault event decoding and polling ────────────────────────────
-
-const TEST_INVESTOR = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
-const TEST_VAULT_CONTRACT_ID_HEX = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
-
-describe("decodeVaultEvent", () => {
-  const config: ServiceConfig = {
-    rpc_url: "https://example.invalid",
-    network_passphrase: "Test SDF Network ; September 2015",
-    registry_contract_id: "REGISTRY",
-    vault_contract_id: TEST_VAULT_CONTRACT_ID_HEX,
-    db_path: ":memory:",
-    poll_interval_ms: 50,
-    api_port: 3000,
-  };
-
-  it("decodes a Deposit event", () => {
-    const event = buildVaultEvent(
-      "deposit",
-      42,
-      TEST_INVESTOR,
-      Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
-    );
-    const decoded = decodeVaultEvent(event, LEDGER, TIMESTAMP, TEST_VAULT_CONTRACT_ID_HEX);
-    expect(decoded).toEqual({
-      type: "deposit",
-      project_id: 42,
-      investor: TEST_INVESTOR,
-      timestamp: TIMESTAMP,
-      ledger: LEDGER,
-    });
-  });
-
-  it("decodes a ProjectFunded event", () => {
-    const event = buildVaultEvent(
-      "project_funded",
-      42,
-      TEST_INVESTOR,
-      Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
-    );
-    const decoded = decodeVaultEvent(event, LEDGER, TIMESTAMP, TEST_VAULT_CONTRACT_ID_HEX);
-    expect(decoded).toEqual({
-      type: "project_funded",
-      project_id: 42,
-      investor: TEST_INVESTOR,
-      timestamp: TIMESTAMP,
-      ledger: LEDGER,
-    });
-  });
-
-  it("returns null when the event name doesn't match", () => {
-    const event = buildVaultEvent(
-      "something_else",
-      42,
-      TEST_INVESTOR,
-      Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
-    );
-    expect(decodeVaultEvent(event, LEDGER, TIMESTAMP, TEST_VAULT_CONTRACT_ID_HEX)).toBeNull();
-  });
-
-  it("returns null when contractId does not match the expected value", () => {
-    const event = buildVaultEvent(
-      "deposit",
-      42,
-      TEST_INVESTOR,
-      Buffer.alloc(32, 0xab),
-    );
-    expect(
-      decodeVaultEvent(event, LEDGER, TIMESTAMP, TEST_VAULT_CONTRACT_ID_HEX),
-    ).toBeNull();
-  });
-});
-
-describe("pollVaultEvents", () => {
-  const config: ServiceConfig = {
-    rpc_url: "https://example.invalid",
-    network_passphrase: "Test SDF Network ; September 2015",
-    registry_contract_id: "REGISTRY",
-    vault_contract_id: TEST_VAULT_CONTRACT_ID_HEX,
-    db_path: ":memory:",
-    poll_interval_ms: 50,
-    api_port: 3000,
-  };
-
-  beforeEach(() => {
-    getLatestLedgerMock.mockReset();
-    getEventsMock.mockReset();
-    getNetworkMock.mockReset();
-    getLatestLedgerMock.mockResolvedValue({ sequence: 100 });
-    getEventsMock.mockResolvedValue({ events: [] });
-    getNetworkMock.mockResolvedValue({
-      passphrase: config.network_passphrase,
-      protocolVersion: "22",
-    });
-  });
-
-  it("processes Deposit and ProjectFunded events via the callback", async () => {
-    const processed: Array<{
-      type: string;
-      project_id: number;
-      investor: string;
-    }> = [];
-    let ledger = 0;
-
-    getEventsMock.mockResolvedValue({
-      events: [
-        {
-          value: buildVaultEvent(
-            "deposit",
-            42,
-            TEST_INVESTOR,
-            Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
-          ),
-          ledger: 100,
-          timestamp: TIMESTAMP,
-        },
-        {
-          value: buildVaultEvent(
-            "project_funded",
-            43,
-            TEST_INVESTOR,
-            Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
-          ),
-          ledger: 100,
-          timestamp: TIMESTAMP,
-        },
-      ],
-    });
-
-    const handle = await pollVaultEvents(
-      config,
-      async (ev) => {
-        processed.push(ev);
-      },
-      async () => ledger,
-      async (l) => {
-        ledger = l;
-      },
-    );
-
-    await new Promise((r) => setTimeout(r, config.poll_interval_ms * 3));
-    await handle.stop();
-
-    expect(processed).toHaveLength(2);
-    expect(processed[0]).toMatchObject({
-      type: "deposit",
-      project_id: 42,
-      investor: TEST_INVESTOR,
-    });
-    expect(processed[1]).toMatchObject({
-      type: "project_funded",
-      project_id: 43,
-      investor: TEST_INVESTOR,
-    });
-  });
-
-  it("seeds the Store via vault events and uses the stored investors for ScoreChanged notifications", async () => {
-    const store = new Store(config.db_path);
-    const scoreConfig: ServiceConfig = {
-      ...config,
-      registry_contract_id: TEST_REGISTRY_CONTRACT_ID_HEX,
-    };
-    const notifyInvestors = vi.fn();
-
-    getEventsMock.mockResolvedValueOnce({
-      events: [
-        {
-          value: buildVaultEvent(
-            "deposit",
-            42,
-            TEST_INVESTOR,
-            Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
-          ),
-          ledger: 100,
-          timestamp: TIMESTAMP,
-        },
-        {
-          value: buildVaultEvent(
-            "project_funded",
-            43,
-            TEST_INVESTOR,
-            Buffer.from(TEST_VAULT_CONTRACT_ID_HEX, "hex"),
-          ),
-          ledger: 100,
-          timestamp: TIMESTAMP,
-        },
-      ],
-    });
-
-    const vaultHandle = await pollVaultEvents(
-      config,
-      async (ev) => {
-        await store.recordInvestment(ev.investor, ev.project_id);
-      },
-      async () => 0,
-      async () => {},
-    );
-    await new Promise((r) => setTimeout(r, config.poll_interval_ms * 3));
-    await vaultHandle.stop();
-
-    expect(await store.getInvestorsForProject(42)).toContain(TEST_INVESTOR);
-    expect(await store.getInvestorsForProject(43)).toContain(TEST_INVESTOR);
-
-    getEventsMock.mockResolvedValueOnce({
-      events: [
-        {
-          value: buildScoreChangedEvent(
-            ["score_changed", 42],
-            buildDataMap(FULL_SCORES),
-            Buffer.from(TEST_REGISTRY_CONTRACT_ID_HEX, "hex"),
-          ),
-          ledger: 101,
-          timestamp: TIMESTAMP,
-        },
-      ],
-    });
-
-    const scoreHandle = await pollScoreChanges(
-      scoreConfig,
-      async (ev) => {
-        const investors = await store.getInvestorsForProject(ev.project_id);
-        await notifyInvestors(investors, ev);
-      },
-      async () => 0,
-      async () => {},
-    );
-    await new Promise((r) => setTimeout(r, config.poll_interval_ms * 3));
-    await scoreHandle.stop();
-
-    expect(notifyInvestors).toHaveBeenCalledTimes(1);
-    expect(notifyInvestors.mock.calls[0][0]).toEqual(
-      expect.arrayContaining([TEST_INVESTOR]),
-    );
-    expect(notifyInvestors.mock.calls[0][1]).toMatchObject({
-      project_id: 42,
-    });
-  });
-});
-

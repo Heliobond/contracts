@@ -52,15 +52,22 @@ function createCorsMiddleware(allowedOrigins: string[]) {
   };
 }
 
-function validatePreferenceBody(body: unknown): body is Partial<NotificationPreference> & { min_delta?: number } {
+function validatePreferenceBody(
+  body: unknown,
+): body is Partial<NotificationPreference> & { min_delta?: number } {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return false;
   }
   const b = body as Record<string, unknown>;
   if (b.email !== undefined && typeof b.email !== "string") return false;
-  if (b.webhook_url !== undefined && typeof b.webhook_url !== "string") return false;
+  if (b.webhook_url !== undefined && typeof b.webhook_url !== "string")
+    return false;
   if (b.enabled !== undefined && typeof b.enabled !== "boolean") return false;
-  if (b.min_delta !== undefined && (typeof b.min_delta !== "number" || b.min_delta < 0)) return false;
+  if (
+    b.min_delta !== undefined &&
+    (typeof b.min_delta !== "number" || b.min_delta < 0)
+  )
+    return false;
   if (b.webhook_url !== undefined && b.webhook_url !== "") {
     try {
       new URL(b.webhook_url);
@@ -71,7 +78,10 @@ function validatePreferenceBody(body: unknown): body is Partial<NotificationPref
   return true;
 }
 
-export function createApi(store: Store, options: CreateApiOptions = {}): Express {
+export function createApi(
+  store: Store,
+  options: CreateApiOptions = {},
+): Express {
   const { metrics, rateLimit, allowedOrigins } = options;
 
   const app = express();
@@ -131,21 +141,30 @@ export function createApi(store: Store, options: CreateApiOptions = {}): Express
         try {
           new URL(b.webhook_url);
         } catch {
-          return res.status(400).json({ error: "webhook_url must be a valid URL" });
+          return res
+            .status(400)
+            .json({ error: "webhook_url must be a valid URL" });
         }
       }
       if (b.enabled !== undefined && typeof b.enabled !== "boolean") {
         return res.status(400).json({ error: "enabled must be a boolean" });
       }
-      if (b.min_delta !== undefined && (typeof b.min_delta !== "number" || b.min_delta < 0)) {
-        return res.status(400).json({ error: "min_delta must be a non-negative number" });
+      if (
+        b.min_delta !== undefined &&
+        (typeof b.min_delta !== "number" || b.min_delta < 0)
+      ) {
+        return res
+          .status(400)
+          .json({ error: "min_delta must be a non-negative number" });
       }
       return res.status(400).json({ error: "Invalid request body" });
     }
 
     const existing = store.getPreference(address);
 
-    const body = req.body as Partial<NotificationPreference> & { min_delta?: number };
+    const body = req.body as Partial<NotificationPreference> & {
+      min_delta?: number;
+    };
 
     // Merge with existing preference, preserving fields not provided in the request
     const mergedPreference: NotificationPreference = {
@@ -159,9 +178,9 @@ export function createApi(store: Store, options: CreateApiOptions = {}): Express
 
     // Enforce at least one notification channel
     if (!mergedPreference.email && !mergedPreference.webhook_url) {
-      return res
-        .status(400)
-        .json({ error: "At least one of email or webhook_url must be provided" });
+      return res.status(400).json({
+        error: "At least one of email or webhook_url must be provided",
+      });
     }
 
     // Ensure webhook_url is explicitly included for the DB parameter (null -> empty string)
@@ -199,11 +218,16 @@ export function createApi(store: Store, options: CreateApiOptions = {}): Express
   app.get("/notifications/history", (req: Request, res: Response) => {
     const rawLimit = parseInt(req.query.limit as string);
     const rawOffset = parseInt(req.query.offset as string);
-    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 200) : 50;
+    const limit =
+      Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 200) : 50;
     const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
     const investor_address = req.query.investor_address as string | undefined;
 
-    const page = store.listNotificationHistory({ investor_address, limit, offset });
+    const page = store.listNotificationHistory({
+      investor_address,
+      limit,
+      offset,
+    });
     res.json(page);
   });
 

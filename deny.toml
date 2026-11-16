@@ -14,15 +14,18 @@ all-features = true
 db-path = "~/.cargo/advisory-dbs"
 db-urls = ["https://github.com/RustSec/advisory-db"]
 yanked = "deny"
-unmaintained = "deny"
-unsound = "deny"
+# cargo-deny 0.21 Scope::All reports every matching advisory as an error.
+# https://github.com/EmbarkStudios/cargo-deny/blob/0.21.0/src/advisories.rs
+unmaintained = "all"
+unsound = "all"
 ignore = [
-  # Transitive via soroban-sdk/soroban-env-host toolchain. Not independently
-  # fixable by bumping this repo's Cargo.toml (workspace pins soroban-sdk
-  # =26.1.0, see Cargo.toml #421). Tracked for upstream fix; re-audit on
-  # every soroban-sdk bump and drop this ignore once the toolchain moves off
-  # paste 1.0.15.
-  { id = "RUSTSEC-2024-0436", reason = "unmaintained paste 1.0.15, transitive via soroban-sdk/soroban-env-host; awaiting upstream" },
+  # David approved these host/test-only exceptions on 2026-11-16.
+  # Both crates are absent from normal wasm32v1-none dependencies.
+  # Revisit on every Soroban SDK/host upgrade and remove when upstream is fixed.
+  # https://github.com/RustSec/advisory-db/blob/main/crates/crypto-bigint/RUSTSEC-2026-0387.md
+  { id = "RUSTSEC-2026-0387", reason = "host/test crypto-bigint 0.5.5 via elliptic-curve 0.13; >=0.7.6 fix incompatible, including latest SDK 29.0.1" },
+  # https://rustsec.org/advisories/RUSTSEC-2024-0436
+  { id = "RUSTSEC-2024-0436", reason = "host/test paste 1.0.15 via ark-ff and wasmi_core; upstream must migrate to maintained replacement" },
   # spin 0.9.8 yanked on crates.io; transitive via soroban-wasmi ->
   # soroban-env-common/soroban-env-host. Same situation as above: tracked,
   # drop once upstream updates.
@@ -33,14 +36,14 @@ ignore = [
 multiple-versions = "warn"
 wildcards = "deny"
 highlight = "all"
-allow-yanked = "deny"
 deny = []
 skip = []
 skip-tree = []
 
 [licenses]
-unlicensed = "deny"
-copyleft = "warn"
+# Current cargo-deny always rejects unlicensed crates and licenses outside
+# the explicit allow/exception lists (stronger than the removed warn policy).
+# https://github.com/EmbarkStudios/cargo-deny/pull/611
 allow = [
   "MIT",
   "Apache-2.0",

@@ -1,4 +1,4 @@
-import { SorobanRpc, scValToNative, xdr } from "@stellar/stellar-sdk";
+import { SorobanRpc, StrKey, scValToNative, xdr } from "@stellar/stellar-sdk";
 import { ScoreChangedEvent, ServiceConfig } from "./types";
 
 // The #[contractevent] macro derives the prefix topic from the struct name in
@@ -18,33 +18,33 @@ const SCORE_CHANGED_DATA_FIELDS = [
 
 /** Decode a ScoreChanged event from a Soroban transaction event. */
 export function decodeScoreChanged(
-  event: xdr.ContractEvent,
+  event: xdr.ContractEvent | SorobanRpc.Api.EventResponse,
   ledger: number,
   timestamp: number,
   expectedContractId?: string,
 ): ScoreChangedEvent | null {
   try {
-    // When an expected contract ID is provided, verify the event originated
-    // from that contract. This is a defense-in-depth check — the RPC filter
-    // in fetchEvents already scopes by contractId, but rejecting here too
-    // means a mis-routed or spoofed event can never reach notification
-    // delivery even if the upstream filter is bypassed.
-    if (expectedContractId !== undefined) {
+    let topics: xdr.ScVal[];
+    let value: xdr.ScVal;
+    let contractId: string | undefined;
+    if ("topic" in event) {
+      topics = event.topic;
+      value = event.value;
+      contractId = event.contractId?.contractId();
+    } else {
+      if (event.body().switch() !== 0) return null;
+      const body = event.body().v0();
+      topics = body.topics();
+      value = body.data();
       const raw = event.contractId();
-      if (!raw) return null;
-      const eventContractId = Buffer.from(raw).toString("hex");
-      if (eventContractId !== expectedContractId) return null;
+      contractId = raw ? StrKey.encodeContract(raw) : undefined;
     }
-
-    const body = event.body();
-    // ContractEventBody.switch() is the raw union discriminant (0 = v0, the only
-    // arm currently defined by the XDR spec); the SDK doesn't expose a named
-    // enum for it, so we compare against the literal directly.
-    if (body.switch() !== 0) {
-      return null;
+    if (expectedContractId !== undefined) {
+      const expected = /^[0-9a-f]{64}$/i.test(expectedContractId)
+        ? StrKey.encodeContract(Buffer.from(expectedContractId, "hex"))
+        : expectedContractId;
+      if (contractId !== expected) return null;
     }
-    const v0 = body.v0();
-    const topics = v0.topics();
 
     // topics[0] = event name (Symbol), topics[1] = project_id (u32) — only
     // `project_id` is marked #[topic] on the ScoreChanged struct.
@@ -58,7 +58,7 @@ export function decodeScoreChanged(
     // name (the macro's default data_format), not a positional vector — see
     // derive_event.rs's DataFormat::Map branch. scValToNative turns that into
     // a plain object keyed by the Rust field names.
-    const data = scValToNative(v0.data());
+    const data = scValToNative(value);
     if (typeof data !== "object" || data === null || Array.isArray(data)) {
       return null;
     }
@@ -101,32 +101,30 @@ async function fetchEvents(
   server: SorobanRpc.Server,
   contractId: string,
   startLedger: number,
-  _endLedger: number,
+  endLedger: number,
 ): Promise<ScoreChangedEvent[]> {
   const results: ScoreChangedEvent[] = [];
   let cursor: string | undefined;
 
   do {
     const response = await server.getEvents({
-      startLedger,
+      ...(cursor ? {} : { startLedger }),
       filters: [
         {
-          contractId,
+          contractIds: [contractId],
           type: "contract",
         },
       ],
-      pagination: {
-        limit: 100,
-        ...(cursor ? { cursor } : {}),
-      },
+      limit: 100,
+      ...(cursor ? { cursor } : {}),
     });
 
     for (const event of response.events) {
-      if (!event.value) continue;
+      if (!event.inSuccessfulContractCall || event.ledger > endLedger) continue;
       const decoded = decodeScoreChanged(
-        event.value,
+        event,
         event.ledger,
-        event.timestamp,
+        Date.parse(event.ledgerClosedAt) / 1000,
         contractId,
       );
       if (decoded) {
@@ -137,7 +135,10 @@ async function fetchEvents(
       }
     }
 
-    cursor = response.events.length === 100 ? response.cursor : undefined;
+    cursor =
+      response.events.length === 100
+        ? response.events.at(-1)?.pagingToken
+        : undefined;
   } while (cursor);
 
   return results;

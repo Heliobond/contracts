@@ -23,7 +23,7 @@ export interface ScoreChangedEvent {
 /**
  * Matches the on-chain `Deposit` event from InvestmentVault.
  * This event is used to track investor participation in a project.
- * Only the identity linkage (investor <-> project) is needed, so 
+ * Only the identity linkage (investor <-> project) is needed, so
  * amount is included for completeness but not strictly required.
  */
 export interface DepositEvent {
@@ -113,7 +113,7 @@ export interface ServiceConfig {
     host: string;
     port: number;
     secure: boolean;
-    auth: {
+    auth?: {
       user: string;
       pass: string;
     };
