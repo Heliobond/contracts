@@ -105,7 +105,7 @@ jobs:
       - name: Fund test account via friendbot
         run: |
           PUB=$(stellar keys address ci-test 2>/dev/null || (
-            stellar keys generate ci-test --no-fund &&
+            stellar keys generate ci-test &&
             stellar keys address ci-test
           ))
           echo "TEST_PUB=$PUB" >> "$GITHUB_ENV"
@@ -145,6 +145,7 @@ jobs:
                --usdc_sac "$USDC_SAC" \
                --registry "${{ steps.registry.outputs.id }}")
           echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "asset=$USDC_SAC" >> "$GITHUB_OUTPUT"
           echo "Vault deployed: $ID"
 
       # ── Smoke tests ───────────────────────────────────────────────────────────
@@ -157,7 +158,7 @@ jobs:
             --network ${{ steps.net.outputs.name }} \
             -- total_projects)
           echo "total_projects = $RESULT"
-          [ "$RESULT" = "0" ] || (echo "FAIL: expected 0"; exit 1)
+          [ "$(echo "$RESULT" | jq -r .)" = "0" ] || (echo "FAIL: expected 0"; exit 1)
 
       - name: Smoke — total_assets returns 0
         run: |
@@ -167,7 +168,7 @@ jobs:
             --network ${{ steps.net.outputs.name }} \
             -- total_assets)
           echo "total_assets = $RESULT"
-          [ "$RESULT" = "0" ] || (echo "FAIL: expected 0"; exit 1)
+          [ "$(echo "$RESULT" | jq -r .)" = "0" ] || (echo "FAIL: expected 0"; exit 1)
 
       - name: Smoke — whitelist and create project
         run: |
@@ -178,7 +179,7 @@ jobs:
             --id ${{ steps.registry.outputs.id }} \
             --source ci-test \
             --network ${{ steps.net.outputs.name }} \
-            -- set_whitelist --account "$ADMIN" --status true
+            -- set_whitelist --account "$ADMIN" --status true --valid_until 0
 
           # Create a project
           PROJECT_ID=$(stellar contract invoke \
@@ -201,6 +202,7 @@ jobs:
             --network ${{ steps.net.outputs.name }} \
             -- accepted_asset)
           echo "accepted_asset = $RESULT"
+          [ "$(echo "$RESULT" | jq -r .)" = "${{ steps.vault.outputs.asset }}" ] || (echo "FAIL: unexpected accepted asset"; exit 1)
 
       - name: Smoke — insurance_fund_balance returns 0
         run: |
@@ -210,7 +212,7 @@ jobs:
             --network ${{ steps.net.outputs.name }} \
             -- insurance_fund_balance)
           echo "insurance_fund_balance = $RESULT"
-          [ "$RESULT" = "0" ] || (echo "FAIL: expected 0"; exit 1)
+          [ "$(echo "$RESULT" | jq -r .)" = "0" ] || (echo "FAIL: expected 0"; exit 1)
 
       - name: Summary
         if: always()
