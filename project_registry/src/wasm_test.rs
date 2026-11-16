@@ -47,7 +47,7 @@ mod wasm_smoke {
         assert_eq!(registry.total_projects(), 0u32);
 
         let creator = Address::generate(&env);
-        registry.set_whitelist(&creator, &true);
+        registry.set_whitelist(&creator, &true, &0u64);
 
         let hash = BytesN::from_array(&env, &[2u8; 32]);
         let project_id = registry.create_project(

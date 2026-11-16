@@ -4,8 +4,8 @@ use soroban_sdk::{Address, Env};
 // TNL configuration for persistent storage entries.
 // The threshold is the remaining TNL (in ledgers) which triggers an extension.
 // The extend_to is the new TNL set, chosen to cover the vault's intended lifetime h~10 years).
-const TTL_THRESHOLD: u32 = 17_280; // ~1 day in ledgers
-const TTL_EXTEND_TO: u32 = 63_072_000; // ~10 years in 5-second ledgers
+const TTL_THRESHOLD: u32 = crate::TTL_EXTEND_THRESHOLD_LEDGERS; // ~1 day in ledgers
+const TTL_EXTEND_TO: u32 = crate::TTL_EXTEND_TO_LEDGERS; // ~10 years in 5-second ledgers
 
 pub fn read_usdc_sac(env: &Env) -> Address {
     env.storage().instance().get(&VaultKey::UsdcSac).unwrap()
@@ -21,9 +21,11 @@ pub fn read_total_deposited(env: &Env, account: Address) -> Option<i128> {
     let key = VaultKey::TotalDeposited(account);
     let val: Option<i128> = env.storage().persistent().get(&key);
     if val.is_some() {
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        env.storage().persistent().extend_ttl(
+            &key,
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO.min(env.storage().max_ttl()),
+        );
     }
     val
 }
@@ -33,9 +35,11 @@ pub fn read_total_deposited(env: &Env, account: Address) -> Option<i128> {
 pub fn write_total_deposited(env: &Env, account: Address, amount: i128) {
     let key = VaultKey::TotalDeposited(account);
     env.storage().persistent().set(&key, &amount);
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    env.storage().persistent().extend_ttl(
+        &key,
+        TTL_THRESHOLD,
+        TTL_EXTEND_TO.min(env.storage().max_ttl()),
+    );
 }
 
 #[cfg(test)]

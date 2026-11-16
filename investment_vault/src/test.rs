@@ -72,7 +72,9 @@ fn test_first_deposit_mints_1_to_1_shares() {
     let amount = 1_000_0000000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor, amount);
 
-    let shares = s.vault_client.deposit(&investor, &amount);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &amount, &0i128, &u64::MAX);
 
     // Deposit deducts a 50-bps insurance premium before share calculation.
     // First deposit is 1:1 on the investable amount (after premium).
@@ -102,7 +104,9 @@ fn test_vault_with_zero_supply() {
 
     // deposit when total_assets is zero
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let minted_shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let minted_shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
     let expected = 1_000_0000000i128 - (1_000_0000000i128 * 50 / 10_000);
     assert_eq!(minted_shares, expected);
 }
@@ -152,8 +156,11 @@ fn test_deposit_proportional_after_first() {
     mint_usdc(&s.env, &s.usdc_sac, &investor1, amount);
     mint_usdc(&s.env, &s.usdc_sac, &investor2, amount);
 
-    s.vault_client.deposit(&investor1, &amount);
-    let shares2 = s.vault_client.deposit(&investor2, &amount);
+    s.vault_client
+        .deposit(&investor1, &amount, &0i128, &u64::MAX);
+    let shares2 = s
+        .vault_client
+        .deposit(&investor2, &amount, &0i128, &u64::MAX);
 
     // After investor1: total_shares = investable, total_assets = amount (full deposit in vault).
     // investor2's investable amount buys shares at the current NAV price.
@@ -163,8 +170,11 @@ fn test_deposit_proportional_after_first() {
     mint_usdc(&s.env, &s.usdc_sac, &investor1, 1_000_0000000i128);
     mint_usdc(&s.env, &s.usdc_sac, &investor2, 1_000_0000000i128);
 
-    s.vault_client.deposit(&investor1, &1_000_0000000i128);
-    let shares2 = s.vault_client.deposit(&investor2, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor1, &1_000_0000000i128, &0i128, &u64::MAX);
+    let shares2 = s
+        .vault_client
+        .deposit(&investor2, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Vault now holds 3000 USDC across 3 prior deposits; shares are proportional.
     // shares2 = 9_950_000_000 * total_supply / total_assets = 9_859_040_209
@@ -177,7 +187,9 @@ fn test_withdraw_returns_usdc() {
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
 
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
     s.env.ledger().with_mut(|li| {
         li.sequence_number += 1;
     });
@@ -196,7 +208,9 @@ fn test_withdraw_rejects_when_min_usdc_return_exceeds_actual() {
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
 
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
     s.env.ledger().with_mut(|li| {
         li.timestamp += MIN_LOCK_PERIOD + 1;
     });
@@ -211,7 +225,9 @@ fn test_withdraw_succeeds_when_min_usdc_return_exactly_equals_actual() {
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
 
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
     s.env.ledger().with_mut(|li| {
         li.timestamp += MIN_LOCK_PERIOD + 1;
     });
@@ -228,7 +244,8 @@ fn test_total_assets_after_deposit() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 500_0000000i128);
-    s.vault_client.deposit(&investor, &500_0000000i128);
+    s.vault_client
+        .deposit(&investor, &500_0000000i128, &0i128, &u64::MAX);
     assert_eq!(s.vault_client.total_assets(), 500_0000000i128);
 }
 
@@ -265,7 +282,8 @@ fn test_receive_yield_with_approvals_after_multisig_enabled() {
     let yield_source = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     s.vault_client.set_multisig_admin(
         &soroban_sdk::vec![&s.env, signer1.clone(), signer2.clone()],
@@ -304,11 +322,12 @@ fn test_multisig_batch_fund_projects() {
         &2u32,
     );
     mint_usdc(&s.env, &s.usdc_sac, &investor, 2_000_0000000i128);
-    s.vault_client.deposit(&investor, &2_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &2_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator1, &true);
-    registry_client.set_whitelist(&creator2, &true);
+    registry_client.set_whitelist(&creator1, &true, &0u64);
+    registry_client.set_whitelist(&creator2, &true, &0u64);
     let project1 = registry_client.create_project(
         &creator1,
         &String::from_str(&s.env, "ipfs://QmBatchFund1"),
@@ -340,7 +359,8 @@ fn test_total_deposited_survives_ttl_inactivity() {
     let investor = Address::generate(&s.env);
     let amount = 1_000_0000000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor, amount);
-    s.vault_client.deposit(&investor, &amount);
+    s.vault_client
+        .deposit(&investor, &amount, &0i128, &u64::MAX);
 
     let portfolio_before = s.vault_client.get_portfolio(&investor);
     let total_deposited_before = portfolio_before.total_deposited;
@@ -369,10 +389,11 @@ fn test_multisig_batch_fund_projects_rejects_duplicate_project_ids() {
         &2u32,
     );
     mint_usdc(&s.env, &s.usdc_sac, &investor, 2_000_0000000i128);
-    s.vault_client.deposit(&investor, &2_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &2_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmDuplicateProject"),
@@ -409,11 +430,12 @@ fn test_batch_fund_projects_rolls_back_all_events_and_state_on_later_panic() {
         &2u32,
     );
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator1, &true);
-    registry_client.set_whitelist(&creator2, &true);
+    registry_client.set_whitelist(&creator1, &true, &0u64);
+    registry_client.set_whitelist(&creator2, &true, &0u64);
     let project1 = registry_client.create_project(
         &creator1,
         &String::from_str(&s.env, "ipfs://QmRollback1"),
@@ -474,7 +496,8 @@ fn bench_vault_deposit() {
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
 
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let instructions = s.env.cost_estimate().resources().instructions;
     std::println!("bench_vault_deposit: {} instructions", instructions);
@@ -527,7 +550,9 @@ fn bench_batch_deposit_vs_equivalent_single_deposits() {
     for _ in 0..N {
         let investor = Address::generate(&single.env);
         mint_usdc(&single.env, &single.usdc_sac, &investor, PER_DEPOSIT);
-        single.vault_client.deposit(&investor, &PER_DEPOSIT);
+        single
+            .vault_client
+            .deposit(&investor, &PER_DEPOSIT, &0i128, &u64::MAX);
         single_total_instructions += single.env.cost_estimate().resources().instructions as u64;
     }
 
@@ -550,12 +575,14 @@ fn bench_withdraw_under_queued_redemption_contention() {
     let investor = Address::generate(&s.env);
     let deposit_amount = 1_000_0000000i128; // 1000 USDC
     mint_usdc(&s.env, &s.usdc_sac, &investor, deposit_amount);
-    let shares = s.vault_client.deposit(&investor, &deposit_amount);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &deposit_amount, &0i128, &u64::MAX);
 
     // Drain roughly half the vault's liquid USDC by funding a project.
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmBenchWithdraw"),
@@ -603,7 +630,7 @@ fn test_vault_deposit_cost_estimate() {
 
     let investor = Address::generate(&env);
     StellarAssetClient::new(&env, &usdc_sac).mint(&investor, &1_000_0000000i128);
-    let shares = vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = vault_client.deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     assert!(shares > 0);
     let resources = env.cost_estimate().resources();
@@ -624,10 +651,11 @@ fn test_fund_project_cost_estimate() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -693,7 +721,7 @@ fn test_vault_constructor_and_registry_reference_initial_state() {
     assert_eq!(vault_client.total_supply(), 0);
     assert!(!vault_client.is_trading_enabled());
 
-    registry_client.set_whitelist(&project_creator, &true);
+    registry_client.set_whitelist(&project_creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &project_creator,
         &String::from_str(&env, "ipfs://QmVaultInit"),
@@ -703,7 +731,7 @@ fn test_vault_constructor_and_registry_reference_initial_state() {
 
     let investor = Address::generate(&env);
     StellarAssetClient::new(&env, &usdc_sac).mint(&investor, &1_000_0000000i128);
-    let deposit_shares = vault_client.deposit(&investor, &1_000_0000000i128);
+    let deposit_shares = vault_client.deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
     assert!(deposit_shares > 0);
 
     vault_client.fund_project(&project_id, &100_0000000i128);
@@ -728,7 +756,8 @@ fn test_fund_project_records_investment() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     assert_eq!(s.vault_client.total_assets(), 1_000_0000000i128);
 }
@@ -743,10 +772,11 @@ fn test_fund_project_panics_when_fully_depleted() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -771,10 +801,11 @@ fn test_fund_project_panics_when_amount_exceeds_available() {
 
     // Deposit 500 USDC; insurance_reserve = 500 * 50 / 10_000 = 2_500_000 stroops (0.25 USDC)
     mint_usdc(&s.env, &s.usdc_sac, &investor, 500_0000000i128);
-    s.vault_client.deposit(&investor, &500_0000000i128);
+    s.vault_client
+        .deposit(&investor, &500_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -794,10 +825,11 @@ fn test_fund_project_partial_funding_succeeds() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -821,10 +853,11 @@ fn test_fund_project_second_call_exhausts_remaining_deployable() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -849,10 +882,12 @@ fn test_withdraw_fails_when_all_usdc_deployed() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &soroban_sdk::String::from_str(&s.env, "ipfs://Qm"),
@@ -874,7 +909,8 @@ fn test_transfer_to_vault_address_rejected() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Attempt to send HBS shares to the vault contract itself
     s.vault_client
@@ -888,7 +924,9 @@ fn test_full_withdrawal_with_no_investments() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
     s.env.ledger().with_mut(|li| {
         li.sequence_number += 1;
     });
@@ -908,10 +946,12 @@ fn test_full_withdrawal_blocked_by_outstanding_investments() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 2_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &2_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &2_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &soroban_sdk::String::from_str(&s.env, "ipfs://Qm"),
@@ -933,7 +973,8 @@ fn test_convert_to_shares_and_assets_roundtrip() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let preview_shares = s.vault_client.convert_to_shares(&500_0000000i128);
     let preview_assets = s.vault_client.convert_to_assets(&preview_shares);
@@ -963,7 +1004,9 @@ fn test_zero_fee_parity() {
     let deposit_amount = 1_000_0000000i128; // 1000 USDC (7 dp)
     mint_usdc(&s.env, &s.usdc_sac, &investor, deposit_amount);
 
-    let shares = s.vault_client.deposit(&investor, &deposit_amount);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &deposit_amount, &0i128, &u64::MAX);
 
     // premium = 50_000_000 (0.5%), fee = 0 → investable = 9_950_000_000
     let expected_investable = deposit_amount - deposit_amount * 50 / 10_000;
@@ -987,7 +1030,8 @@ fn test_nonzero_fee_accrual() {
     let deposit_amount = 1_000_0000000i128; // 10,000,000,000 stroops
     mint_usdc(&s.env, &s.usdc_sac, &investor, deposit_amount);
 
-    s.vault_client.deposit(&investor, &deposit_amount);
+    s.vault_client
+        .deposit(&investor, &deposit_amount, &0i128, &u64::MAX);
 
     // fee = 200,000,000 (2%)
     let expected_fee = deposit_amount * 200 / 10_000;
@@ -1020,7 +1064,8 @@ fn test_management_fee_across_multiple_rate_changes() {
     s.vault_client.set_management_fee(&100u32, &fee_recipient);
     let investor1 = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor1, deposit_amount);
-    s.vault_client.deposit(&investor1, &deposit_amount);
+    s.vault_client
+        .deposit(&investor1, &deposit_amount, &0i128, &u64::MAX);
 
     let expected_fee_1 = deposit_amount * 100 / 10_000; // 10_000_000 (0.1 USDC in stroops... actually 10 USDC)
     assert_eq!(usdc_client.balance(&fee_recipient), expected_fee_1);
@@ -1029,7 +1074,8 @@ fn test_management_fee_across_multiple_rate_changes() {
     s.vault_client.set_management_fee(&300u32, &fee_recipient);
     let investor2 = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor2, deposit_amount);
-    s.vault_client.deposit(&investor2, &deposit_amount);
+    s.vault_client
+        .deposit(&investor2, &deposit_amount, &0i128, &u64::MAX);
 
     let expected_fee_2 = deposit_amount * 300 / 10_000; // 30_000_000
     let cumulative_after_2 = expected_fee_1 + expected_fee_2;
@@ -1039,7 +1085,8 @@ fn test_management_fee_across_multiple_rate_changes() {
     s.vault_client.set_management_fee(&50u32, &fee_recipient);
     let investor3 = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor3, deposit_amount);
-    s.vault_client.deposit(&investor3, &deposit_amount);
+    s.vault_client
+        .deposit(&investor3, &deposit_amount, &0i128, &u64::MAX);
 
     let expected_fee_3 = deposit_amount * 50 / 10_000; // 5_000_000
     let cumulative_after_3 = cumulative_after_2 + expected_fee_3;
@@ -1049,7 +1096,8 @@ fn test_management_fee_across_multiple_rate_changes() {
     s.vault_client.set_management_fee(&0u32, &fee_recipient);
     let investor4 = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor4, deposit_amount);
-    s.vault_client.deposit(&investor4, &deposit_amount);
+    s.vault_client
+        .deposit(&investor4, &deposit_amount, &0i128, &u64::MAX);
 
     // No additional fee should have been charged.
     assert_eq!(usdc_client.balance(&fee_recipient), cumulative_after_3);
@@ -1111,7 +1159,8 @@ fn test_conversion_roundtrip_never_favors_withdrawer() {
     let s = setup();
     let anchor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &anchor, 1_000_0000000i128);
-    s.vault_client.deposit(&anchor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&anchor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let test_amounts = [
         1i128,
@@ -1157,12 +1206,14 @@ fn test_withdraw_enqueues_when_insufficient_liquidity() {
     let investor = Address::generate(&s.env);
     let deposit_amount = 1_000_0000000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor, deposit_amount);
-    let shares = s.vault_client.deposit(&investor, &deposit_amount);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &deposit_amount, &0i128, &u64::MAX);
 
     // Create a project and fund it, draining roughly half the vault's liquid USDC.
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://test"),
@@ -1191,12 +1242,14 @@ fn test_claim_settles_queued_redemption() {
     let investor1 = Address::generate(&s.env);
     let deposit_amount = 1_000_0000000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor1, deposit_amount);
-    let shares = s.vault_client.deposit(&investor1, &deposit_amount);
+    let shares = s
+        .vault_client
+        .deposit(&investor1, &deposit_amount, &0i128, &u64::MAX);
 
     // Drain ~half the vault to create an insufficiency.
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://test"),
@@ -1216,7 +1269,8 @@ fn test_claim_settles_queued_redemption() {
     // Add liquidity: second investor deposits enough to cover the queued claim.
     let investor2 = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor2, 2_000_0000000i128);
-    s.vault_client.deposit(&investor2, &2_000_0000000i128);
+    s.vault_client
+        .deposit(&investor2, &2_000_0000000i128, &0i128, &u64::MAX);
 
     // Settle the queue.
     let paid = s.vault_client.claim();
@@ -1237,7 +1291,8 @@ fn test_deposit_emits_event() {
     let amount = 1_000_0000000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor, amount);
 
-    s.vault_client.deposit(&investor, &amount);
+    s.vault_client
+        .deposit(&investor, &amount, &0i128, &u64::MAX);
 
     // Deposit emits a token mint event (Base::mint) + the Deposited application event = 2.
     let events = s.env.events().all().filter_by_contract(&s.vault_address);
@@ -1253,7 +1308,9 @@ fn test_withdraw_emits_event() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
     s.env.ledger().with_mut(|li| {
         li.sequence_number += 1;
     });
@@ -1277,10 +1334,11 @@ fn test_fund_project_emits_event() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -1305,10 +1363,12 @@ fn test_withdraw_queued_emits_event() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -1342,10 +1402,12 @@ fn test_claim_queued_emits_event() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -1362,7 +1424,8 @@ fn test_claim_queued_emits_event() {
     // Restore liquidity so claim() can settle.
     let investor2 = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor2, 2_000_0000000i128);
-    s.vault_client.deposit(&investor2, &2_000_0000000i128);
+    s.vault_client
+        .deposit(&investor2, &2_000_0000000i128, &0i128, &u64::MAX);
 
     s.vault_client.claim();
 
@@ -1410,10 +1473,11 @@ fn test_high_utilization_withdrawal_emits_warning_event() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 10_000_0000000i128);
-    s.vault_client.deposit(&investor, &10_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &10_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -1456,10 +1520,11 @@ fn test_withdraw_rejects_above_high_tier_limit() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 10_000_0000000i128);
-    s.vault_client.deposit(&investor, &10_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &10_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -1486,10 +1551,11 @@ fn test_withdraw_rejects_above_med_tier_limit() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 10_000_0000000i128);
-    s.vault_client.deposit(&investor, &10_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &10_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -1517,10 +1583,11 @@ fn test_withdraw_rejects_above_low_tier_limit() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 10_000_0000000i128);
-    s.vault_client.deposit(&investor, &10_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &10_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -1617,10 +1684,11 @@ fn test_fund_project_blocked_below_credit_threshold() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -1640,10 +1708,11 @@ fn test_fund_project_blocked_below_green_threshold() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -1662,10 +1731,11 @@ fn test_fund_project_allowed_when_thresholds_met() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -1866,8 +1936,8 @@ fn test_address_to_bytes32_keeps_trailing_bytes_when_source_exceeds_32() {
     let encoded_array = encoded.to_array();
 
     let mut expected = [0u8; 32];
-    for i in 0..32 {
-        expected[i] = xdr.get((len - 32 + i) as u32).unwrap();
+    for (i, item) in expected.iter_mut().enumerate() {
+        *item = xdr.get((len - 32 + i) as u32).unwrap();
     }
     assert_eq!(
         encoded_array, expected,
@@ -1877,7 +1947,6 @@ fn test_address_to_bytes32_keeps_trailing_bytes_when_source_exceeds_32() {
 
 // ── Issue #429: set_carbon_oracle()/set_max_transaction_amount() success-path coverage ─
 
-#[test]
 // ── Issue #403: calculate_carbon_credits must reject non-positive amounts ──────
 #[test]
 #[should_panic(expected = "Error(Contract, #1)")]
@@ -1885,7 +1954,7 @@ fn test_calculate_carbon_credits_rejects_non_positive_amount() {
     let s = setup();
     let creator = Address::generate(&s.env);
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm"),
@@ -2023,7 +2092,8 @@ fn test_get_deposit_lock_expiry() {
     s.env.ledger().with_mut(|li| li.timestamp = 500);
     let deposited_at = s.env.ledger().timestamp();
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     assert_eq!(
         s.vault_client.get_deposit_lock_expiry(&investor),
@@ -2054,7 +2124,8 @@ fn test_fund_project_panics_with_zero_project_id() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
     // project_id 0 is always invalid (projects are 1-indexed)
     s.vault_client.fund_project(&0u32, &100_0000000i128);
 }
@@ -2065,7 +2136,8 @@ fn test_fund_project_panics_with_out_of_range_project_id() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
     // registry has no projects, so any project_id > 0 is out of range
     s.vault_client.fund_project(&999u32, &100_0000000i128);
 }
@@ -2085,11 +2157,12 @@ fn test_fund_project_rejects_paused_registry() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmPausedRegistry"),
@@ -2107,10 +2180,11 @@ fn test_fund_project_succeeds_with_valid_project_id() {
     let investor = Address::generate(&s.env);
     let creator = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm12"),
@@ -2129,10 +2203,11 @@ fn test_fund_project_rejects_self_funding_by_admin() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&s.admin, &true);
+    registry_client.set_whitelist(&s.admin, &true, &0u64);
     let project_id = registry_client.create_project(
         &s.admin,
         &String::from_str(&s.env, "ipfs://QmSelfFund"),
@@ -2158,7 +2233,9 @@ fn test_deposit_rejects_when_exceeding_max_hbs_supply() {
     for _ in 0..20 {
         let investor = Address::generate(&s.env);
         mint_usdc(&s.env, &s.usdc_sac, &investor, MAX_DEPOSIT);
-        let result = s.vault_client.try_deposit(&investor, &MAX_DEPOSIT);
+        let result = s
+            .vault_client
+            .try_deposit(&investor, &MAX_DEPOSIT, &0i128, &u64::MAX);
         if result.is_err() {
             hit_cap = true;
             break;
@@ -2181,7 +2258,8 @@ fn test_deposit_below_minimum_panics() {
     let investor = Address::generate(&s.env);
     // 10 USDC is below MIN_DEPOSIT (100 USDC)
     mint_usdc(&s.env, &s.usdc_sac, &investor, 10_0000000i128);
-    s.vault_client.deposit(&investor, &10_0000000i128);
+    s.vault_client
+        .deposit(&investor, &10_0000000i128, &0i128, &u64::MAX);
 }
 
 #[test]
@@ -2190,7 +2268,9 @@ fn test_deposit_at_minimum_succeeds() {
     let investor = Address::generate(&s.env);
     // exactly MIN_DEPOSIT (100 USDC) must succeed
     mint_usdc(&s.env, &s.usdc_sac, &investor, 100_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &100_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &100_0000000i128, &0i128, &u64::MAX);
     assert!(shares > 0);
 }
 
@@ -2200,7 +2280,8 @@ fn test_withdraw_below_minimum_panics() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
     s.env.ledger().with_mut(|li| {
         li.sequence_number += 1;
     });
@@ -2213,7 +2294,8 @@ fn test_withdraw_at_minimum_succeeds() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
     s.env.ledger().with_mut(|li| {
         li.sequence_number += 1;
     });
@@ -2231,11 +2313,12 @@ fn test_concurrent_deposits_and_fund_project() {
 
     // Deposit 1
     mint_usdc(&s.env, &s.usdc_sac, &investor1, 2_000_0000000i128);
-    s.vault_client.deposit(&investor1, &2_000_0000000i128);
+    s.vault_client
+        .deposit(&investor1, &2_000_0000000i128, &0i128, &u64::MAX);
 
     // Setup Project
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://Qm12"),
@@ -2249,7 +2332,9 @@ fn test_concurrent_deposits_and_fund_project() {
 
     // Deposit 2
     mint_usdc(&s.env, &s.usdc_sac, &investor2, 3_000_0000000i128);
-    let shares2 = s.vault_client.deposit(&investor2, &3_000_0000000i128);
+    let shares2 = s
+        .vault_client
+        .deposit(&investor2, &3_000_0000000i128, &0i128, &u64::MAX);
 
     // Withdraw from investor1
     let shares1 = s.vault_client.balance(&investor1);
@@ -2322,7 +2407,8 @@ fn test_deposit_blocked_when_vault_paused() {
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
     s.vault_client.pause();
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 }
 
 // ── Storage compaction tests (#88) ────────────────────────────────────────────
@@ -2333,14 +2419,15 @@ fn test_compact_storage_removes_zero_project_investment() {
     let investor = Address::generate(&s.env);
     let deposit = 1_000_0000000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor, deposit);
-    s.vault_client.deposit(&investor, &deposit);
+    s.vault_client
+        .deposit(&investor, &deposit, &0i128, &u64::MAX);
 
     // Create a project in the registry (owned by someone other than the vault
     // admin — see #14) and fund it.
     // Available for deployment = liquid(1000) - insurance_reserve(5) = 995 USDC.
     let project_creator = Address::generate(&s.env);
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&project_creator, &true);
+    registry_client.set_whitelist(&project_creator, &true, &0u64);
     let pid = registry_client.create_project(
         &project_creator,
         &soroban_sdk::String::from_str(&s.env, "ipfs://QmCompact"),
@@ -2391,7 +2478,8 @@ fn test_vault_stale_stored_version_blocks_normal_calls() {
             .set(&crate::types::VaultKey::StateVersion, &0u32);
     });
 
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 }
 
 #[test]
@@ -2524,7 +2612,7 @@ proptest! {
         let investor = Address::generate(&s.env);
         mint_usdc(&s.env, &s.usdc_sac, &investor, deposit_amount);
 
-        let shares = s.vault_client.deposit(&investor, &deposit_amount);
+        let shares = s.vault_client.deposit(&investor, &deposit_amount, &0i128, &u64::MAX);
 
         // Insurance premium stays in vault USDC balance; total_assets includes it.
         // shares = investable (1:1 first deposit), total_assets = deposit_amount,
@@ -2562,7 +2650,7 @@ proptest! {
         let s = setup();
         let investor = Address::generate(&s.env);
         mint_usdc(&s.env, &s.usdc_sac, &investor, amount);
-        let result = s.vault_client.try_deposit(&investor, &amount);
+        let result = s.vault_client.try_deposit(&investor, &amount, &0i128, &u64::MAX);
         prop_assert!(result.is_err());
     }
 }
@@ -2573,7 +2661,9 @@ fn test_withdrawal_rate_limiting_same_ledger() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Try to withdraw in the same ledger sequence -> should panic
     s.vault_client.withdraw(&investor, &shares, &0);
@@ -2584,7 +2674,9 @@ fn test_withdrawal_rate_limiting_next_ledger() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Advance ledger sequence
     s.env.ledger().with_mut(|li| {
@@ -2603,7 +2695,9 @@ fn test_withdrawal_rate_limiting_transfer_locked() {
     let investor1 = Address::generate(&s.env);
     let investor2 = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor1, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor1, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor1, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Advance sequence for investor1 so they can transfer
     s.env.ledger().with_mut(|li| {
@@ -2613,7 +2707,7 @@ fn test_withdrawal_rate_limiting_transfer_locked() {
     // Transfer shares from investor1 to investor2
     s.vault_client.transfer(
         &investor1,
-        &soroban_sdk::MuxedAddress::from(investor2.clone()),
+        soroban_sdk::MuxedAddress::from(investor2.clone()),
         &shares,
     );
 
@@ -2674,7 +2768,7 @@ fn test_all_only_owner_functions_reject_non_admin_caller() {
         s.vault_client
             .try_set_trusted_emitter(&1u32, &hash32, &true)
             .is_err(),
-        s.vault_client.try_set_flash_loan_fee(&1i128).is_err(),
+        s.vault_client.try_set_flash_loan_fee(&1u32).is_err(),
         s.vault_client.try_set_carbon_oracle(&addr()).is_err(),
         s.vault_client
             .try_set_max_transaction_amount(&1i128)
@@ -2690,7 +2784,9 @@ fn test_all_only_owner_functions_reject_non_admin_caller() {
         s.vault_client.try_unpause().is_err(),
         s.vault_client.try_set_emergency_admin(&None).is_err(),
         s.vault_client.try_compact_storage().is_err(),
-        s.vault_client.try_upgrade(&hash32).is_err(),
+        s.vault_client
+            .try_upgrade(&hash32, &Vec::new(&s.env))
+            .is_err(),
         s.vault_client
             .try_set_volume_fee_tier(&500_0000000i128, &50u32)
             .is_err(),
@@ -2716,7 +2812,8 @@ fn test_withdraw_rejects_zero_shares() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Advance one ledger so the deposit lock doesn't fire first.
     s.env.ledger().with_mut(|li| li.sequence_number += 1);
@@ -2734,7 +2831,8 @@ fn test_withdraw_rejects_below_minimum_shares() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     s.env.ledger().with_mut(|li| li.sequence_number += 1);
 
@@ -2772,11 +2870,12 @@ fn test_get_project_investments_batch_returns_correct_amounts() {
     let creator2 = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 5_000_0000000i128);
-    s.vault_client.deposit(&investor, &5_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &5_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator1, &true);
-    registry_client.set_whitelist(&creator2, &true);
+    registry_client.set_whitelist(&creator1, &true, &0u64);
+    registry_client.set_whitelist(&creator2, &true, &0u64);
     let pid1 = registry_client.create_project(
         &creator1,
         &String::from_str(&s.env, "ipfs://QmAlpha"),
@@ -2810,10 +2909,11 @@ fn test_get_all_project_investments_returns_all() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 2_000_0000000i128);
-    s.vault_client.deposit(&investor, &2_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &2_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let pid1 = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmAll1"),
@@ -2845,7 +2945,7 @@ fn test_deposit_rejects_zero_amount() {
     // any transfer or share calculation is attempted.
     let s = setup();
     let investor = Address::generate(&s.env);
-    s.vault_client.deposit(&investor, &0i128);
+    s.vault_client.deposit(&investor, &0i128, &0i128, &u64::MAX);
 }
 
 // ── Issue #181: fund_project() must reject a zero/negative amount ─────────────
@@ -2860,10 +2960,11 @@ fn test_fund_project_rejects_zero_amount() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmFundZero"),
@@ -2884,10 +2985,11 @@ fn test_fund_project_rejects_negative_amount() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmFundNeg"),
@@ -2910,10 +3012,11 @@ fn test_claim_queued_is_idempotent_against_double_claim() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 2_000_0000000i128);
-    s.vault_client.deposit(&investor, &2_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &2_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let pid = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmGamma"),
@@ -2944,7 +3047,9 @@ fn test_withdrawal_window_blocks_early_exit() {
     // Set a 5-ledger withdrawal window.
     s.vault_client.set_withdrawal_window(&5u32);
 
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Only 2 ledgers elapsed — still inside the 5-ledger window.
     s.env.ledger().with_mut(|li| li.sequence_number += 2);
@@ -2965,7 +3070,9 @@ fn test_withdrawal_window_allows_exit_after_window() {
 
     s.vault_client.set_withdrawal_window(&5u32);
 
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Advance past the 5-ledger window and the 1-day MIN_LOCK_PERIOD.
     s.env.ledger().with_mut(|li| {
@@ -2986,7 +3093,9 @@ fn test_withdrawal_window_enforced_after_time_lock_expires() {
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
 
     s.vault_client.set_withdrawal_window(&100u32);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Time lock over, but only 50 of 100 ledgers elapsed.
     s.env.ledger().with_mut(|li| {
@@ -3012,7 +3121,9 @@ fn test_withdrawal_window_zero_disables_ledger_check() {
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
 
     s.vault_client.set_withdrawal_window(&0u32);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Same ledger sequence, only the time lock has passed.
     s.env.ledger().with_mut(|li| li.timestamp += 86_400);
@@ -3035,10 +3146,12 @@ fn test_claim_settles_queued_withdrawal_then_second_claim_is_noop() {
     let creator = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmIdempotent"),
@@ -3060,7 +3173,8 @@ fn test_claim_settles_queued_withdrawal_then_second_claim_is_noop() {
     // Restore liquidity so claim() can settle.
     let funder = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &funder, 2_000_0000000i128);
-    s.vault_client.deposit(&funder, &2_000_0000000i128);
+    s.vault_client
+        .deposit(&funder, &2_000_0000000i128, &0i128, &u64::MAX);
 
     let usdc_client = TokenClient::new(&s.env, &s.usdc_sac);
 
@@ -3100,7 +3214,8 @@ fn test_volume_fee_tier_applies_discount_for_large_deposits() {
     let small_investor = Address::generate(&s.env);
     let small_deposit = 100_0000000i128; // 100 USDC < threshold
     mint_usdc(&s.env, &s.usdc_sac, &small_investor, small_deposit);
-    s.vault_client.deposit(&small_investor, &small_deposit);
+    s.vault_client
+        .deposit(&small_investor, &small_deposit, &0i128, &u64::MAX);
     let expected_small_fee = small_deposit * 200 / 10_000; // 2 USDC
     assert_eq!(usdc_client.balance(&fee_recipient), expected_small_fee);
 
@@ -3108,7 +3223,8 @@ fn test_volume_fee_tier_applies_discount_for_large_deposits() {
     let large_investor = Address::generate(&s.env);
     let large_deposit = 1_000_0000000i128; // 1000 USDC >= threshold
     mint_usdc(&s.env, &s.usdc_sac, &large_investor, large_deposit);
-    s.vault_client.deposit(&large_investor, &large_deposit);
+    s.vault_client
+        .deposit(&large_investor, &large_deposit, &0i128, &u64::MAX);
     let expected_large_fee = large_deposit * 50 / 10_000; // 5 USDC
     assert_eq!(
         usdc_client.balance(&fee_recipient),
@@ -3134,7 +3250,8 @@ fn test_volume_fee_tier_disabled_reverts_to_flat_rate() {
     let investor = Address::generate(&s.env);
     let deposit = 1_000_0000000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor, deposit);
-    s.vault_client.deposit(&investor, &deposit);
+    s.vault_client
+        .deposit(&investor, &deposit, &0i128, &u64::MAX);
 
     // Full 200 bps applied despite deposit being above the old threshold.
     let expected_fee = deposit * 200 / 10_000;
@@ -3180,7 +3297,7 @@ fn test_convert_to_shares_near_i128_max_overflows_visibly() {
     // forces the multiplication path: usdc_amount * total_shares / total_assets.
     let seed = 1_000_0000000i128; // 1 000 USDC (7-decimal)
     mint_usdc(&s.env, &s.usdc_sac, &investor, seed * 2);
-    s.vault_client.deposit(&investor, &seed);
+    s.vault_client.deposit(&investor, &seed, &0i128, &u64::MAX);
 
     // Near-maximum i128 value; multiplying this by any total_shares > 1
     // will overflow a signed 128-bit integer.
@@ -3237,7 +3354,8 @@ fn test_flash_loan_succeeds_with_valid_same_transaction_repayment() {
     let investor = Address::generate(&s.env);
     let deposit_amount = 10_000_0000000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor, deposit_amount);
-    s.vault_client.deposit(&investor, &deposit_amount);
+    s.vault_client
+        .deposit(&investor, &deposit_amount, &0i128, &u64::MAX);
 
     // Register the mock borrower that always repays.
     let borrower = s
@@ -3246,7 +3364,7 @@ fn test_flash_loan_succeeds_with_valid_same_transaction_repayment() {
     let initiator = Address::generate(&s.env);
 
     // Set a 10 bps flash-loan fee so the fee path is exercised.
-    s.vault_client.set_flash_loan_fee(&10i128);
+    s.vault_client.set_flash_loan_fee(&10u32);
 
     let loan_amount = 1_000_0000000i128;
 
@@ -3296,7 +3414,8 @@ fn test_flash_loan_fails_without_repayment() {
     let investor = Address::generate(&s.env);
     let deposit_amount = 10_000_0000000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor, deposit_amount);
-    s.vault_client.deposit(&investor, &deposit_amount);
+    s.vault_client
+        .deposit(&investor, &deposit_amount, &0i128, &u64::MAX);
 
     let borrower = s
         .env
@@ -3319,7 +3438,9 @@ fn test_get_portfolio_after_single_deposit() {
     let amount = 1_000_0000000i128; // 1000 USDC
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, amount);
-    let shares = s.vault_client.deposit(&investor, &amount);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &amount, &0i128, &u64::MAX);
 
     let portfolio = s.vault_client.get_portfolio(&investor);
 
@@ -3343,10 +3464,10 @@ fn test_get_portfolio_share_of_pool_with_two_investors() {
     let amount = 500_0000000i128; // 500 USDC each
 
     mint_usdc(&s.env, &s.usdc_sac, &alice, amount);
-    s.vault_client.deposit(&alice, &amount);
+    s.vault_client.deposit(&alice, &amount, &0i128, &u64::MAX);
 
     mint_usdc(&s.env, &s.usdc_sac, &bob, amount);
-    s.vault_client.deposit(&bob, &amount);
+    s.vault_client.deposit(&bob, &amount, &0i128, &u64::MAX);
 
     let alice_portfolio = s.vault_client.get_portfolio(&alice);
     let bob_portfolio = s.vault_client.get_portfolio(&bob);
@@ -3384,7 +3505,8 @@ fn test_insurance_fund_balance_increases_after_deposit() {
     let amount = 1_000_0000000i128; // 1000 USDC
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, amount);
-    s.vault_client.deposit(&investor, &amount);
+    s.vault_client
+        .deposit(&investor, &amount, &0i128, &u64::MAX);
 
     let expected_premium = amount * 50 / 10_000; // INSURANCE_PREMIUM_BPS = 50
     assert_eq!(s.vault_client.insurance_fund_balance(), expected_premium);
@@ -3398,13 +3520,13 @@ fn test_insurance_fund_accumulates_across_deposits() {
 
     let amount_a = 1_000_0000000i128; // 1000 USDC
     mint_usdc(&s.env, &s.usdc_sac, &alice, amount_a);
-    s.vault_client.deposit(&alice, &amount_a);
+    s.vault_client.deposit(&alice, &amount_a, &0i128, &u64::MAX);
 
     let premium_a = amount_a * 50 / 10_000;
 
     let amount_b = 2_000_0000000i128; // 2000 USDC
     mint_usdc(&s.env, &s.usdc_sac, &bob, amount_b);
-    s.vault_client.deposit(&bob, &amount_b);
+    s.vault_client.deposit(&bob, &amount_b, &0i128, &u64::MAX);
 
     let premium_b = amount_b * 50 / 10_000;
     assert_eq!(
@@ -3452,7 +3574,9 @@ fn test_receive_yield_updates_accumulator_and_claimable() {
     let yield_source = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Yield source must have USDC to transfer into the vault.
     let yield_amount = 100_0000000i128; // 100 USDC
@@ -3484,7 +3608,8 @@ fn test_claim_yield_transfers_usdc_and_resets_debt() {
     let yield_source = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let yield_amount = 50_0000000i128; // 50 USDC
     mint_usdc(&s.env, &s.usdc_sac, &yield_source, yield_amount);
@@ -3518,9 +3643,13 @@ fn test_yield_splits_proportionally_between_depositors() {
 
     // Alice deposits 3000, Bob deposits 1000 — 3:1 share ratio (after premium).
     mint_usdc(&s.env, &s.usdc_sac, &alice, 3_000_0000000i128);
-    let shares_a = s.vault_client.deposit(&alice, &3_000_0000000i128);
+    let shares_a = s
+        .vault_client
+        .deposit(&alice, &3_000_0000000i128, &0i128, &u64::MAX);
     mint_usdc(&s.env, &s.usdc_sac, &bob, 1_000_0000000i128);
-    let shares_b = s.vault_client.deposit(&bob, &1_000_0000000i128);
+    let shares_b = s
+        .vault_client
+        .deposit(&bob, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let yield_amount = 400_0000000i128; // 400 USDC
     mint_usdc(&s.env, &s.usdc_sac, &yield_source, yield_amount);
@@ -3556,7 +3685,8 @@ fn test_claim_yield_panics_on_insufficient_liquid() {
     let yield_source = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Receive yield so claimable > 0.
     let yield_amount = 100_0000000i128;
@@ -3567,7 +3697,7 @@ fn test_claim_yield_panics_on_insufficient_liquid() {
     // nothing for the yield claim.
     let creator = Address::generate(&s.env);
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmDrain"),
@@ -3575,11 +3705,12 @@ fn test_claim_yield_panics_on_insufficient_liquid() {
         &test_metadata_hash(&s.env),
     );
     let admin = stellar_access::ownable::get_owner(&s.env).unwrap();
-    s.env.mock_auths(&[soroban_sdk::testutils::AuthMock {
+    s.env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &admin,
-        invoke: &soroban_sdk::testutils::AuthInvocation {
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
             contract: &s.vault_address,
             fn_name: "fund_project",
+            sub_invokes: &[],
             args: (&project_id, &(1_000_0000000i128 - yield_amount)).into_val(&s.env),
         },
     }]);
@@ -3611,7 +3742,8 @@ fn test_claimable_yield_zero_for_non_depositor() {
     let stranger = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     mint_usdc(&s.env, &s.usdc_sac, &yield_source, 100_0000000i128);
     s.vault_client
@@ -3629,9 +3761,9 @@ fn test_health_check_default_state() {
     let status = s.vault_client.health_check();
 
     assert_eq!(status.state_version, 1);
-    assert_eq!(status.is_paused, false);
+    assert!(!status.is_paused);
     assert_eq!(status.utilization_bps, 0);
-    assert_eq!(status.has_emergency_admin, false);
+    assert!(!status.has_emergency_admin);
 }
 
 /// health_check reflects a paused vault.
@@ -3645,7 +3777,7 @@ fn test_health_check_reflects_paused_state() {
     s.vault_client.emergency_pause(&emergency_admin);
 
     let status = s.vault_client.health_check();
-    assert_eq!(status.is_paused, true);
+    assert!(status.is_paused);
 }
 
 /// health_check reports has_emergency_admin when one is configured.
@@ -3656,7 +3788,7 @@ fn test_health_check_reflects_emergency_admin() {
     s.vault_client.set_emergency_admin(&Some(emergency_admin));
 
     let status = s.vault_client.health_check();
-    assert_eq!(status.has_emergency_admin, true);
+    assert!(status.has_emergency_admin);
 }
 
 // ── Issue #391: compliance / reporting test coverage ──────────────────────────
@@ -3849,7 +3981,8 @@ fn test_take_and_get_reporting_snapshot() {
     let investor = Address::generate(&s.env);
     let amount = 1_000_0000000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor, amount);
-    s.vault_client.deposit(&investor, &amount);
+    s.vault_client
+        .deposit(&investor, &amount, &0i128, &u64::MAX);
 
     s.vault_client.take_reporting_snapshot();
 
@@ -3874,7 +4007,8 @@ fn test_export_regulatory_data() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Set a transaction limit.
     s.vault_client.set_max_transaction_amount(&500_000_000i128);
@@ -3890,7 +4024,7 @@ fn test_export_regulatory_data() {
 
     let report = s.vault_client.export_regulatory_data();
     assert!(report.snapshot.timestamp > 0);
-    assert!(report.recent_events.len() > 0);
+    assert!(!report.recent_events.is_empty());
     assert_eq!(report.max_transaction_amount, 500_000_000i128);
 }
 
@@ -3916,10 +4050,10 @@ fn test_bridge_mint_happy_path() {
     let recipient = Address::generate(&s.env);
 
     s.vault_client.set_bridge(&bridge);
-    s.env.mock_auths(&[soroban_sdk::testutils::AuthMock {
+    s.env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &bridge,
-        invoke: &soroban_sdk::testutils::AuthInvocation {
-            contract: s.vault_address.clone(),
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &s.vault_address,
             fn_name: "bridge_mint",
             args: (&recipient, &100_0000000i128).into_val(&s.env),
             sub_invokes: &[],
@@ -3940,10 +4074,10 @@ fn test_bridge_mint_rejects_non_positive_amount() {
     let recipient = Address::generate(&s.env);
 
     s.vault_client.set_bridge(&bridge);
-    s.env.mock_auths(&[soroban_sdk::testutils::AuthMock {
+    s.env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &bridge,
-        invoke: &soroban_sdk::testutils::AuthInvocation {
-            contract: s.vault_address.clone(),
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &s.vault_address,
             fn_name: "bridge_mint",
             args: (&recipient, &0i128).into_val(&s.env),
             sub_invokes: &[],
@@ -3960,7 +4094,8 @@ fn test_bridge_burn_happy_path() {
 
     // Deposit first so the investor has shares to burn.
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     s.vault_client.bridge_burn(&investor, &500_0000000i128);
 
@@ -3978,7 +4113,8 @@ fn test_bridge_burn_rejects_non_positive_amount() {
     let investor = Address::generate(&s.env);
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     s.vault_client.bridge_burn(&investor, &-1);
 }
@@ -4028,7 +4164,8 @@ fn test_initiate_bridge_transfer_happy_path() {
     let amount: i128 = 200_0000000i128;
 
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Setup mock core
     let return_vaa = wormhole::ParsedVaa {
@@ -4066,7 +4203,8 @@ fn test_initiate_bridge_transfer_rejects_invalid_target_chain() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let return_vaa = wormhole::ParsedVaa {
         emitter_chain: wormhole::chain_id::ETHEREUM,
@@ -4097,6 +4235,7 @@ fn test_initiate_bridge_transfer_rejects_invalid_target_chain() {
     assert_eq!(s.vault_client.total_supply(), supply_before);
 }
 
+#[test]
 fn test_complete_bridge_transfer_happy_path() {
     let s = setup();
     let bridge = Address::generate(&s.env);
@@ -4167,7 +4306,7 @@ fn test_complete_bridge_transfer_rejects_untrusted_emitter() {
     let emitter_bytes = wormhole::address_to_bytes32(&s.env, &emitter);
     let return_vaa = wormhole::ParsedVaa {
         emitter_chain: wormhole::chain_id::ETHEREUM,
-        emitter_address: emitter_bytes,
+        emitter_address: emitter_bytes.clone(),
         payload,
     };
 
@@ -4206,7 +4345,7 @@ fn test_complete_bridge_transfer_rejects_replayed_vaa() {
     let emitter_bytes = wormhole::address_to_bytes32(&s.env, &emitter);
     let return_vaa = wormhole::ParsedVaa {
         emitter_chain: wormhole::chain_id::ETHEREUM,
-        emitter_address: emitter_bytes,
+        emitter_address: emitter_bytes.clone(),
         payload,
     };
 
@@ -4232,16 +4371,16 @@ fn test_enable_secondary_trading_allowed_while_paused() {
 
     // Pause the vault
     s.vault_client.pause();
-    assert_eq!(s.vault_client.is_paused(), true);
+    assert!(s.vault_client.is_paused());
 
     // Verify trading is not enabled initially
-    assert_eq!(s.vault_client.is_trading_enabled(), false);
+    assert!(!s.vault_client.is_trading_enabled());
 
     // Enable secondary trading while the vault is paused
     s.vault_client.enable_secondary_trading();
 
     // Verify it succeeded
-    assert_eq!(s.vault_client.is_trading_enabled(), true);
+    assert!(s.vault_client.is_trading_enabled());
 }
 
 // ── Issue #631: maturity-based bond lifecycle ────────────────────────────────
@@ -4250,7 +4389,7 @@ fn test_enable_secondary_trading_allowed_while_paused() {
 fn create_maturing_project(s: &TestSetup, maturity: u64) -> (u32, Address) {
     let creator = Address::generate(&s.env);
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmLifecycle"),
@@ -4266,7 +4405,8 @@ fn test_full_bond_lifecycle_create_fund_yield_mature_repay_settle() {
     s.env.ledger().with_mut(|l| l.timestamp = 1_000);
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // create → fund
     let maturity = 1_000 + 365 * 24 * 3600;
@@ -4327,7 +4467,8 @@ fn test_repay_principal_keeps_nav_and_caps_at_outstanding() {
     s.env.ledger().with_mut(|l| l.timestamp = 1_000);
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let (id, owner) = create_maturing_project(&s, 1_000 + 3600);
     s.vault_client.fund_project(&id, &200_0000000i128);
@@ -4358,13 +4499,16 @@ fn test_617_preview_deposit_matches_deposit() {
     s.vault_client.set_management_fee(&100u32, &fee_recipient);
     let first = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &first, 1_000_0000000i128);
-    s.vault_client.deposit(&first, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&first, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let investor = Address::generate(&s.env);
     let amount = 500_0000000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor, amount);
     let preview = s.vault_client.preview_deposit(&amount);
-    let minted = s.vault_client.deposit(&investor, &amount);
+    let minted = s
+        .vault_client
+        .deposit(&investor, &amount, &0i128, &u64::MAX);
     assert_eq!(preview, minted);
 }
 
@@ -4375,7 +4519,8 @@ fn test_617_share_price_is_one_to_one_when_empty_and_tracks_nav() {
 
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
     let expected = s.vault_client.total_assets() * 10_000_000 / s.vault_client.total_supply();
     assert_eq!(s.vault_client.share_price(), expected);
 }
@@ -4385,7 +4530,9 @@ fn test_617_preview_withdraw_and_max_withdraw_match_withdraw() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     // Deposit lock active: nothing withdrawable yet.
     assert_eq!(s.vault_client.max_withdraw(&investor), 0);
@@ -4416,7 +4563,8 @@ fn test_617_views_cost_estimate() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     s.vault_client.share_price();
     let r = s.env.cost_estimate().resources();
@@ -4453,15 +4601,18 @@ fn test_queued_withdrawal_liability_and_claim_keep_price_fair() {
     let s = setup();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
-    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    let shares = s
+        .vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
 
     let other = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &other, 100_0000000i128);
-    s.vault_client.deposit(&other, &100_0000000i128);
+    s.vault_client
+        .deposit(&other, &100_0000000i128, &0i128, &u64::MAX);
 
     let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let project_id = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://test"),
@@ -4487,7 +4638,8 @@ fn test_queued_withdrawal_liability_and_claim_keep_price_fair() {
     // A new depositor buys in at the fair (unchanged) price.
     let newcomer = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &newcomer, 1_000_0000000i128);
-    s.vault_client.deposit(&newcomer, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&newcomer, &1_000_0000000i128, &0i128, &u64::MAX);
     let price_mid = s.vault_client.convert_to_assets(&1_0000000i128);
     assert!((price_mid - price_before).abs() <= 1);
 
@@ -4507,12 +4659,14 @@ fn test_700_claim_insurance_requires_settled_impaired_project() {
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
     // 50-bps premium: insurance fund = 5 USDC.
-    s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.vault_client
+        .deposit(&investor, &1_000_0000000i128, &0i128, &u64::MAX);
     let recipient = Address::generate(&s.env);
 
     // A made-up project id can't be claimed against.
     assert_eq!(
-        s.vault_client.try_claim_insurance(&999u32, &recipient, &1_0000000i128),
+        s.vault_client
+            .try_claim_insurance(&999u32, &recipient, &1_0000000i128),
         Err(Ok(VaultError::ProjectNotImpaired.into()))
     );
 
@@ -4520,22 +4674,28 @@ fn test_700_claim_insurance_requires_settled_impaired_project() {
     let (id, _owner) = create_maturing_project(&s, 1_000 + 3600);
     s.vault_client.fund_project(&id, &2_0000000i128);
     assert_eq!(
-        s.vault_client.try_claim_insurance(&id, &recipient, &1_0000000i128),
+        s.vault_client
+            .try_claim_insurance(&id, &recipient, &1_0000000i128),
         Err(Ok(VaultError::ProjectNotImpaired.into()))
     );
 
     // Settle with the full 2 USDC written off as impairment.
     s.env.ledger().with_mut(|l| l.timestamp = 1_000 + 3600);
     s.vault_client.settle_project(&id);
-    assert_eq!(s.vault_client.get_project_position(&id).impairment, 2_0000000);
+    assert_eq!(
+        s.vault_client.get_project_position(&id).impairment,
+        2_0000000
+    );
 
     // The claim is capped at the impairment, even though the fund holds 5 USDC.
     assert_eq!(
-        s.vault_client.try_claim_insurance(&id, &recipient, &3_0000000i128),
+        s.vault_client
+            .try_claim_insurance(&id, &recipient, &3_0000000i128),
         Err(Ok(VaultError::ClaimExceedsImpairment.into()))
     );
 
-    s.vault_client.claim_insurance(&id, &recipient, &2_0000000i128);
+    s.vault_client
+        .claim_insurance(&id, &recipient, &2_0000000i128);
     let usdc = soroban_sdk::token::TokenClient::new(&s.env, &s.usdc_sac);
     assert_eq!(usdc.balance(&recipient), 2_0000000);
 }
@@ -4553,12 +4713,7 @@ fn setup_with_multisig() -> TestSetup {
     let signer_a = Address::generate(&s.env);
     let signer_b = Address::generate(&s.env);
     let signer_c = Address::generate(&s.env);
-    let signers = soroban_sdk::vec![
-        &s.env,
-        signer_a.clone(),
-        signer_b.clone(),
-        signer_c.clone(),
-    ];
+    let signers = soroban_sdk::vec![&s.env, signer_a.clone(), signer_b.clone(), signer_c.clone(),];
     s.vault_client.set_multisig_admin(&signers, &2u32);
     s
 }
@@ -4569,7 +4724,8 @@ fn test_fund_project_with_approvals_succeeds_with_threshold() {
     let investor = Address::generate(&s.env);
     let amount = 10_000_0000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor, amount);
-    s.vault_client.deposit(&investor, &amount);
+    s.vault_client
+        .deposit(&investor, &amount, &0i128, &u64::MAX);
 
     let (project_id, owner) = create_maturing_project(&s, 1_000 + 3600);
     let owner_before = usdc_balance(&s, &owner);
@@ -4582,7 +4738,8 @@ fn test_fund_project_with_approvals_succeeds_with_threshold() {
     }
 
     let fund_amount = 5_0000000i128;
-    s.vault_client.fund_project_with_approvals(&project_id, &fund_amount, &approvals);
+    s.vault_client
+        .fund_project_with_approvals(&project_id, &fund_amount, &approvals);
 
     let owner_after = usdc_balance(&s, &owner);
     assert_eq!(owner_after - owner_before, fund_amount);
@@ -4594,7 +4751,8 @@ fn test_fund_project_with_approvals_rejects_below_threshold() {
     let s = setup_with_multisig();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 10_000_0000i128);
-    s.vault_client.deposit(&investor, &10_000_0000i128);
+    s.vault_client
+        .deposit(&investor, &10_000_0000i128, &0i128, &u64::MAX);
 
     let (project_id, _owner) = create_maturing_project(&s, 1_000 + 3600);
     let (signers, threshold) = s.vault_client.get_multisig_admin();
@@ -4605,7 +4763,8 @@ fn test_fund_project_with_approvals_rejects_below_threshold() {
         approvals.push_back(signers.get(i).unwrap());
     }
 
-    s.vault_client.fund_project_with_approvals(&project_id, &5_0000000i128, &approvals);
+    s.vault_client
+        .fund_project_with_approvals(&project_id, &5_0000000i128, &approvals);
 }
 
 #[test]
@@ -4614,7 +4773,8 @@ fn test_fund_project_with_approvals_rejects_non_signer() {
     let s = setup_with_multisig();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 10_000_0000i128);
-    s.vault_client.deposit(&investor, &10_000_0000i128);
+    s.vault_client
+        .deposit(&investor, &10_000_0000i128, &0i128, &u64::MAX);
 
     let (project_id, _owner) = create_maturing_project(&s, 1_000 + 3600);
     let (signers, threshold) = s.vault_client.get_multisig_admin();
@@ -4626,7 +4786,8 @@ fn test_fund_project_with_approvals_rejects_non_signer() {
     }
     approvals.push_back(Address::generate(&s.env)); // non-signer
 
-    s.vault_client.fund_project_with_approvals(&project_id, &5_0000000i128, &approvals);
+    s.vault_client
+        .fund_project_with_approvals(&project_id, &5_0000000i128, &approvals);
 }
 
 #[test]
@@ -4634,10 +4795,13 @@ fn test_claim_insurance_with_approvals_succeeds_with_threshold() {
     let s = setup_with_multisig();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 10_000_0000i128);
-    s.vault_client.deposit(&investor, &10_000_0000i128);
+    s.vault_client
+        .deposit(&investor, &10_000_0000i128, &0i128, &u64::MAX);
 
     let (id, _owner) = create_maturing_project(&s, 1_000 + 3600);
     s.vault_client.fund_project(&id, &2_0000000i128);
+}
+
 // ── #734: get_expected_returns tests ─────────────────────────────────────────
 
 #[test]
@@ -4650,9 +4814,9 @@ fn test_get_expected_returns_zero_for_empty_vault() {
 fn test_get_expected_returns_with_funded_project() {
     let s = setup();
     // Create a project and fund it.
-    let registry_client = registry_contract::ProjectRegistryClient::new(&s.env, &s.registry);
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let pid = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmTest"),
@@ -4668,15 +4832,18 @@ fn test_get_expected_returns_with_funded_project() {
     s.env.ledger().with_mut(|l| l.timestamp += one_year_secs);
 
     let expected = s.vault_client.get_expected_returns();
-    assert!(expected > 0, "expected returns should be > 0 after time passes");
+    assert!(
+        expected > 0,
+        "expected returns should be > 0 after time passes"
+    );
 }
 
 #[test]
 fn test_get_expected_returns_zero_before_time_elapses() {
     let s = setup();
-    let registry_client = registry_contract::ProjectRegistryClient::new(&s.env, &s.registry);
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let pid = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmTest"),
@@ -4705,9 +4872,9 @@ fn test_fund_project_with_approvals_succeeds_with_enough_signers() {
     s.vault_client.set_multisig_admin(&signers, &2);
 
     // Create and whitelist a project.
-    let registry_client = registry_contract::ProjectRegistryClient::new(&s.env, &s.registry);
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let pid = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmTest"),
@@ -4716,8 +4883,11 @@ fn test_fund_project_with_approvals_succeeds_with_enough_signers() {
     );
 
     // Provide 2 approvals (meets threshold).
+    let (signers, _) = s.vault_client.get_multisig_admin();
+    let _recipient = Address::generate(&s.env);
     let approvals = soroban_sdk::vec![&s.env, signers.get(0).unwrap(), signers.get(1).unwrap()];
-    s.vault_client.fund_project_with_approvals(&pid, &1_0000000i128, &approvals);
+    s.vault_client
+        .fund_project_with_approvals(&pid, &1_0000000i128, &approvals);
 
     assert_eq!(s.vault_client.get_project_investment(&pid), 1_0000000);
 }
@@ -4733,9 +4903,9 @@ fn test_fund_project_with_approvals_fails_with_insufficient_signers() {
     ];
     s.vault_client.set_multisig_admin(&signers, &3);
 
-    let registry_client = registry_contract::ProjectRegistryClient::new(&s.env, &s.registry);
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let pid = registry_client.create_project(
         &creator,
         &String::from_str(&s.env, "ipfs://QmTest"),
@@ -4745,11 +4915,10 @@ fn test_fund_project_with_approvals_fails_with_insufficient_signers() {
 
     // Only 1 approval, threshold is 3.
     let approvals = soroban_sdk::vec![&s.env, signers.get(0).unwrap()];
-    assert!(
-        s.vault_client
-            .try_fund_project_with_approvals(&pid, &1_0000000i128, &approvals)
-            .is_err()
-    );
+    assert!(s
+        .vault_client
+        .try_fund_project_with_approvals(&pid, &1_0000000i128, &approvals)
+        .is_err());
 }
 
 #[test]
@@ -4763,9 +4932,9 @@ fn test_claim_insurance_with_approvals_succeeds() {
     ];
     s.vault_client.set_multisig_admin(&signers, &2);
 
-    let registry_client = registry_contract::ProjectRegistryClient::new(&s.env, &s.registry);
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let (id, _owner) = create_maturing_project(&s, 1_000 + 3600);
     s.vault_client.fund_project(&id, &2_0000000i128);
 
@@ -4780,7 +4949,8 @@ fn test_claim_insurance_with_approvals_succeeds() {
         approvals.push_back(signers.get(i).unwrap());
     }
 
-    s.vault_client.claim_insurance_with_approvals(&id, &recipient, &2_0000000i128, &approvals);
+    s.vault_client
+        .claim_insurance_with_approvals(&id, &recipient, &2_0000000i128, &approvals);
     let usdc = soroban_sdk::token::TokenClient::new(&s.env, &s.usdc_sac);
     assert_eq!(usdc.balance(&recipient), 2_0000000);
 }
@@ -4791,10 +4961,13 @@ fn test_claim_insurance_with_approvals_rejects_below_threshold() {
     let s = setup_with_multisig();
     let investor = Address::generate(&s.env);
     mint_usdc(&s.env, &s.usdc_sac, &investor, 10_000_0000i128);
-    s.vault_client.deposit(&investor, &10_000_0000i128);
+    s.vault_client
+        .deposit(&investor, &10_000_0000i128, &0i128, &u64::MAX);
 
     let (id, _owner) = create_maturing_project(&s, 1_000 + 3600);
     s.vault_client.fund_project(&id, &2_0000000i128);
+    let (signers, _) = s.vault_client.get_multisig_admin();
+    let recipient = Address::generate(&s.env);
     let approvals = soroban_sdk::vec![&s.env, signers.get(0).unwrap(), signers.get(1).unwrap()];
     s.vault_client
         .claim_insurance_with_approvals(&id, &recipient, &1_0000000i128, &approvals);
@@ -4814,9 +4987,9 @@ fn test_claim_insurance_with_approvals_fails_with_insufficient_signers() {
     ];
     s.vault_client.set_multisig_admin(&signers, &3);
 
-    let registry_client = registry_contract::ProjectRegistryClient::new(&s.env, &s.registry);
+    let registry_client = registry_contract::Client::new(&s.env, &s.registry);
     let creator = Address::generate(&s.env);
-    registry_client.set_whitelist(&creator, &true);
+    registry_client.set_whitelist(&creator, &true, &0u64);
     let (id, _owner) = create_maturing_project(&s, 1_000 + 3600);
     s.vault_client.fund_project(&id, &2_0000000i128);
 
@@ -4830,7 +5003,8 @@ fn test_claim_insurance_with_approvals_fails_with_insufficient_signers() {
         approvals.push_back(signers.get(i).unwrap());
     }
 
-    s.vault_client.claim_insurance_with_approvals(&id, &recipient, &2_0000000i128, &approvals);
+    s.vault_client
+        .claim_insurance_with_approvals(&id, &recipient, &2_0000000i128, &approvals);
 }
 
 // ── get_expected_returns (#734) ─────────────────────────────────────────────
@@ -4848,13 +5022,14 @@ fn test_get_expected_returns_accrues_time_weighted() {
     let investor = Address::generate(&s.env);
     let deposit_amount = 10_000_0000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor, deposit_amount);
-    s.vault_client.deposit(&investor, &deposit_amount);
+    s.vault_client
+        .deposit(&investor, &deposit_amount, &0i128, &u64::MAX);
 
     // Create and fund a project with known credit_quality and green_impact
     let (project_id, _owner) = create_maturing_project(&s, 1_000 + 3600);
 
     // Set scores via admin (credit_quality=80, green_impact=20 → score_rate=100)
-    let registry = registry_contract::Client::new(&s.env, &s.registry);
+    let _registry = registry_contract::Client::new(&s.env, &s.registry);
     // Use the registry's update functions to set scores
     // Actually, let me just fund the project and verify the formula
     let fund_amount = 5_0000000i128;
@@ -4875,17 +5050,12 @@ fn test_get_expected_returns_is_zero_immediately_after_funding() {
     let investor = Address::generate(&s.env);
     let deposit_amount = 10_000_0000i128;
     mint_usdc(&s.env, &s.usdc_sac, &investor, deposit_amount);
-    s.vault_client.deposit(&investor, &deposit_amount);
+    s.vault_client
+        .deposit(&investor, &deposit_amount, &0i128, &u64::MAX);
 
     let (project_id, _owner) = create_maturing_project(&s, 1_000 + 3600);
     s.vault_client.fund_project(&project_id, &5_0000000i128);
 
     // Immediately after funding, elapsed = 0 so expected returns = 0
     assert_eq!(s.vault_client.get_expected_returns(), 0);
-    let approvals = soroban_sdk::vec![&s.env, signers.get(0).unwrap()];
-    assert!(
-        s.vault_client
-            .try_claim_insurance_with_approvals(&id, &recipient, &1_0000000i128, &approvals)
-            .is_err()
-    );
 }

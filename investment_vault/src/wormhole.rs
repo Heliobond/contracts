@@ -63,9 +63,9 @@
 //!   emitter, effectively minting HBS at will via the bridge. Treat these as
 //!   equivalent in sensitivity to direct minting authority.
 
+use crate::types::VaultError;
 use soroban_sdk::xdr::{FromXdr, ToXdr};
 use soroban_sdk::{contracttype, panic_with_error, Address, Bytes, BytesN, Env};
-use crate::types::VaultError;
 
 pub mod chain_id {
     #![allow(dead_code)]

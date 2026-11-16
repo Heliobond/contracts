@@ -58,15 +58,15 @@ mod wasm_smoke {
         assert_eq!(vault.state_version(), 1u32);
 
         let investor = Address::generate(&env);
-        StellarAssetClient::new(&env, &usdc_sac).mint(&investor, &1_000_0000000i128);
-        let shares = vault.deposit(&investor, &1_000_0000000i128);
+        StellarAssetClient::new(&env, &usdc_sac).mint(&investor, &10_000_000_000_i128);
+        let shares = vault.deposit(&investor, &10_000_000_000_i128, &0i128, &u64::MAX);
         assert!(shares > 0);
         assert_eq!(vault.balance(&investor), shares);
-        assert_eq!(vault.total_assets(), 1_000_0000000i128);
+        assert_eq!(vault.total_assets(), 10_000_000_000_i128);
 
         let registry = registry_wasm::Client::new(&env, &registry_id);
         let creator = Address::generate(&env);
-        registry.set_whitelist(&creator, &true);
+        registry.set_whitelist(&creator, &true, &0u64);
         let hash = soroban_sdk::BytesN::from_array(&env, &[1u8; 32]);
         let project_id = registry.create_project(
             &creator,

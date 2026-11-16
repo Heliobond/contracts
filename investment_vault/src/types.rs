@@ -102,11 +102,11 @@ pub enum VaultError {
     /// Stellar (#454).
     BridgeWrongTargetChain = 46,
     /// Bridge payload is shorter than the minimum valid length (#761).
-    BridgePayloadTooShort = 60,
+    BridgePayloadTooShort = 66,
     /// Bridge payload prefix does not match the expected magic bytes (#761).
-    BridgePayloadBadPrefix = 61,
+    BridgePayloadBadPrefix = 67,
     /// Bridge payload contains an invalid recipient address (#761).
-    BridgeBadRecipient = 62,
+    BridgeBadRecipient = 68,
     /// batch_fund_projects received an empty fundings list (#445).
     EmptyBatchFunding = 47,
     /// A batch deposit or fund-projects request exceeds the configured maximum
@@ -131,7 +131,7 @@ pub enum VaultError {
     /// Multisig is enabled; use the _with_approvals/_approved variant instead (#764).
     MultisigEnabledUseApprovedVariant = 57,
     /// get_latest_snapshot: no reporting snapshot has been taken yet (#402).
-    NoSnapshotTaken = 57,
+    NoSnapshotTaken = 69,
     /// transfer_ownership: no owner is currently set on the contract (#402).
     OwnerNotSet = 58,
     /// transfer_carbon_credits: from and to must be different addresses —
@@ -155,7 +155,7 @@ pub enum VaultError {
     /// Deposit would mint zero shares due to rounding (#744).
     ZeroShares = 65,
     /// record_compliance_event's `event_type` or `data` exceeds MAX_COMPLIANCE_FIELD_LEN (#718).
-    ComplianceFieldTooLong = 64,
+    ComplianceFieldTooLong = 70,
 }
 
 #[contracttype]

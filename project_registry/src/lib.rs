@@ -1,11 +1,14 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractclient, contractimpl, contractmeta, panic_with_error, token::Client as TokenClient,
-    Address, BytesN, Env, String, Vec,
+    contract, contractclient, contractimpl, contractmeta, panic_with_error,
+    token::Client as TokenClient, Address, BytesN, Env, String, Vec,
 };
 
 // Build metadata per SEP-55 (#751).
-contractmeta!(key = "source_repo", val = "https://github.com/Heliobond/contracts");
+contractmeta!(
+    key = "source_repo",
+    val = "https://github.com/Heliobond/contracts"
+);
 contractmeta!(key = "contract_name", val = "project_registry");
 use stellar_access::ownable::{
     get_owner, set_owner, transfer_ownership as ownable_transfer_ownership, Ownable,
@@ -153,7 +156,10 @@ impl ProjectRegistry {
         whitelister.require_auth();
         // Validation: Soroban Address types inherently prevent null/zero addresses,
         // fulfilling explicit validation requirements for account.
-        let entry = WhitelistEntry { status, valid_until };
+        let entry = WhitelistEntry {
+            status,
+            valid_until,
+        };
         storage::write_whitelist_entry(&env, account.clone(), &entry);
         events::whitelist_set(&env, &account, status);
     }
@@ -308,12 +314,15 @@ impl ProjectRegistry {
         }
         // Validate lifecycle transitions: Pending → Active → Funded → Completed (#767).
         // Any other move is rejected.
-        let valid = match (&project.status, &status) {
-            (types::ProjectStatus::Pending, types::ProjectStatus::Active) => true,
-            (types::ProjectStatus::Active, types::ProjectStatus::Funded) => true,
-            (types::ProjectStatus::Funded, types::ProjectStatus::Completed) => true,
-            _ => false,
-        };
+        let valid = matches!(
+            (&project.status, &status),
+            (types::ProjectStatus::Pending, types::ProjectStatus::Active)
+                | (types::ProjectStatus::Active, types::ProjectStatus::Funded)
+                | (
+                    types::ProjectStatus::Funded,
+                    types::ProjectStatus::Completed
+                )
+        );
         if !valid {
             panic_with_error!(&env, RegistryError::InvalidStatusTransition);
         }
@@ -504,24 +513,14 @@ impl ProjectRegistry {
         env.storage().instance().get(&DataKey::Oracle)
     }
 
-    /// Require that the caller is the configured Oracle (#748).
-    fn require_oracle(env: &Env, caller: &Address) {
-        caller.require_auth();
-        let oracle: Option<Address> = env.storage().instance().get(&DataKey::Oracle);
-        match oracle {
-            Some(expected) => {
-                if caller != &expected {
-                    panic_with_error!(env, RegistryError::Unauthorized);
-                }
-            }
-            None => {
-                // No Oracle configured — fall back to owner-only.
-                let owner = AdminManager::get_owner(env);
-                if caller != &owner {
-                    panic_with_error!(env, RegistryError::Unauthorized);
-                }
-            }
-        }
+    /// Require authorization from the configured oracle, falling back to the owner.
+    fn require_oracle(env: &Env) {
+        let oracle: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Oracle)
+            .unwrap_or_else(|| get_owner(env).unwrap());
+        oracle.require_auth();
     }
 
     /// Update both `credit_quality` and `green_impact` for `project_id`. Oracle-only (#748).
@@ -530,7 +529,7 @@ impl ProjectRegistry {
     pub fn update_impact_score(env: Env, project_id: u32, credit_quality: u32, green_impact: u32) {
         require_not_paused(&env);
         require_multisig_disabled(&env);
-        Self::require_oracle(&env, &env.current_auth().address().unwrap());
+        Self::require_oracle(&env);
         update_impact_score_internal(env, project_id, credit_quality, green_impact);
     }
 
@@ -561,8 +560,7 @@ impl ProjectRegistry {
     pub fn update_impact_scores_batch(env: Env, updates: Vec<(u32, u32, u32)>) {
         require_not_paused(&env);
         require_multisig_disabled(&env);
-        Self::require_oracle(&env, &env.current_auth().address().unwrap());
-        require_multisig_disabled(&env);
+        Self::require_oracle(&env);
         update_impact_scores_batch_internal(env, updates);
     }
 
@@ -805,11 +803,13 @@ impl ProjectRegistry {
 
         // #754 — checked arithmetic to prevent overflow
         if support {
-            proposal.votes_for = proposal.votes_for
+            proposal.votes_for = proposal
+                .votes_for
                 .checked_add(weight)
                 .unwrap_or_else(|| panic_with_error!(&env, RegistryError::VoteOverflow));
         } else {
-            proposal.votes_against = proposal.votes_against
+            proposal.votes_against = proposal
+                .votes_against
                 .checked_add(weight)
                 .unwrap_or_else(|| panic_with_error!(&env, RegistryError::VoteOverflow));
         }
@@ -821,7 +821,8 @@ impl ProjectRegistry {
     /// Read the voter's HBS balance from the investment vault (#753).
     /// Falls back to 0 if the vault is not configured or the call fails.
     fn get_voting_weight(env: &Env, voter: &Address) -> i128 {
-        let vault_addr: Option<Address> = env.storage().instance().get(&crate::types::DataKey::Vault);
+        let vault_addr: Option<Address> =
+            env.storage().instance().get(&crate::types::DataKey::Vault);
         match vault_addr {
             Some(vault) => {
                 // Cross-contract call to vault.balance(voter)
@@ -857,34 +858,14 @@ impl ProjectRegistry {
         passed
     }
 
-    /// Set only the credit-quality score for a project. Admin-only, bounded 0–100.
-    /// Emits `ScoreChanged` with the old and new values. Use `update_impact_score` to
-    /// update both scores simultaneously (#6). Oracle-only (#748).
-    pub fn update_credit_quality_score(env: Env, project_id: u32, credit_quality: u32) {
-        require_not_paused(&env);
-        require_multisig_disabled(&env);
-        Self::require_oracle(&env, &env.current_auth().address().unwrap());
-        if credit_quality > MAX_SCORE {
-            panic_with_error!(&env, RegistryError::CreditQualityOutOfRange);
-        }
-        let mut project: ProjectData = storage::read_project(&env, project_id)
-            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::ProjectNotFound));
-
-        if project.status == types::ProjectStatus::Archived {
-            panic_with_error!(&env, RegistryError::ProjectArchived);
-        }
-
-        // Rate-limit oracle updates: reject if too soon since the last update.
-        if env.ledger().timestamp() < next_update_allowed_at_for(&project) {
-            panic_with_error!(&env, RegistryError::UpdateTooFrequent);
-        }
+    /// Set only the credit-quality score. Oracle-only, bounded 0–100.
     /// Emits `CreditQualityUpdated`, `RateUpdated` when the computed rate changes,
     /// and `ScoreChanged` with the old and new values. Use `update_impact_score` to
     /// update both scores simultaneously (#6).
-    #[only_owner]
     pub fn update_credit_quality_score(env: Env, project_id: u32, credit_quality: u32) {
         require_not_paused(&env);
         require_multisig_disabled(&env);
+        Self::require_oracle(&env);
         update_credit_quality_score_internal(env, project_id, credit_quality);
     }
 
@@ -895,7 +876,7 @@ impl ProjectRegistry {
     /// and the combined `update_impact_score_approved` would overwrite
     /// `green_impact` as well. This variant updates credit quality alone under
     /// multi-sig admin approvals.
-    pub fn update_credit_quality_score_approved(
+    pub fn update_credit_quality_approved(
         env: Env,
         project_id: u32,
         credit_quality: u32,
@@ -954,14 +935,18 @@ impl ProjectRegistry {
         let prev: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         env.storage().persistent().set(&key, &(prev + amount));
 
-        // Extend TTL on collateral entry to prevent archival (#709)
-        // Use project maturity or a reasonable default
-        let extend_to = if project.maturity_timestamp > 0 {
-            (project.maturity_timestamp as u32) + 100_000
-        } else {
-            env.ledger().sequence() + 1_000_000
-        };
-        env.storage().persistent().extend_ttl(&key, extend_to, extend_to);
+        storage::write_persistent(&env, &key, &(prev + amount));
+
+        let tokens_key = DataKey::CollateralTokens(project_id);
+        let mut tokens: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&tokens_key)
+            .unwrap_or(Vec::new(&env));
+        if !tokens.contains(&token) {
+            tokens.push_back(token.clone());
+        }
+        storage::write_persistent(&env, &tokens_key, &tokens);
 
         events::collateral_deposited(&env, project_id, &token, &depositor, amount);
     }
@@ -1174,7 +1159,7 @@ impl ProjectRegistry {
     }
 
     #[only_owner]
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) {
+    pub fn upgrade(env: Env, _new_wasm_hash: soroban_sdk::BytesN<32>) {
         // #749 — timelock: upgrade must go through the propose/execute flow
         panic_with_error!(&env, RegistryError::TimelockNotReady);
     }
@@ -1221,14 +1206,8 @@ impl ProjectRegistry {
         entry.executed = true;
         storage::write_timelock(&env, id, &entry);
 
-        // Execute the operation based on op_type
-        match entry.op_type {
-            0 => {
-                // upgrade: update_current_contract_wasm
-                env.deployer().update_current_contract_wasm(entry.target.clone());
-            }
-            // Additional op types can be added here for set_registry, set_bridge, etc.
-            _ => {}
+        if entry.op_type == 0 {
+            env.deployer().update_current_contract_wasm(entry.target);
         }
     }
 
@@ -1248,10 +1227,6 @@ impl ProjectRegistry {
     /// Get the state of a timelock entry.
     pub fn get_timelock(env: Env, id: u32) -> Option<TimelockEntry> {
         storage::read_timelock(&env, id)
-    /// Upgrade requires multisig approval when enabled (#708)
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>, approvals: Vec<Address>) {
-        require_admin_approval(&env, approvals);
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
     // ── Circuit breaker (#72) ──────────────────────────────────────────────────
@@ -1315,7 +1290,9 @@ impl ProjectRegistry {
         caller.require_auth();
         require_emergency_admin(&env, &caller);
         env.storage().instance().set(&DataKey::Paused, &true);
-        env.storage().instance().set(&DataKey::PausedBy, &"emergency");
+        env.storage()
+            .instance()
+            .set(&DataKey::PausedBy, &"emergency");
         events::registry_paused(&env);
     }
 
@@ -1328,7 +1305,7 @@ impl ProjectRegistry {
         // If the owner paused it, only the owner can unpause.
         let paused_by: Option<String> = env.storage().instance().get(&DataKey::PausedBy);
         if paused_by != Some(String::from_str(&env, "emergency")) {
-            panic_with_error!(&env, RegistryError::Unauthorized);
+            panic_with_error!(&env, RegistryError::NotEmergencyAdmin);
         }
         env.storage().instance().set(&DataKey::Paused, &false);
         env.storage().instance().remove(&DataKey::PausedBy);
@@ -1547,10 +1524,7 @@ fn liquidate_collateral_internal(env: Env, project_id: u32, token: Address, reci
     }
     // For open-ended projects (maturity_date == 0), require a default or
     // impairment status so collateral cannot be liquidated at any moment (#714).
-    if project.maturity_date == 0
-        && project.status != types::ProjectStatus::Defaulted
-        && project.status != types::ProjectStatus::Archived
-    {
+    if project.maturity_date == 0 && project.status != types::ProjectStatus::Archived {
         panic_with_error!(&env, RegistryError::ProjectNotMature);
     }
     // Restrict the liquidation recipient to the vault or insurance fund to
@@ -1644,22 +1618,18 @@ fn is_accepted_collateral(env: &Env, token: &Address) -> bool {
 /// Check if a project has any outstanding collateral entries (#766).
 /// Returns true if any collateral balance is non-zero for the project.
 fn has_collateral(env: &Env, project_id: u32) -> bool {
-    // Check a few common collateral token patterns
-    // In production, this would iterate over all accepted collateral tokens
-    // For now, we check if any Collateral(project_id, *) key exists with non-zero balance
-    // This is a simplified check - in a full implementation you'd track collateral tokens per project
-    let tokens_to_check = [
-        DataKey::Collateral(project_id, Address::from_string(env, "CCOL1")),
-        DataKey::Collateral(project_id, Address::from_string(env, "CCOL2")),
-    ];
-    for key in tokens_to_check.iter() {
-        if let Some(balance) = env.storage().persistent().get::<_, i128>(key) {
-            if balance > 0 {
-                return true;
-            }
-        }
-    }
-    false
+    let tokens: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::CollateralTokens(project_id))
+        .unwrap_or(Vec::new(env));
+    tokens.iter().any(|token| {
+        env.storage()
+            .persistent()
+            .get::<_, i128>(&DataKey::Collateral(project_id, token))
+            .unwrap_or(0)
+            > 0
+    })
 }
 
 fn compute_rate(credit_quality: u32, green_impact: u32) -> u32 {

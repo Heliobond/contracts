@@ -62,9 +62,9 @@ Multi-sig errors:
 | `get_project(id: u32)` | none | `ProjectData` | `ProjectNotFound`. |
 | `total_projects()` | none | `u32` | Highest assigned project id. |
 | `verify_metadata_hash(project_id: u32, candidate_hash: BytesN<32>)` | none | `bool` | True if `candidate_hash` matches the hash recorded at creation (#44). |
-| `update_impact_score(project_id: u32, credit_quality: u32, green_impact: u32)` | owner, or disabled when multi-sig is enabled | none | Scores 0..100. Rate-limited to one update per ~hour, see `next_update_allowed_at`. Use approval variant after enabling multi-sig. |
+| `update_impact_score(project_id: u32, credit_quality: u32, green_impact: u32)` | configured oracle, or owner fallback; disabled when multi-sig is enabled | none | Scores 0..100. Rate-limited to one update per ~hour, see `next_update_allowed_at`. Use approval variant after enabling multi-sig. |
 | `update_impact_score_approved(project_id: u32, credit_quality: u32, green_impact: u32, approvals: Vec<Address>)` | multi-sig signers | none | Critical operation. |
-| `update_credit_quality_score(project_id: u32, credit_quality: u32)` | owner, or disabled when multi-sig is enabled | none | Updates credit score only. No multi-sig-approved variant currently exists. |
+| `update_credit_quality_score(project_id: u32, credit_quality: u32)` | configured oracle, or owner fallback; disabled when multi-sig is enabled | none | Updates credit score only. Use `update_credit_quality_approved` when multi-sig is enabled. |
 | `next_update_allowed_at(project_id: u32)` | none | `u64` | Earliest ledger timestamp for the next oracle score update: `last_update_timestamp + 3600 - 60` (`MIN_UPDATE_INTERVAL` minus a 60 s `UPDATE_INTERVAL_TOLERANCE` for ledger-close jitter), or `0` if never updated. Earlier updates fail with `UpdateTooFrequent` (#628). `ProjectNotFound`. |
 | `get_score_history(project_id: u32)` | none | `Vec<ScoreHistoryEntry>` | Chronological ring buffer of past score updates (#123). |
 | `certify_project(caller: Address, project_id: u32, status: CertificationStatus)` | `caller` | none | Caller must be whitelister or owner. |
@@ -111,6 +111,23 @@ Multi-sig errors:
 | `migrate_state(from_version: u32)` | owner | `u32` | Migrates storage from `from_version` to the current schema version. |
 | `upgrade(new_wasm_hash: BytesN<32>)` | owner | none | Deploys new contract code at the current address. |
 
+
+### Additional exported operations
+
+| Function | Authorization | Returns |
+| --- | --- | --- |
+| `cancel_timelock(id: u32)` | owner | `none` |
+| `execute_timelock(id: u32)` | owner | `none` |
+| `get_oracle()` | public | `Option<Address>` |
+| `get_timelock(id: u32)` | public | `Option<TimelockEntry>` |
+| `is_accepted_collateral_token(token: Address)` | public | `bool` |
+| `queue_timelock(op_type: u32, target: BytesN<32>, delay_secs: u64)` | owner | `u32` |
+| `set_accepted_collateral(token: Address, accepted: bool)` | owner | `none` |
+| `set_oracle(oracle: Option<Address>)` | owner | `none` |
+| `update_credit_quality_approved(project_id: u32, credit_quality: u32, approvals: Vec<Address>)` | multi-sig signers | `none` |
+| `update_impact_scores_batch(updates: Vec<(u32, u32, u32)>)` | configured oracle, or owner fallback | `none` |
+| `update_scores_batch_approved(updates: Vec<(u32, u32, u32)>, approvals: Vec<Address>)` | multi-sig signers | `none` |
+
 ## InvestmentVault
 
 ### Data Types
@@ -141,7 +158,7 @@ Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 | `repay_principal(from: Address, project_id: u32, amount: i128)` | `from` | none | Returns project principal to the vault and reduces its outstanding investment; any excess over the outstanding balance stays liquid. `ProjectAlreadySettled` after settlement. Emits `PrincipalRepaid` (#631). |
 | `settle_project(project_id: u32)` | owner | none | Requires registry `is_mature`, else `ProjectNotMature`. Writes remaining outstanding principal off as impairment, then blocks further funding/repayment (`ProjectAlreadySettled`). Emits `ProjectSettled`. The registry owner then sets `Completed` via `set_project_status` (#631). |
 | `get_project_position(project_id: u32)` | none | `ProjectPosition` | `{ funded, repaid, outstanding, impairment, mature, settled }`; `funded = outstanding + repaid + impairment` (#631). |
-| `receive_yield(from: Address, amount: i128)` | owner, or disabled when multi-sig is enabled | none | Transfers repayment USDC and updates yield accumulator. No multi-sig-approved variant currently exists. |
+| `receive_yield(from: Address, amount: i128)` | owner, or disabled when multi-sig is enabled | none | Transfers repayment USDC and updates yield accumulator. Use `update_credit_quality_approved` when multi-sig is enabled. |
 | `claim_yield(from: Address)` | `from` | `i128` | Pays accrued yield when liquid. |
 | `get_project_investment(project_id: u32)` | none | `i128` | Cumulative USDC funded into `project_id`; 0 if never funded. |
 | `max_hbs_supply()` | none | `i128` | Hard cap on total HBS share supply enforced by `deposit` (#20). |
@@ -211,6 +228,30 @@ Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 | `stored_state_version()` | none | `u32` | Schema version recorded in instance storage; 0 for unversioned deployments. |
 | `migrate_state(from_version: u32)` | owner | `u32` | Migrates storage from `from_version` to the current schema version. |
 | `upgrade(new_wasm_hash: BytesN<32>)` | owner | none | Deploys new contract code at the current address. |
+
+### Additional exported operations
+
+| Function | Authorization | Returns |
+| --- | --- | --- |
+| `end_funding_round()` | owner | `none` |
+| `get_all_project_investments()` | public | `Vec<(u32, i128)>` |
+| `get_deposit_lock_expiry(account: Address)` | public | `u64` |
+| `get_project_investments_batch(project_ids: Vec<u32>)` | public | `Vec<i128>` |
+| `get_volume_fee_tier()` | public | `(i128, u32)` |
+| `get_withdrawal_window()` | public | `u32` |
+| `investment_capacity(project_id: u32)` | public | `i128` |
+| `is_deposits_paused()` | public | `bool` |
+| `is_funding_round_active()` | public | `bool` |
+| `is_withdrawals_paused()` | public | `bool` |
+| `pause_deposits()` | owner | `none` |
+| `pause_withdrawals()` | owner | `none` |
+| `receive_yield_with_approvals(from: Address, amount: i128, approvals: Vec<Address>)` | multi-sig signers | `none` |
+| `set_max_investment_per_project(cap: i128)` | owner | `none` |
+| `set_volume_fee_tier(threshold: i128, discounted_bps: u32)` | owner | `none` |
+| `set_withdrawal_window(ledgers: u32)` | owner | `none` |
+| `start_funding_round()` | owner | `none` |
+| `unpause_deposits()` | owner | `none` |
+| `unpause_withdrawals()` | owner | `none` |
 
 ## Batch Operation Limits
 

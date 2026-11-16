@@ -95,7 +95,7 @@ pub enum RegistryError {
     /// create_proposal's description exceeds MAX_PROPOSAL_DESCRIPTION_LEN (#455).
     ProposalDescriptionTooLong = 39,
     /// #713 — create_proposal's description is empty or too short.
-    ProposalDescriptionTooShort = 42,
+    ProposalDescriptionTooShort = 53,
     /// update_impact_scores_batch received an empty updates list (#445).
     EmptyBatchUpdate = 40,
     /// set_project_status was asked to set or clear `Archived` — use
@@ -121,12 +121,12 @@ pub enum RegistryError {
     /// Vote weight would cause overflow (#754).
     VoteOverflow = 50,
     /// deposit_collateral received a token that is not on the accepted-collateral allowlist (#603).
-    CollateralTokenNotAllowed = 46,
+    CollateralTokenNotAllowed = 54,
     /// update_impact_scores_batch received the same project_id more than once (#715).
-    DuplicateBatchUpdate = 46,
+    DuplicateBatchUpdate = 55,
     /// liquidate_collateral received a recipient that is not the vault or
     /// insurance fund (#714).
-    InvalidLiquidationRecipient = 47,
+    InvalidLiquidationRecipient = 56,
     /// Multisig is enabled; use the _with_approvals/_approved variant instead (#764).
     MultisigEnabledUseApprovedVariant = 51,
     /// Project has outstanding collateral that must be released first (#766).
@@ -276,6 +276,8 @@ pub enum DataKey {
     Arch(u32),
     /// Collateral balance for (project_id, token) held by this contract (#128).
     Collateral(u32, Address),
+    /// Tokens deposited as collateral, including tokens removed from the allowlist.
+    CollateralTokens(u32),
     /// Reputation score (0-100) for a project creator (#46).
     CreatorReputation(Address),
     /// Configured multi-sig signer set for critical admin operations (#69).
