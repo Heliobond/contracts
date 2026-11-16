@@ -999,7 +999,7 @@ fn test_liquidate_collateral_by_admin() {
     let project_id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://Qm"),
-        &0u64,
+        &100u64,
         &test_metadata_hash(&env),
     );
 
@@ -1012,6 +1012,8 @@ fn test_liquidate_collateral_by_admin() {
     client.deposit_collateral(&project_id, &creator, &token_sac, &800i128);
 
     let recipient = Address::generate(&env);
+    client.set_vault(&recipient);
+    env.ledger().with_mut(|li| li.timestamp = 100);
     client.liquidate_collateral(&project_id, &token_sac, &recipient);
 
     assert_eq!(client.get_collateral(&project_id, &token_sac), 0i128);
@@ -1755,6 +1757,7 @@ mod integration {
     fn test_full_heliobond_flow() {
         let env = Env::default();
         env.mock_all_auths();
+        env.ledger().with_mut(|li| li.timestamp = 1);
 
         let admin = Address::generate(&env);
         let whitelister = Address::generate(&env);
@@ -1780,7 +1783,7 @@ mod integration {
         let project_id = registry.create_project(
             &project_creator,
             &String::from_str(&env, "ipfs://QmHeliobond"),
-            &0u64,
+            &100u64,
             &test_metadata_hash(&env),
         );
         assert_eq!(project_id, 1);
@@ -1803,19 +1806,21 @@ mod integration {
         let expected_returns = vault.get_expected_returns();
         assert_eq!(expected_returns, 3_500_000_000i128);
 
-        // total_assets = 1500 liquid + 500 investments + 350 expected_returns = 2350
+        // total_assets = 1500 liquid + 500 investments + 350 expected_returns - 10 reserve = 2340
         let total = vault.total_assets();
-        assert_eq!(total, 23_500_000_000i128);
+        assert_eq!(total, 23_400_000_000i128);
 
         // Investor withdraws half their shares (995 out of 1990)
-        // total_assets = 2350, total_supply = 1990
-        // returned = 995 * 2350 / 1990 = 1175 USDC (insurance pool is part of total assets)
+        // total_assets = 2340, total_supply = 1990
+        // returned = 995 * 2340 / 1990 = 1170 USDC; reserves remain excluded.
         let half_shares = shares / 2;
         env.ledger().with_mut(|li| {
             li.sequence_number += 1;
         });
+        let lock_expiry = vault.get_deposit_lock_expiry(&investor);
+        env.ledger().with_mut(|li| li.timestamp = lock_expiry);
         let returned = vault.withdraw(&investor, &half_shares, &0);
-        assert_eq!(returned, 11_750_000_000i128);
+        assert_eq!(returned, 11_700_000_000i128);
 
         // Remaining shares = half of investable
         assert_eq!(vault.balance(&investor), investable / 2);
@@ -1851,10 +1856,10 @@ mod integration {
         );
         assert_eq!(usdc.balance(&project_creator), balance_before_collateral);
 
-        // This project was created with maturity_date = 0 ("no maturity date
-        // set"), so release_collateral's maturity check never blocks it —
-        // matches is_mature(project_id) == false throughout.
-        assert!(!registry.is_mature(&project_id));
+        // Mature the project before releasing its collateral.
+        env.ledger()
+            .with_mut(|li| li.timestamp = li.timestamp.max(100));
+        assert!(registry.is_mature(&project_id));
         registry.release_collateral(&project_id, &project_creator, &usdc_sac);
         assert_eq!(registry.get_collateral(&project_id, &usdc_sac), 0);
         assert_eq!(
@@ -2922,6 +2927,14 @@ struct MockVault;
 
 #[soroban_sdk::contractimpl]
 impl MockVault {
+    pub fn set_balance(env: Env, account: Address, amount: i128) {
+        env.storage().instance().set(&account, &amount);
+    }
+
+    pub fn balance(env: Env, account: Address) -> i128 {
+        env.storage().instance().get(&account).unwrap_or(0)
+    }
+
     pub fn set_investment(env: Env, project_id: u32, amount: i128) {
         env.storage().instance().set(&project_id, &amount);
     }
@@ -3063,6 +3076,7 @@ fn test_delete_project_checks_only_the_target_project() {
 fn test_create_proposal_stores_description_and_voting_period() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voting_secs: u64 = 86_400; // exactly MIN_VOTING_PERIOD
 
     let proposal_id = client.create_proposal(
@@ -3088,6 +3102,7 @@ fn test_create_proposal_stores_description_and_voting_period() {
 fn test_create_proposal_sequential_ids() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     let id1 = client.create_proposal(&proposer, &String::from_str(&env, "First"), &86_400);
     let id2 = client.create_proposal(&proposer, &String::from_str(&env, "Second"), &86_400);
@@ -3101,6 +3116,7 @@ fn test_create_proposal_sequential_ids() {
 fn test_create_proposal_rejects_voting_period_too_short() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     client.create_proposal(&proposer, &String::from_str(&env, "Too short"), &86_399);
 }
 
@@ -3109,6 +3125,7 @@ fn test_create_proposal_rejects_voting_period_too_short() {
 fn test_create_proposal_rejects_voting_period_too_long() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     client.create_proposal(
         &proposer,
         &String::from_str(&env, "Too long"),
@@ -3120,8 +3137,15 @@ fn test_create_proposal_rejects_voting_period_too_long() {
 fn test_cast_vote_accumulates_for_and_against() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter_a = Address::generate(&env);
     let voter_b = Address::generate(&env);
+
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter_a, &100i128);
+    balances.set_balance(&voter_b, &30i128);
 
     let proposal_id =
         client.create_proposal(&proposer, &String::from_str(&env, "Vote test"), &86_400);
@@ -3139,6 +3163,7 @@ fn test_cast_vote_accumulates_for_and_against() {
 fn test_cast_vote_rejects_zero_weight_legacy() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter = Address::generate(&env);
 
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Vote"), &86_400);
@@ -3150,7 +3175,13 @@ fn test_cast_vote_rejects_zero_weight_legacy() {
 fn test_cast_vote_rejects_negative_weight() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter = Address::generate(&env);
+
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter, &-1i128);
 
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Vote"), &86_400);
     client.cast_vote(&voter, &proposal_id, &true);
@@ -3161,7 +3192,13 @@ fn test_cast_vote_rejects_negative_weight() {
 fn test_cast_vote_rejects_double_vote() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter = Address::generate(&env);
+
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter, &100i128);
 
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Vote"), &86_400);
     client.cast_vote(&voter, &proposal_id, &true);
@@ -3172,8 +3209,15 @@ fn test_cast_vote_rejects_double_vote() {
 fn test_execute_proposal_passes_when_more_for_than_against() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter_a = Address::generate(&env);
     let voter_b = Address::generate(&env);
+
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter_a, &100i128);
+    balances.set_balance(&voter_b, &30i128);
 
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Pass"), &86_400);
     client.cast_vote(&voter_a, &proposal_id, &true);
@@ -3192,8 +3236,15 @@ fn test_execute_proposal_passes_when_more_for_than_against() {
 fn test_execute_proposal_fails_when_more_against_than_for() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter_a = Address::generate(&env);
     let voter_b = Address::generate(&env);
+
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter_a, &30i128);
+    balances.set_balance(&voter_b, &100i128);
 
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Fail"), &86_400);
     client.cast_vote(&voter_a, &proposal_id, &true);
@@ -3213,6 +3264,7 @@ fn test_execute_proposal_fails_when_more_against_than_for() {
 fn test_execute_proposal_rejects_while_voting_still_open() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Early"), &86_400);
     client.execute_proposal(&proposal_id);
@@ -3223,6 +3275,7 @@ fn test_execute_proposal_rejects_while_voting_still_open() {
 fn test_execute_proposal_rejects_double_execution_legacy() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     let proposal_id = client.create_proposal(&proposer, &String::from_str(&env, "Twice"), &86_400);
     let proposal = client.get_proposal(&proposal_id);
@@ -3237,6 +3290,7 @@ fn test_execute_proposal_rejects_double_execution_legacy() {
 fn test_get_proposal_returns_stored_data() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     client.create_proposal(&proposer, &String::from_str(&env, "Hello"), &86_400);
     let proposal = client.get_proposal(&1);
@@ -3363,7 +3417,7 @@ fn test_liquidate_collateral_approved_with_valid_quorum() {
     let id = client.create_project(
         &creator,
         &String::from_str(&env, "ipfs://QmTest"),
-        &0u64,
+        &100u64,
         &hash,
     );
 
@@ -3377,10 +3431,13 @@ fn test_liquidate_collateral_approved_with_valid_quorum() {
     let usdc_admin = Address::generate(&env);
     let usdc_sac = env.register_stellar_asset_contract_v2(usdc_admin).address();
     let token = soroban_sdk::token::StellarAssetClient::new(&env, &usdc_sac);
-    token.mint(&client.address, &1000i128);
+    token.mint(&creator, &1000i128);
+    client.set_accepted_collateral(&usdc_sac, &true);
     client.deposit_collateral(&id, &creator, &usdc_sac, &1000i128);
 
     let recipient = Address::generate(&env);
+    client.set_vault(&recipient);
+    env.ledger().with_mut(|li| li.timestamp = 100);
 
     // Liquidate with both signers as approvals (threshold met)
     let approvals = soroban_sdk::vec![&env, signer1.clone(), signer2.clone()];
@@ -3432,11 +3489,12 @@ fn test_liquidate_collateral_approved_with_insufficient_quorum_panics() {
 fn test_create_proposal_success() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     let proposal_id = client.create_proposal(
         &proposer,
         &String::from_str(&env, "Increase funding cap"),
-        &3600u64,
+        &86_400u64,
     );
 
     assert_eq!(proposal_id, 1);
@@ -3451,6 +3509,7 @@ fn test_create_proposal_success() {
 fn test_create_proposal_rejects_too_short_voting_period() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     assert!(client
         .try_create_proposal(&proposer, &String::from_str(&env, "test"), &0u64,)
@@ -3461,6 +3520,7 @@ fn test_create_proposal_rejects_too_short_voting_period() {
 fn test_create_proposal_rejects_too_long_voting_period() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     assert!(client
         .try_create_proposal(&proposer, &String::from_str(&env, "test"), &u64::MAX,)
@@ -3471,11 +3531,18 @@ fn test_create_proposal_rejects_too_long_voting_period() {
 fn test_cast_vote_and_execute_proposal() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter_for = Address::generate(&env);
     let voter_against = Address::generate(&env);
 
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter_for, &100i128);
+    balances.set_balance(&voter_against, &50i128);
+
     let proposal_id =
-        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &3600u64);
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
 
     client.cast_vote(&voter_for, &proposal_id, &true);
     client.cast_vote(&voter_against, &proposal_id, &false);
@@ -3484,7 +3551,7 @@ fn test_cast_vote_and_execute_proposal() {
     assert_eq!(proposal.votes_for, 100);
     assert_eq!(proposal.votes_against, 50);
 
-    env.ledger().with_mut(|l| l.timestamp += 3601);
+    env.ledger().with_mut(|l| l.timestamp += 86_401);
     let passed = client.execute_proposal(&proposal_id);
     assert!(passed);
 
@@ -3496,10 +3563,16 @@ fn test_cast_vote_and_execute_proposal() {
 fn test_cast_vote_rejects_duplicate_vote() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter = Address::generate(&env);
 
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter, &100i128);
+
     let proposal_id =
-        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &3600u64);
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
 
     client.cast_vote(&voter, &proposal_id, &true);
     assert!(client.try_cast_vote(&voter, &proposal_id, &false).is_err());
@@ -3509,10 +3582,11 @@ fn test_cast_vote_rejects_duplicate_vote() {
 fn test_cast_vote_rejects_zero_weight() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter = Address::generate(&env);
 
     let proposal_id =
-        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &3600u64);
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
 
     assert!(client.try_cast_vote(&voter, &proposal_id, &true).is_err());
 }
@@ -3521,12 +3595,18 @@ fn test_cast_vote_rejects_zero_weight() {
 fn test_cast_vote_rejects_after_voting_period() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter = Address::generate(&env);
 
-    let proposal_id =
-        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &3600u64);
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter, &100i128);
 
-    env.ledger().with_mut(|l| l.timestamp += 3601);
+    let proposal_id =
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
+
+    env.ledger().with_mut(|l| l.timestamp += 86_401);
     assert!(client.try_cast_vote(&voter, &proposal_id, &true).is_err());
 }
 
@@ -3534,9 +3614,10 @@ fn test_cast_vote_rejects_after_voting_period() {
 fn test_execute_proposal_rejects_before_voting_ends() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     let proposal_id =
-        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &3600u64);
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
 
     assert!(client.try_execute_proposal(&proposal_id).is_err());
 }
@@ -3545,11 +3626,12 @@ fn test_execute_proposal_rejects_before_voting_ends() {
 fn test_execute_proposal_rejects_double_execution() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
 
     let proposal_id =
-        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &3600u64);
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
 
-    env.ledger().with_mut(|l| l.timestamp += 3601);
+    env.ledger().with_mut(|l| l.timestamp += 86_401);
     client.execute_proposal(&proposal_id);
     assert!(client.try_execute_proposal(&proposal_id).is_err());
 }
@@ -3558,16 +3640,23 @@ fn test_execute_proposal_rejects_double_execution() {
 fn test_execute_proposal_fails_when_more_against_votes() {
     let (env, _admin, _whitelister, client) = setup();
     let proposer = Address::generate(&env);
+    client.set_whitelist(&proposer, &true, &0);
     let voter_for = Address::generate(&env);
     let voter_against = Address::generate(&env);
 
+    let voting_vault = env.register(MockVault, ());
+    client.set_vault(&voting_vault);
+    let balances = MockVaultClient::new(&env, &voting_vault);
+    balances.set_balance(&voter_for, &50i128);
+    balances.set_balance(&voter_against, &100i128);
+
     let proposal_id =
-        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &3600u64);
+        client.create_proposal(&proposer, &String::from_str(&env, "proposal"), &86_400u64);
 
     client.cast_vote(&voter_for, &proposal_id, &true);
     client.cast_vote(&voter_against, &proposal_id, &false);
 
-    env.ledger().with_mut(|l| l.timestamp += 3601);
+    env.ledger().with_mut(|l| l.timestamp += 86_401);
 
     let passed = client.execute_proposal(&proposal_id);
     assert!(!passed);
