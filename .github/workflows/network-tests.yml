@@ -158,7 +158,7 @@ jobs:
             --network ${{ steps.net.outputs.name }} \
             -- total_projects)
           echo "total_projects = $RESULT"
-          [ "$RESULT" = "0" ] || (echo "FAIL: expected 0"; exit 1)
+          [ "$(echo "$RESULT" | jq -r .)" = "0" ] || (echo "FAIL: expected 0"; exit 1)
 
       - name: Smoke — total_assets returns 0
         run: |
@@ -168,7 +168,7 @@ jobs:
             --network ${{ steps.net.outputs.name }} \
             -- total_assets)
           echo "total_assets = $RESULT"
-          [ "$RESULT" = "0" ] || (echo "FAIL: expected 0"; exit 1)
+          [ "$(echo "$RESULT" | jq -r .)" = "0" ] || (echo "FAIL: expected 0"; exit 1)
 
       - name: Smoke — whitelist and create project
         run: |
@@ -212,7 +212,7 @@ jobs:
             --network ${{ steps.net.outputs.name }} \
             -- insurance_fund_balance)
           echo "insurance_fund_balance = $RESULT"
-          [ "$RESULT" = "0" ] || (echo "FAIL: expected 0"; exit 1)
+          [ "$(echo "$RESULT" | jq -r .)" = "0" ] || (echo "FAIL: expected 0"; exit 1)
 
       - name: Summary
         if: always()
