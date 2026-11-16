@@ -30,6 +30,9 @@ jobs:
       - name: Test the Wave scanner
         run: python3 -I scripts/test_check_wave.py
 
+      - name: Test verified WASM artifact checks
+        run: python3 scripts/tests/test_ci_wasm_artifact.py
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -111,6 +114,22 @@ jobs:
             exit 1
           fi
           echo "All contracts within budget."
+
+      - name: Bind validated WASM to this main CI run
+        if: github.event_name == 'push' && github.repository == 'Heliobond/contracts' && github.ref == 'refs/heads/main'
+        run: python3 scripts/ci_wasm_artifact.py create
+
+      - name: Upload validated WASM for post-CI network tests
+        if: github.event_name == 'push' && github.repository == 'Heliobond/contracts' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-contract-wasm-${{ github.sha }}
+          path: |
+            target/wasm32v1-none/release/project_registry.wasm
+            target/wasm32v1-none/release/investment_vault.wasm
+            target/wasm32v1-none/release/verified-wasm.json
+          if-no-files-found: error
+          retention-days: 3
 
   notification-service:
     needs: wave-security
