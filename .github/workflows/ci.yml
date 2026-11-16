@@ -23,6 +23,7 @@ jobs:
   test:
     needs: wave-security
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
@@ -114,6 +115,7 @@ jobs:
   notification-service:
     needs: wave-security
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: notification-service
@@ -125,6 +127,8 @@ jobs:
         with:
           # Single source of truth for the supported Node version (#685).
           node-version-file: notification-service/.nvmrc
+          cache: npm
+          cache-dependency-path: notification-service/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -144,6 +148,7 @@ jobs:
   security:
     needs: wave-security
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
@@ -180,6 +185,7 @@ jobs:
 
   dependency-review:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v5
@@ -190,6 +196,7 @@ jobs:
   abi-check:
     needs: wave-security
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v5
@@ -259,6 +266,7 @@ jobs:
   docs:
     needs: wave-security
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       pages: write
