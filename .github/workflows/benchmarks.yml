@@ -73,7 +73,7 @@ jobs:
           fi
           git worktree add /tmp/benchmark-base "$BASE_SHA"
           cd /tmp/benchmark-base
-          CARGO_TARGET_DIR=/tmp/base-target stellar contract build
+          stellar contract build
 
       - name: Run benchmark tests (base branch)
         if: github.event_name == 'pull_request'
