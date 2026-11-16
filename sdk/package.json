@@ -11,10 +11,12 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "generate": "../scripts/build_sdk.sh",
-    "build": "tsc -p tsconfig.json",
+    "build": "node init && tsc -p tsconfig.json",
     "example:deposit": "tsx examples/deposit.ts"
   },
   "dependencies": {

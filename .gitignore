@@ -5,8 +5,6 @@ __pycache__/
 node_modules/
 
 # Secrets / local env — never commit these (Gitleaks + CI enforce this).
-.env
-.env.*
 !.env.example
 *.pem
 *.key
@@ -17,3 +15,4 @@ secrets.json
 
 # Local WASM build hash artifacts
 **/test_snapshots/wasm_hash.txt
+config.bat

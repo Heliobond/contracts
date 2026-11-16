@@ -38,12 +38,12 @@ export USDC_SAC_ADDRESS=C...
 
 ## Build And Test
 
-Run the same pre-deploy checks used by CI:
+Run the same pre-deploy checks used by CI. Note that `stellar-cli` (≥26.1.0) is required to build the contract WASMs, which must be compiled first because `investment_vault` uses `contractimport!` on `target/wasm32v1-none/release/project_registry.wasm`:
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
 stellar contract build
+cargo clippy --all-targets -- -D warnings
 cargo test --all --quiet
 cargo test --all --quiet cost_estimate -- --nocapture 2>&1 | tee gas-profile.txt
 python3 scripts/check_gas_budgets.py gas-budgets.json gas-profile.txt gas-report.md
