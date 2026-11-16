@@ -16,7 +16,7 @@ on:
 
 env:
   STELLAR_CLI_VERSION: "26.1.0"
-  STELLAR_CLI_SHA256: "PLACEHOLDER_UPDATE_ON_VERSION_BUMP"
+  STELLAR_CLI_SHA256: "e18d5a7629102e1ccc07241acbcbebfc05b1c02476ce7d3204ba2d7418be5c0c"
 
 jobs:
   sdk:
@@ -63,24 +63,9 @@ jobs:
               exit 1
             fi
             echo "value=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
-          VERSION: ${{ github.event.inputs.version }}
-          REF_NAME: ${{ github.ref_name }}
-          SHA: ${{ github.sha }}
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            echo "value=${REF_NAME#v}" >> "$GITHUB_OUTPUT"
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          elif [ -n "$VERSION" ]; then
-            # Validate against semver before use — never pass unvalidated
-            # user input into shell (#730).
-            if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
-              echo "::error::Invalid version format: '$VERSION' (expected semver like 1.2.3 or 1.2.3-rc1)"
-              exit 1
-            fi
-            echo "value=$VERSION" >> "$GITHUB_OUTPUT"
             echo "publish=true" >> "$GITHUB_OUTPUT"
           else
-            echo "value=0.0.0-${SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "value=0.0.0-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
             echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
 

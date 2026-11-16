@@ -222,14 +222,12 @@ describe("PUT /preferences/:address input validation", () => {
     store = makeStore();
     const app = createApi(store);
 
-    const res = await request(app)
-      .put("/preferences/GINVESTOR")
-      .send({
-        email: "test@example.com",
-        webhook_url: "https://example.com/webhook",
-        enabled: true,
-        min_delta: 5,
-      });
+    const res = await request(app).put("/preferences/GINVESTOR").send({
+      email: "test@example.com",
+      webhook_url: "https://example.com/webhook",
+      enabled: true,
+      min_delta: 5,
+    });
 
     expect(res.status).toBe(200);
     expect(res.body.email).toBe("test@example.com");
@@ -306,14 +304,12 @@ describe("CORS configuration", () => {
     store = makeStore();
     const app = createApi(store);
 
-    const res = await request(app)
-      .put("/preferences/GINVESTOR")
-      .send({
-        email: "test@example.com",
-        webhook_url: "https://example.com/webhook",
-        enabled: true,
-        min_delta: 5,
-      });
+    const res = await request(app).put("/preferences/GINVESTOR").send({
+      email: "test@example.com",
+      webhook_url: "https://example.com/webhook",
+      enabled: true,
+      min_delta: 5,
+    });
 
     expect(res.status).toBe(200);
     expect(res.body.email).toBe("test@example.com");
@@ -328,14 +324,12 @@ describe("CORS configuration", () => {
     const app = createApi(store);
 
     // Create initial preference with email and webhook_url
-    await request(app)
-      .put("/preferences/GINVESTOR")
-      .send({
-        email: "me@example.com",
-        webhook_url: "https://my.app/hook",
-        enabled: true,
-        min_delta: 1,
-      });
+    await request(app).put("/preferences/GINVESTOR").send({
+      email: "me@example.com",
+      webhook_url: "https://my.app/hook",
+      enabled: true,
+      min_delta: 1,
+    });
 
     // Update only min_delta — email and webhook_url should be preserved
     const res = await request(app)
@@ -347,16 +341,6 @@ describe("CORS configuration", () => {
     expect(res.body.webhook_url).toBe("https://my.app/hook");
     expect(res.body.min_delta).toBe(5);
     expect(res.body.enabled).toBe(true);
-  });
-});
-
-// ── Issue #219: health-check with DB connectivity ──────────────────────────
-
-describe("GET /health with DB connectivity", () => {
-      .get("/health")
-      .set("Origin", "https://heliobond.io");
-
-    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
   });
 });
 

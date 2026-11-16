@@ -111,7 +111,12 @@ export class Store {
         min_delta = excluded.min_delta,
         updated_at = excluded.updated_at
     `);
-    stmt.run({ ...pref, enabled: pref.enabled ? 1 : 0 });
+    stmt.run({
+      ...pref,
+      email: pref.email ?? null,
+      webhook_url: pref.webhook_url ?? null,
+      enabled: pref.enabled ? 1 : 0,
+    });
   }
 
   getPreference(address: string): NotificationPreference | undefined {
