@@ -42,6 +42,7 @@ jobs:
       should_run: ${{ steps.check.outputs.should_run }}
       sha: ${{ steps.check.outputs.sha }}
       run_id: ${{ steps.check.outputs.run_id }}
+      run_attempt: ${{ steps.check.outputs.run_attempt }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -81,6 +82,7 @@ jobs:
         env:
           EXPECTED_SHA: ${{ needs.guard.outputs.sha }}
           EXPECTED_RUN_ID: ${{ needs.guard.outputs.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ needs.guard.outputs.run_attempt }}
         run: python3 scripts/ci_wasm_artifact.py verify
 
       - name: Install Rust

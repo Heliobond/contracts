@@ -14,19 +14,21 @@ spec.loader.exec_module(artifact)
 SHA = "a" * 40
 RUN = "123"
 
+EVENT = {"repository": {"full_name": artifact.REPOSITORY}, "workflow_run": {
+            "head_repository": {"full_name": artifact.REPOSITORY}, "name": "CI",
+            "status": "completed", "conclusion": "success", "event": "push",
+            "head_branch": "main", "id": 123, "run_attempt": 1, "head_sha": SHA}}
 
 class ArtifactTests(unittest.TestCase):
     def test_trusted_main_push_only(self):
-        event = {"repository": {"full_name": artifact.REPOSITORY}, "workflow_run": {
-            "head_repository": {"full_name": artifact.REPOSITORY}, "name": "CI",
-            "status": "completed", "conclusion": "success", "event": "push",
-            "head_branch": "main", "id": 123, "head_sha": SHA}}
+        event = copy.deepcopy(EVENT)
         self.assertTrue(artifact.trusted_run(event))
         for key, value in (("event", "pull_request"), ("event", "workflow_dispatch"),
                            ("conclusion", "failure"), ("status", "in_progress"),
                            ("head_branch", "feature"), ("head_sha", "bad"),
                            ("head_repository", {"full_name": "fork/contracts"}),
-                           ("id", True), ("name", "Other workflow")):
+                           ("id", True), ("run_attempt", 0), ("run_attempt", True),
+                           ("head_repository", None), ("name", "Other workflow")):
             with self.subTest(key=key, value=value):
                 changed = copy.deepcopy(event)
                 changed["workflow_run"][key] = value
@@ -34,6 +36,8 @@ class ArtifactTests(unittest.TestCase):
         event["repository"]["full_name"] = "fork/contracts"
         self.assertFalse(artifact.trusted_run(event))
         self.assertFalse(artifact.trusted_run({}))
+        self.assertFalse(artifact.trusted_run({"workflow_run": None}))
+        self.assertFalse(artifact.trusted_run({"repository": None}))
 
     def test_guard_entrypoint_preserves_manual_and_schedule_fallback(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -56,34 +60,48 @@ class ArtifactTests(unittest.TestCase):
                     else:
                         self.assertNotIn("sha=", output.read_text())
 
+    def test_guard_binds_automatic_run_attempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            event = directory / "event.json"
+            output = directory / "output"
+            event.write_text(json.dumps(EVENT))
+            with patch.dict("os.environ", {
+                "GITHUB_EVENT_NAME": "workflow_run", "GITHUB_EVENT_PATH": str(event),
+                "GITHUB_OUTPUT": str(output), "GITHUB_SHA": "b" * 40,
+            }):
+                artifact.guard()
+            self.assertEqual(output.read_text(),
+                             f"should_run=true\nsha={SHA}\nrun_id=123\nrun_attempt=1\n")
+
     def test_artifact_integrity_and_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             for name in artifact.FILES:
                 (directory / name).write_bytes(b"\0asm" + name.encode())
-            data = artifact.manifest(directory, SHA, RUN)
+            data = artifact.manifest(directory, SHA, RUN, "1")
             path = directory / artifact.MANIFEST
             path.write_text(json.dumps(data))
-            artifact.verify(directory, SHA, RUN)
-            for key, value in (("sha", "b" * 40), ("run_id", "124"),
+            artifact.verify(directory, SHA, RUN, "1")
+            for key, value in (("sha", "b" * 40), ("run_id", "124"), ("run_attempt", "2"),
                                ("repository", "fork/contracts"), ("files", {})):
                 with self.subTest(key=key):
                     changed = copy.deepcopy(data)
                     changed[key] = value
                     path.write_text(json.dumps(changed))
                     with self.assertRaises(ValueError):
-                        artifact.verify(directory, SHA, RUN)
+                        artifact.verify(directory, SHA, RUN, "1")
             path.write_text(json.dumps(data))
             first = directory / artifact.FILES[0]
             first.write_bytes(b"tampered")
             with self.assertRaises(ValueError):
-                artifact.verify(directory, SHA, RUN)
+                artifact.verify(directory, SHA, RUN, "1")
             first.unlink()
             with self.assertRaises(ValueError):
-                artifact.verify(directory, SHA, RUN)
+                artifact.verify(directory, SHA, RUN, "1")
             path.unlink()
             with self.assertRaises(FileNotFoundError):
-                artifact.verify(directory, SHA, RUN)
+                artifact.verify(directory, SHA, RUN, "1")
 
     def test_linked_or_empty_artifacts_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -91,11 +109,11 @@ class ArtifactTests(unittest.TestCase):
             first = directory / artifact.FILES[0]
             first.touch()
             with self.assertRaises(ValueError):
-                artifact.manifest(directory, SHA, RUN)
+                artifact.manifest(directory, SHA, RUN, "1")
             first.unlink()
             first.symlink_to(__file__)
             with self.assertRaises(ValueError):
-                artifact.manifest(directory, SHA, RUN)
+                artifact.manifest(directory, SHA, RUN, "1")
 
 
 if __name__ == "__main__":

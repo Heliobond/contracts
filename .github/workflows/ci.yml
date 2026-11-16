@@ -130,6 +130,7 @@ jobs:
             target/wasm32v1-none/release/verified-wasm.json
           if-no-files-found: error
           retention-days: 3
+          overwrite: true
 
   notification-service:
     needs: wave-security
