@@ -173,8 +173,8 @@ jobs:
         run: cargo +stable install cargo-deny --locked
 
       - name: Supply-chain checks (advisories, bans, licenses, sources)
-        # deny.toml ignores document the two known transitive issues
-        # (RUSTSEC-2024-0436 paste, yanked spin 0.9.8 via soroban toolchain);
+        # Audit configuration documents approved host-only upstream exceptions
+        # for crypto-bigint, paste and yanked spin via the Soroban toolchain;
         # any new advisory/yanked/ban/license/source drift fails here.
         run: cargo deny check
 
