@@ -12,7 +12,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  wave-security:
+    uses: ./.github/workflows/wave-security.yml
+    permissions:
+      contents: read
+
   benchmark:
+    needs: wave-security
     name: Instruction-count benchmarks
     runs-on: ubuntu-latest
 

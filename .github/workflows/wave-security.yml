@@ -1,0 +1,32 @@
+name: Wave security
+
+on: workflow_call
+
+permissions: {}
+
+jobs:
+  wave-security:
+    name: Wave malware indicators
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan tracked files for Wave indicators
+        env:
+          SCANNER_REF: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          scanner="$RUNNER_TEMP/check-wave.py"
+          if git cat-file -e "$SCANNER_REF:scripts/check-wave.py"; then
+            git show "$SCANNER_REF:scripts/check-wave.py" > "$scanner"
+          else
+            # Bootstrap the introducing PR with the reviewed scanner bytes.
+            git show HEAD:scripts/check-wave.py > "$scanner"
+            echo "c4eae9787ff4b1ddd931e17bfd4c7d7d9a899d3dc1c9881fcc6a37692ae42a3e  $scanner" | sha256sum --check --status
+          fi
+          python3 -I "$scanner"

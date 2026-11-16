@@ -15,10 +15,19 @@ env:
   STELLAR_CLI_SHA256: "PLACEHOLDER_UPDATE_ON_VERSION_BUMP"
 
 jobs:
+  wave-security:
+    uses: ./.github/workflows/wave-security.yml
+    permissions:
+      contents: read
+
   test:
+    needs: wave-security
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      - name: Test the Wave scanner
+        run: python3 -I scripts/test_check_wave.py
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -103,6 +112,7 @@ jobs:
           echo "All contracts within budget."
 
   notification-service:
+    needs: wave-security
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -132,6 +142,7 @@ jobs:
         run: npm test
 
   security:
+    needs: wave-security
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -169,6 +180,7 @@ jobs:
         uses: actions/dependency-review-action@v4
 
   abi-check:
+    needs: wave-security
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
@@ -234,6 +246,7 @@ jobs:
           path: .abi/
 
   docs:
+    needs: wave-security
     runs-on: ubuntu-latest
     permissions:
       contents: read
