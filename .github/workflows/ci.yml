@@ -158,6 +158,14 @@ jobs:
       - name: Install cargo-audit
         run: cargo +stable install cargo-audit --locked
 
+      - name: Keep approved advisory exceptions outside deployed WASM
+        run: |
+          cargo tree --locked --target wasm32v1-none --edges normal --prefix none > "$RUNNER_TEMP/wasm-dependencies.txt"
+          if grep -E '^(crypto-bigint|paste|spin) v' "$RUNNER_TEMP/wasm-dependencies.txt"; then
+            echo "::error::An approved host/test exception entered the deployed WASM dependency graph. Review the exception scope."
+            exit 1
+          fi
+
       - name: Security audit
         run: cargo audit --deny unmaintained
 
@@ -229,17 +237,13 @@ jobs:
 
       - name: Build base branch contracts
         working-directory: /tmp/base
-        env:
-          CARGO_TARGET_DIR: /tmp/base-target
         run: stellar contract build
 
       - name: Extract base branch ABI
-        env:
-          CARGO_TARGET_DIR: /tmp/base-target
         run: |
           mkdir -p .abi/base
-          stellar contract inspect --wasm /tmp/base-target/wasm32v1-none/release/project_registry.wasm > .abi/base/project_registry.txt 2>&1
-          stellar contract inspect --wasm /tmp/base-target/wasm32v1-none/release/investment_vault.wasm > .abi/base/investment_vault.txt 2>&1
+          stellar contract inspect --wasm /tmp/base/target/wasm32v1-none/release/project_registry.wasm > .abi/base/project_registry.txt 2>&1
+          stellar contract inspect --wasm /tmp/base/target/wasm32v1-none/release/investment_vault.wasm > .abi/base/investment_vault.txt 2>&1
 
       - name: Check for breaking ABI changes
         # Removed/changed ABI lines fail; purely additive changes only emit a notice.
