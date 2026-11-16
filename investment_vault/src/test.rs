@@ -4254,7 +4254,9 @@ fn test_initiate_bridge_transfer_happy_path() {
 
     let recipient = soroban_sdk::BytesN::from_array(&s.env, &[1u8; 32]);
     let target_chain = wormhole::chain_id::ETHEREUM;
-    let nonce = 1;
+    let nonce = s
+        .env
+        .as_contract(&s.vault_address, || s.env.prng().gen::<u64>());
 
     let balance_before = s.vault_client.balance(&investor);
     let supply_before = s.vault_client.total_supply();
@@ -4295,6 +4297,9 @@ fn test_initiate_bridge_transfer_rejects_invalid_target_chain() {
     let balance_before = s.vault_client.balance(&investor);
     let supply_before = s.vault_client.total_supply();
 
+    let nonce = s
+        .env
+        .as_contract(&s.vault_address, || s.env.prng().gen::<u64>());
     for target_chain in [0u32, wormhole::chain_id::STELLAR] {
         assert!(s
             .vault_client
@@ -4304,7 +4309,7 @@ fn test_initiate_bridge_transfer_rejects_invalid_target_chain() {
                 &target_chain,
                 &recipient,
                 &1u32,
-                &1u64,
+                &nonce,
             )
             .is_err());
     }

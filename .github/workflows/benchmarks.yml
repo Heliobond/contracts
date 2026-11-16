@@ -65,6 +65,12 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          # Bootstrap only the known uncompilable main revision against the repaired CI baseline.
+          # Remove this case after main advances. Every other base is built without substitution.
+          if [ "$BASE_SHA" = cc21876ecc118a0cd75047bc9b775f37dff555e4 ]; then
+            BASE_SHA=36c812a62bc6858c866080638f6f053e834f1b06
+            echo "::notice::Bootstrapping comparisons from repaired baseline $BASE_SHA"
+          fi
           git worktree add /tmp/benchmark-base "$BASE_SHA"
           cd /tmp/benchmark-base
           CARGO_TARGET_DIR=/tmp/base-target stellar contract build
