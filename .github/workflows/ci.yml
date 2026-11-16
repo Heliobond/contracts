@@ -216,9 +216,9 @@ jobs:
           stellar contract inspect --wasm target/wasm32v1-none/release/investment_vault.wasm > .abi/pr/investment_vault.txt 2>&1
 
       - name: Setup base branch worktree
-        run: |
-          git fetch origin ${{ github.base_ref }}
-          git worktree add /tmp/base origin/${{ github.base_ref }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git worktree add --detach /tmp/base "$BASE_SHA"
 
       - name: Build base branch contracts
         working-directory: /tmp/base
