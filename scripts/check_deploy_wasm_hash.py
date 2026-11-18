@@ -32,6 +32,12 @@ def parse_pairs(args):
             print(f"invalid argument (expected name=path): {arg}", file=sys.stderr)
             sys.exit(2)
         name, path = arg.split("=", 1)
+        if not name:
+            print(f"invalid argument: contract name must not be empty: {arg}", file=sys.stderr)
+            sys.exit(2)
+        if name in pairs:
+            print(f"duplicate contract name {name!r}: supplied more than once", file=sys.stderr)
+            sys.exit(2)
         pairs[name] = Path(path)
     return pairs
 
