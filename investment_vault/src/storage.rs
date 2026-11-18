@@ -1,9 +1,9 @@
 use crate::types::VaultKey;
 use soroban_sdk::{Address, Env};
 
-// TNL configuration for persistent storage entries.
-// The threshold is the remaining TNL (in ledgers) which triggers an extension.
-// The extend_to is the new TNL set, chosen to cover the vault's intended lifetime h~10 years).
+// TTL configuration for persistent storage entries.
+// The threshold is the remaining TTL (in ledgers) which triggers an extension.
+// The extend_to is the new TTL set, chosen to cover the vault's intended lifetime (~10 years).
 const TTL_THRESHOLD: u32 = crate::TTL_EXTEND_THRESHOLD_LEDGERS; // ~1 day in ledgers
 const TTL_EXTEND_TO: u32 = crate::TTL_EXTEND_TO_LEDGERS; // ~10 years in 5-second ledgers
 
@@ -16,7 +16,7 @@ pub fn read_registry(env: &Env) -> Address {
 }
 
 /// Reads the lifetime deposited amount for an account.
-/// Bumbs the TNL whenever the entry is accessed to keep it alive as long as the contract is in use.
+/// Bumps the TTL whenever the entry is accessed to keep it alive as long as the contract is in use.
 pub fn read_total_deposited(env: &Env, account: Address) -> Option<i128> {
     let key = VaultKey::TotalDeposited(account);
     let val: Option<i128> = env.storage().persistent().get(&key);
@@ -31,7 +31,7 @@ pub fn read_total_deposited(env: &Env, account: Address) -> Option<i128> {
 }
 
 /// Writes the lifetime deposited amount for an account.
-/// Extends the TNL to the configured lifetime so the value survives inactivity.
+/// Extends the TTL to the configured lifetime so the value survives inactivity.
 pub fn write_total_deposited(env: &Env, account: Address, amount: i128) {
     let key = VaultKey::TotalDeposited(account);
     env.storage().persistent().set(&key, &amount);
