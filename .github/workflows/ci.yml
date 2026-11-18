@@ -181,7 +181,11 @@ jobs:
           cache-on-failure: true
 
       - name: Install cargo-audit
-        run: cargo +stable install cargo-audit --locked
+        # Pinned version: before upgrading, run advisory and ban checks against
+        # the new release and verify it parses the committed audit.toml policy
+        # without suppressing errors. Update the version here and in the comment
+        # together so reviewers see both changes in the same diff.
+        run: cargo +stable install cargo-audit@0.23.0 --locked
 
       - name: Keep approved advisory exceptions outside deployed WASM
         run: |
@@ -195,7 +199,11 @@ jobs:
         run: cargo audit --deny unmaintained
 
       - name: Install cargo-deny
-        run: cargo +stable install cargo-deny --locked
+        # Pinned version: before upgrading, run advisory, ban, license and source
+        # checks against the new release and verify it parses deny.toml without
+        # suppressing policy errors. Update the version here and in the comment
+        # together so reviewers see both changes in the same diff.
+        run: cargo +stable install cargo-deny@0.21.0 --locked
 
       - name: Supply-chain checks (advisories, bans, licenses, sources)
         # Audit configuration documents approved host-only upstream exceptions
