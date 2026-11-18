@@ -131,8 +131,9 @@ mod registry_interface {
 }
 
 pub use types::{
-    CarbonCreditCalculation, ComplianceEventData, HBSTokenInfo, HealthStatus, PortfolioInfo,
-    ProjectPosition, QueuedClaim, RegulatoryReport, ReportingSnapshotData, VaultError, VaultKey,
+    CarbonCreditCalculation, ComplianceEventData, ComplianceEventPage, HBSTokenInfo, HealthStatus,
+    PortfolioInfo, ProjectPosition, QueuedClaim, RegulatoryReport, ReportingSnapshotData,
+    VaultError, VaultKey,
 };
 pub use wormhole::{BridgeDataKey, BridgeTransferPayload};
 
@@ -2221,6 +2222,55 @@ impl InvestmentVault {
             }
         }
         events_vec
+    }
+
+    /// Paged compliance-event view with continuation sequence and retention bounds (#1053).
+    ///
+    /// Scans at most `MAX_COMPLIANCE_EVENTS_PER_QUERY` sequence numbers starting at
+    /// `from`, returning only the events that are still present in persistent storage
+    /// (pruned entries are skipped transparently).  The returned `next_seq` is the
+    /// sequence number to pass as `from` on the next call; when `next_seq > retention_end`
+    /// the client has reached the end of the log.  `retention_start` and `retention_end`
+    /// reflect the current retention window and can be used to bound the initial `from`.
+    pub fn get_compliance_events_page(env: Env, from: u64) -> ComplianceEventPage {
+        require_current_state(&env);
+        let retention_end: u64 = env
+            .storage()
+            .instance()
+            .get(&VaultKey::ComplianceEventCounter)
+            .unwrap_or(0);
+        // The oldest retained sequence is `retention_end - MAX_COMPLIANCE_EVENTS + 1`
+        // (clamped to 1 so we never produce sequence 0, which is never written).
+        let retention_start: u64 = if retention_end >= Self::MAX_COMPLIANCE_EVENTS {
+            retention_end - Self::MAX_COMPLIANCE_EVENTS + 1
+        } else {
+            1
+        };
+        // Clamp `from` into the retention window so callers that start below it still work.
+        let start = from.max(retention_start);
+        let scan_end = if retention_end.saturating_sub(start) >= Self::MAX_COMPLIANCE_EVENTS_PER_QUERY {
+            start + Self::MAX_COMPLIANCE_EVENTS_PER_QUERY - 1
+        } else {
+            retention_end
+        };
+        let mut events_vec = Vec::new(&env);
+        for seq in start..=scan_end {
+            if let Some(event) = env
+                .storage()
+                .persistent()
+                .get::<VaultKey, ComplianceEventData>(&VaultKey::ComplianceEvent(seq))
+            {
+                events_vec.push_back(event);
+            }
+        }
+        // `next_seq` is the first sequence after the scanned window.
+        let next_seq = scan_end + 1;
+        ComplianceEventPage {
+            events: events_vec,
+            next_seq,
+            retention_start,
+            retention_end,
+        }
     }
 
     /// Capture a snapshot of key vault metrics for regulatory reporting (owner-only) (#184).
