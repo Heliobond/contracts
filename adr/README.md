@@ -4,12 +4,24 @@ This directory contains Architecture Decision Records (ADRs) for the Heliobond s
 
 ## Index
 
-| # | Title | Status |
-|---|-------|--------|
-| [001](001-soroban-platform.md) | Use Soroban / Stellar for smart contracts | Accepted |
-| [002](002-storage-patterns.md) | Persistent vs instance storage partitioning | Accepted |
-| [003](003-share-vault-model.md) | ERC-4626-inspired share vault for investments | Accepted |
-| [004](004-security-model.md) | Owner-only admin pattern and whitelist access control | Accepted |
+| # | Title | Status | Date | Superseded by |
+|---|-------|--------|------|---------------|
+| [001](001-soroban-platform.md) | Use Soroban / Stellar for smart contracts | Accepted | 2026-06-26 | - |
+| [002](002-storage-patterns.md) | Persistent vs instance storage partitioning | Accepted | 2026-06-26 | - |
+| [003](003-share-vault-model.md) | ERC-4626-inspired share vault for investments | Accepted | 2026-06-26 | - |
+| [004](004-security-model.md) | Owner-only admin pattern and whitelist access control | Accepted | 2026-06-26 | - |
+
+## Decisions not yet recorded
+
+These questions come up repeatedly in the issue tracker and have no ADR yet:
+
+- Virtual-share offset versus dead shares for the vault's share accounting.
+- The registry-versus-vault rate model split.
+- Whether archived projects are frozen.
+- The persistent-storage TTL policy.
+- Whether `upgrade()` is in multisig scope.
+
+Each can be a short ADR in the format below.
 
 ## When to write a new ADR
 
