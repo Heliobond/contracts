@@ -302,6 +302,23 @@ pub struct ComplianceEventData {
     pub data: String,
 }
 
+/// Paged compliance-event result exposing a continuation sequence and retention
+/// bounds so clients can traverse sparse, pruned event logs without looping or
+/// dropping retained entries (#1053).
+#[contracttype]
+pub struct ComplianceEventPage {
+    /// Events found in the scanned window.
+    pub events: Vec<ComplianceEventData>,
+    /// Next sequence number to pass as `from` to continue pagination.
+    /// Equal to `retention_end + 1` when the scan has reached the newest event.
+    pub next_seq: u64,
+    /// Oldest sequence number currently retained in storage (pruned entries
+    /// below this are gone; callers should start no earlier).
+    pub retention_start: u64,
+    /// Newest sequence number recorded so far; the upper bound for pagination.
+    pub retention_end: u64,
+}
+
 /// A periodic snapshot of the vault's key metrics for regulatory reporting.
 #[contracttype]
 pub struct ReportingSnapshotData {
