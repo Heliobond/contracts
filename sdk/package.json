@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "generate": "../scripts/build_sdk.sh",
-    "build": "node init && tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json",
     "example:deposit": "tsx examples/deposit.ts"
   },
   "dependencies": {
