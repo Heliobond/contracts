@@ -39,7 +39,10 @@ export function createShutdownHandler(
 async function main(): Promise<void> {
   const config = loadConfig();
 
-  const store = new Store(config.db_path);
+  const store = new Store(config.db_path, {
+    networkPassphrase: config.network_passphrase,
+    registryContractId: config.registry_contract_id,
+  });
   const metrics = new Metrics();
   const notifier = new Notifier(config, store, metrics);
 

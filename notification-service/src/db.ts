@@ -5,6 +5,26 @@ import {
   NotificationPreference,
 } from "./types";
 
+export interface SourceIdentity {
+  networkPassphrase: string;
+  registryContractId: string;
+}
+
+export class SourceIdentityMismatchError extends Error {
+  constructor(
+    public readonly field: "network_passphrase" | "registry_contract_id",
+    public readonly stored: string,
+    public readonly provided: string,
+  ) {
+    super(
+      `Database identity mismatch on field "${field}": ` +
+        `stored "${stored}" does not match provided "${provided}". ` +
+        `Use a fresh database path or a separate namespace for a different identity.`,
+    );
+    this.name = "SourceIdentityMismatchError";
+  }
+}
+
 /** Max retries when the database isn't reachable on startup. */
 const DB_CONNECT_MAX_RETRIES = 5;
 /** Base delay (ms) between retry attempts — doubles each attempt. */
@@ -80,10 +100,14 @@ export class Store {
 
   private db: Database.Database;
 
-  constructor(path: string) {
+  constructor(path: string, identity?: SourceIdentity) {
     this.db = Store.connectWithRetry(path);
     this.db.pragma("journal_mode = WAL");
     this.runMigrations();
+    this.migrate();
+    if (identity !== undefined) {
+      this.checkOrWriteIdentity(identity);
+    }
   }
 
   /**
@@ -134,6 +158,71 @@ export class Store {
           .get() !== undefined;
       return hasAppTables ? 1 : 0;
     }
+  private checkOrWriteIdentity(identity: SourceIdentity): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS source_identity (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    `);
+
+    const get = this.db.prepare<[string], { value: string }>(
+      "SELECT value FROM source_identity WHERE key = ?",
+    );
+    const set = this.db.prepare(
+      "INSERT INTO source_identity (key, value) VALUES (?, ?)",
+    );
+
+    const stored = {
+      network_passphrase: get.get("network_passphrase"),
+      registry_contract_id: get.get("registry_contract_id"),
+    };
+
+    if (stored.network_passphrase === undefined && stored.registry_contract_id === undefined) {
+      // Fresh database — write the identity.
+      const insert = this.db.transaction(() => {
+        set.run("network_passphrase", identity.networkPassphrase);
+        set.run("registry_contract_id", identity.registryContractId);
+      });
+      insert();
+      return;
+    }
+
+    // Existing database — verify both fields.
+    if (stored.network_passphrase?.value !== identity.networkPassphrase) {
+      throw new SourceIdentityMismatchError(
+        "network_passphrase",
+        stored.network_passphrase?.value ?? "",
+        identity.networkPassphrase,
+      );
+    }
+    if (stored.registry_contract_id?.value !== identity.registryContractId) {
+      throw new SourceIdentityMismatchError(
+        "registry_contract_id",
+        stored.registry_contract_id?.value ?? "",
+        identity.registryContractId,
+      );
+    }
+  }
+
+  private migrate(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS notification_preferences (
+        investor_address TEXT PRIMARY KEY,
+        email TEXT,
+        webhook_url TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        min_delta INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS investor_projects (
+        investor_address TEXT NOT NULL,
+        project_id INTEGER NOT NULL,
+        first_seen_ledger INTEGER NOT NULL,
+        last_seen_ledger INTEGER NOT NULL,
+        PRIMARY KEY (investor_address, project_id)
+      );
 
     const row = this.db
       .prepare("SELECT version FROM schema_version")
