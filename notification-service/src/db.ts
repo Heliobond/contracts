@@ -5,6 +5,26 @@ import {
   NotificationPreference,
 } from "./types";
 
+export interface SourceIdentity {
+  networkPassphrase: string;
+  registryContractId: string;
+}
+
+export class SourceIdentityMismatchError extends Error {
+  constructor(
+    public readonly field: "network_passphrase" | "registry_contract_id",
+    public readonly stored: string,
+    public readonly provided: string,
+  ) {
+    super(
+      `Database identity mismatch on field "${field}": ` +
+        `stored "${stored}" does not match provided "${provided}". ` +
+        `Use a fresh database path or a separate namespace for a different identity.`,
+    );
+    this.name = "SourceIdentityMismatchError";
+  }
+}
+
 /** Max retries when the database isn't reachable on startup. */
 const DB_CONNECT_MAX_RETRIES = 5;
 /** Base delay (ms) between retry attempts — doubles each attempt. */
@@ -21,16 +41,73 @@ function defaultSleep(ms: number): void {
   }
 }
 
+// ── Versioned migrations ──────────────────────────────────────────────────────
+
+type MigrationFn = (db: Database.Database) => void;
+
+/**
+ * Ordered list of migration functions. Each entry is applied exactly once,
+ * inside its own transaction, and the resulting version number is written to
+ * `schema_version` atomically with the schema change. To add a new migration,
+ * append a function to this array — never edit or reorder existing entries.
+ */
+const MIGRATIONS: MigrationFn[] = [
+  // v1: initial schema
+  (db) => {
+    db.exec(`
+      CREATE TABLE notification_preferences (
+        investor_address TEXT PRIMARY KEY,
+        email TEXT,
+        webhook_url TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        min_delta INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE investor_projects (
+        investor_address TEXT NOT NULL,
+        project_id INTEGER NOT NULL,
+        first_seen_ledger INTEGER NOT NULL,
+        last_seen_ledger INTEGER NOT NULL,
+        PRIMARY KEY (investor_address, project_id)
+      );
+
+      CREATE TABLE processed_ledgers (
+        ledger INTEGER PRIMARY KEY
+      );
+
+      CREATE TABLE notification_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        investor_address TEXT NOT NULL,
+        project_id INTEGER NOT NULL,
+        channel TEXT NOT NULL,
+        ledger INTEGER NOT NULL,
+        sent_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX idx_investor_projects_project
+        ON investor_projects(project_id);
+
+      CREATE INDEX idx_notification_history_sent_at
+        ON notification_history(sent_at DESC);
+    `);
+  },
+];
+
 export class Store {
   /** Overridable sleep function for testing. */
   static sleep: (ms: number) => void = defaultSleep;
 
   private db: Database.Database;
 
-  constructor(path: string) {
+  constructor(path: string, identity?: SourceIdentity) {
     this.db = Store.connectWithRetry(path);
     this.db.pragma("journal_mode = WAL");
+    this.runMigrations();
     this.migrate();
+    if (identity !== undefined) {
+      this.checkOrWriteIdentity(identity);
+    }
   }
 
   /**
@@ -57,6 +134,77 @@ export class Store {
     throw lastError;
   }
 
+  /**
+   * Returns the current schema version, or 0 for a database that predates the
+   * version table (created by the old IF NOT EXISTS migration). A database that
+   * already has the application tables but no schema_version row is treated as
+   * being at v1 so its data is preserved.
+   */
+  private schemaVersion(): number {
+    const hasVersionTable =
+      this.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'",
+        )
+        .get() !== undefined;
+
+    if (!hasVersionTable) {
+      // Legacy database: check whether the application tables already exist.
+      const hasAppTables =
+        this.db
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='notification_preferences'",
+          )
+          .get() !== undefined;
+      return hasAppTables ? 1 : 0;
+    }
+  private checkOrWriteIdentity(identity: SourceIdentity): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS source_identity (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    `);
+
+    const get = this.db.prepare<[string], { value: string }>(
+      "SELECT value FROM source_identity WHERE key = ?",
+    );
+    const set = this.db.prepare(
+      "INSERT INTO source_identity (key, value) VALUES (?, ?)",
+    );
+
+    const stored = {
+      network_passphrase: get.get("network_passphrase"),
+      registry_contract_id: get.get("registry_contract_id"),
+    };
+
+    if (stored.network_passphrase === undefined && stored.registry_contract_id === undefined) {
+      // Fresh database — write the identity.
+      const insert = this.db.transaction(() => {
+        set.run("network_passphrase", identity.networkPassphrase);
+        set.run("registry_contract_id", identity.registryContractId);
+      });
+      insert();
+      return;
+    }
+
+    // Existing database — verify both fields.
+    if (stored.network_passphrase?.value !== identity.networkPassphrase) {
+      throw new SourceIdentityMismatchError(
+        "network_passphrase",
+        stored.network_passphrase?.value ?? "",
+        identity.networkPassphrase,
+      );
+    }
+    if (stored.registry_contract_id?.value !== identity.registryContractId) {
+      throw new SourceIdentityMismatchError(
+        "registry_contract_id",
+        stored.registry_contract_id?.value ?? "",
+        identity.registryContractId,
+      );
+    }
+  }
+
   private migrate(): void {
     // v1: initial schema (kept for databases created before versioned migrations).
     this.db.exec(`
@@ -77,21 +225,42 @@ export class Store {
         PRIMARY KEY (investor_address, project_id)
       );
 
-      CREATE TABLE IF NOT EXISTS processed_ledgers (
-        ledger INTEGER PRIMARY KEY
-      );
+    const row = this.db
+      .prepare("SELECT version FROM schema_version")
+      .get() as { version: number } | undefined;
+    return row?.version ?? 0;
+  }
 
-      CREATE TABLE IF NOT EXISTS notification_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        investor_address TEXT NOT NULL,
-        project_id INTEGER NOT NULL,
-        channel TEXT NOT NULL,
-        ledger INTEGER NOT NULL,
-        sent_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
+  private runMigrations(): void {
+    // Ensure the version table exists before reading or writing it.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_version (
+        version INTEGER NOT NULL
+      )
+    `);
 
-      CREATE INDEX IF NOT EXISTS idx_investor_projects_project
-        ON investor_projects(project_id);
+    let current = this.schemaVersion();
+
+    for (let i = current; i < MIGRATIONS.length; i++) {
+      const targetVersion = i + 1;
+      const migration = MIGRATIONS[i];
+
+      this.db.transaction(() => {
+        migration(this.db);
+
+        // Atomically record the new version inside the same transaction.
+        if (current === 0 && targetVersion === 1) {
+          this.db.exec(`DELETE FROM schema_version`);
+          this.db
+            .prepare("INSERT INTO schema_version (version) VALUES (?)")
+            .run(targetVersion);
+        } else {
+          this.db.exec(`DELETE FROM schema_version`);
+          this.db
+            .prepare("INSERT INTO schema_version (version) VALUES (?)")
+            .run(targetVersion);
+        }
+      })();
 
       CREATE INDEX IF NOT EXISTS idx_notification_history_sent_at
         ON notification_history(sent_at DESC);
@@ -133,6 +302,7 @@ export class Store {
 
         this.db.exec("DROP TABLE processed_ledgers");
       })();
+      current = targetVersion;
     }
   }
 
@@ -305,6 +475,11 @@ export class Store {
       limit,
       offset,
     };
+  }
+
+  /** Returns the current schema version stored in the database. */
+  currentSchemaVersion(): number {
+    return this.schemaVersion();
   }
 
   /** Returns true if the database connection is alive and responsive. */
