@@ -21,10 +21,11 @@ describe("Store schema initialization", () => {
     expect(tables).toContain("investor_projects");
   });
 
-  it("creates the processed_ledgers table on a fresh database", () => {
+  it("creates the ledger_checkpoint table on a fresh database (not processed_ledgers)", () => {
     store = new Store(":memory:");
     const tables = listTables(store);
-    expect(tables).toContain("processed_ledgers");
+    expect(tables).toContain("ledger_checkpoint");
+    expect(tables).not.toContain("processed_ledgers");
   });
 
   it("creates the notification_history table on a fresh database", () => {
@@ -113,5 +114,126 @@ describe("Store processed-ledger cursor", () => {
     store.markLedgerProcessed(100);
     store.markLedgerProcessed(100);
     expect(store.getLastProcessedLedger()).toBe(100);
+  });
+
+  it("does not move the cursor backward when an older ledger is marked", () => {
+    store = new Store(":memory:");
+    store.markLedgerProcessed(200);
+    store.markLedgerProcessed(50);
+    expect(store.getLastProcessedLedger()).toBe(200);
+  });
+});
+
+// ── Issue #998: high-water mark migration ─────────────────────────────────────
+
+describe("Store high-water mark migration (#998)", () => {
+  it("migrates a multi-row processed_ledgers database preserving the max ledger", () => {
+    // Build a legacy-style database with multiple rows in processed_ledgers.
+    const raw = new Database(":memory:");
+    raw.exec(`
+      CREATE TABLE notification_preferences (
+        investor_address TEXT PRIMARY KEY,
+        email TEXT, webhook_url TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        min_delta INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE investor_projects (
+        investor_address TEXT NOT NULL, project_id INTEGER NOT NULL,
+        first_seen_ledger INTEGER NOT NULL, last_seen_ledger INTEGER NOT NULL,
+        PRIMARY KEY (investor_address, project_id)
+      );
+      CREATE TABLE processed_ledgers (ledger INTEGER PRIMARY KEY);
+      CREATE TABLE notification_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        investor_address TEXT NOT NULL, project_id INTEGER NOT NULL,
+        channel TEXT NOT NULL, ledger INTEGER NOT NULL,
+        sent_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_investor_projects_project ON investor_projects(project_id);
+      CREATE INDEX idx_notification_history_sent_at ON notification_history(sent_at DESC);
+    `);
+    raw.prepare("INSERT INTO processed_ledgers VALUES (?)").run(100);
+    raw.prepare("INSERT INTO processed_ledgers VALUES (?)").run(250);
+    raw.prepare("INSERT INTO processed_ledgers VALUES (?)").run(175);
+    const path = raw.name;
+    raw.close();
+
+    const store = new Store(path);
+    // The highest ledger must be preserved.
+    expect(store.getLastProcessedLedger()).toBe(250);
+    // processed_ledgers must be gone.
+    const tables = listTables(store);
+    expect(tables).not.toContain("processed_ledgers");
+    expect(tables).toContain("ledger_checkpoint");
+    store.close();
+  });
+
+  it("migrates an empty processed_ledgers database to hwm = 0", () => {
+    const raw = new Database(":memory:");
+    raw.exec(`
+      CREATE TABLE notification_preferences (
+        investor_address TEXT PRIMARY KEY, email TEXT, webhook_url TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1, min_delta INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE investor_projects (
+        investor_address TEXT NOT NULL, project_id INTEGER NOT NULL,
+        first_seen_ledger INTEGER NOT NULL, last_seen_ledger INTEGER NOT NULL,
+        PRIMARY KEY (investor_address, project_id)
+      );
+      CREATE TABLE processed_ledgers (ledger INTEGER PRIMARY KEY);
+      CREATE TABLE notification_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        investor_address TEXT NOT NULL, project_id INTEGER NOT NULL,
+        channel TEXT NOT NULL, ledger INTEGER NOT NULL,
+        sent_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_investor_projects_project ON investor_projects(project_id);
+      CREATE INDEX idx_notification_history_sent_at ON notification_history(sent_at DESC);
+    `);
+    const path = raw.name;
+    raw.close();
+
+    const store = new Store(path);
+    expect(store.getLastProcessedLedger()).toBe(0);
+    store.close();
+  });
+
+  it("migration is idempotent — opening the migrated database again does not fail", () => {
+    const raw = new Database(":memory:");
+    raw.exec(`
+      CREATE TABLE notification_preferences (
+        investor_address TEXT PRIMARY KEY, email TEXT, webhook_url TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1, min_delta INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE investor_projects (
+        investor_address TEXT NOT NULL, project_id INTEGER NOT NULL,
+        first_seen_ledger INTEGER NOT NULL, last_seen_ledger INTEGER NOT NULL,
+        PRIMARY KEY (investor_address, project_id)
+      );
+      CREATE TABLE processed_ledgers (ledger INTEGER PRIMARY KEY);
+      CREATE TABLE notification_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        investor_address TEXT NOT NULL, project_id INTEGER NOT NULL,
+        channel TEXT NOT NULL, ledger INTEGER NOT NULL,
+        sent_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_investor_projects_project ON investor_projects(project_id);
+      CREATE INDEX idx_notification_history_sent_at ON notification_history(sent_at DESC);
+    `);
+    raw.prepare("INSERT INTO processed_ledgers VALUES (?)").run(300);
+    const path = raw.name;
+    raw.close();
+
+    const s1 = new Store(path);
+    s1.markLedgerProcessed(350);
+    s1.close();
+
+    // Second open: migration must not throw and cursor must survive.
+    const s2 = new Store(path);
+    expect(s2.getLastProcessedLedger()).toBe(350);
+    s2.close();
   });
 });
