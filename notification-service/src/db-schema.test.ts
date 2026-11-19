@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import Database from "better-sqlite3";
-import { Store } from "./db";
+import { Store, SourceIdentityMismatchError } from "./db";
 
 describe("Store schema initialization", () => {
   let store: Store;
@@ -77,6 +77,91 @@ function listIndexes(store: Store): string[] {
     .all() as { name: string }[];
   return rows.map((r) => r.name);
 }
+
+// ── Issue #1012: source identity binding ──────────────────────────────────────
+
+const IDENTITY_A = {
+  networkPassphrase: "Test SDF Network ; September 2015",
+  registryContractId: "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+};
+
+const IDENTITY_B = {
+  networkPassphrase: "Public Global Stellar Network ; September 2015",
+  registryContractId: "CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBSC4",
+};
+
+describe("Store source identity", () => {
+  it("writes identity on a fresh database", () => {
+    const store = new Store(":memory:", IDENTITY_A);
+    const db = (store as unknown as { db: Database.Database }).db;
+    const rows = db
+      .prepare("SELECT key, value FROM source_identity ORDER BY key")
+      .all() as { key: string; value: string }[];
+    expect(rows).toContainEqual({ key: "network_passphrase", value: IDENTITY_A.networkPassphrase });
+    expect(rows).toContainEqual({ key: "registry_contract_id", value: IDENTITY_A.registryContractId });
+    store.close();
+  });
+
+  it("accepts the same identity on an existing database", () => {
+    const db = new Database(":memory:");
+    const path = db.name;
+    db.close();
+
+    const s1 = new Store(path, IDENTITY_A);
+    s1.close();
+    expect(() => new Store(path, IDENTITY_A).close()).not.toThrow();
+  });
+
+  it("throws SourceIdentityMismatchError when network_passphrase differs", () => {
+    const db = new Database(":memory:");
+    const path = db.name;
+    db.close();
+
+    const s1 = new Store(path, IDENTITY_A);
+    s1.close();
+
+    expect(() =>
+      new Store(path, { ...IDENTITY_A, networkPassphrase: IDENTITY_B.networkPassphrase }),
+    ).toThrow(SourceIdentityMismatchError);
+  });
+
+  it("throws SourceIdentityMismatchError when registry_contract_id differs", () => {
+    const db = new Database(":memory:");
+    const path = db.name;
+    db.close();
+
+    const s1 = new Store(path, IDENTITY_A);
+    s1.close();
+
+    expect(() =>
+      new Store(path, { ...IDENTITY_A, registryContractId: IDENTITY_B.registryContractId }),
+    ).toThrow(SourceIdentityMismatchError);
+  });
+
+  it("includes the stored and provided values in the error message", () => {
+    const db = new Database(":memory:");
+    const path = db.name;
+    db.close();
+
+    const s1 = new Store(path, IDENTITY_A);
+    s1.close();
+
+    let err: unknown;
+    try {
+      new Store(path, IDENTITY_B);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(SourceIdentityMismatchError);
+    const msg = (err as SourceIdentityMismatchError).message;
+    expect(msg).toContain(IDENTITY_A.networkPassphrase);
+    expect(msg).toContain(IDENTITY_B.networkPassphrase);
+  });
+
+  it("does not check identity when no identity argument is passed", () => {
+    expect(() => new Store(":memory:").close()).not.toThrow();
+  });
+});
 
 // ── Issue #393: markLedgerProcessed / getLastProcessedLedger ─────────────────
 
