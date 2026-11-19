@@ -206,6 +206,7 @@ export class Store {
   }
 
   private migrate(): void {
+    // v1: initial schema (kept for databases created before versioned migrations).
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS notification_preferences (
         investor_address TEXT PRIMARY KEY,
@@ -261,6 +262,46 @@ export class Store {
         }
       })();
 
+      CREATE INDEX IF NOT EXISTS idx_notification_history_sent_at
+        ON notification_history(sent_at DESC);
+    `);
+
+    // v2: compact the multi-row processed_ledgers table into a single-row
+    // high-water mark (ledger_checkpoint). The MAX(ledger) value is preserved
+    // so progress is never lost. processed_ledgers is dropped afterwards.
+    this.migrateToHighWaterMark();
+  }
+
+  /**
+   * Idempotent: creates ledger_checkpoint if it does not already exist,
+   * seeds it from processed_ledgers when present, then drops processed_ledgers.
+   * Safe to call on a fresh database (processed_ledgers empty → hwm = 0).
+   */
+  private migrateToHighWaterMark(): void {
+    const hasCheckpoint =
+      this.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ledger_checkpoint'",
+        )
+        .get() !== undefined;
+
+    if (!hasCheckpoint) {
+      this.db.transaction(() => {
+        // Promote the existing high-water mark (or 0 for a fresh database).
+        const row = this.db
+          .prepare("SELECT MAX(ledger) AS hwm FROM processed_ledgers")
+          .get() as { hwm: number | null };
+        const hwm = row.hwm ?? 0;
+
+        this.db.exec(
+          `CREATE TABLE ledger_checkpoint (hwm INTEGER NOT NULL)`,
+        );
+        this.db
+          .prepare("INSERT INTO ledger_checkpoint (hwm) VALUES (?)")
+          .run(hwm);
+
+        this.db.exec("DROP TABLE processed_ledgers");
+      })();
       current = targetVersion;
     }
   }
@@ -345,15 +386,22 @@ export class Store {
 
   getLastProcessedLedger(): number {
     const row = this.db
-      .prepare("SELECT MAX(ledger) as ledger FROM processed_ledgers")
-      .get() as { ledger: number | null };
-    return row.ledger ?? 0;
+      .prepare("SELECT hwm FROM ledger_checkpoint")
+      .get() as { hwm: number } | undefined;
+    return row?.hwm ?? 0;
   }
 
+  /**
+   * Advance the high-water mark to `ledger` only when it is strictly greater
+   * than the current value, so out-of-order or repeated calls never move
+   * progress backward.
+   */
   markLedgerProcessed(ledger: number): void {
     this.db
-      .prepare("INSERT OR IGNORE INTO processed_ledgers (ledger) VALUES (?)")
-      .run(ledger);
+      .prepare(
+        "UPDATE ledger_checkpoint SET hwm = ? WHERE hwm < ?",
+      )
+      .run(ledger, ledger);
   }
 
   // ── Notification history ─────────────────────────────────────────────
