@@ -10,6 +10,14 @@ const MAX_TRACKED_NOTIFICATIONS = 5000;
  * endpoint can't stall the sequential notification loop for everyone behind it (#443). */
 const WEBHOOK_TIMEOUT_MS = 10_000;
 
+/**
+ * Maximum number of investor deliveries that may be in-flight simultaneously.
+ * Keeps fan-out bounded so a large audience can't exhaust file descriptors or
+ * overwhelm the SMTP relay, while still letting independent recipients proceed
+ * concurrently instead of waiting for a slow endpoint (#994).
+ */
+const NOTIFY_CONCURRENCY = 8;
+
 export class Notifier {
   private config: ServiceConfig;
   private store: Store;
@@ -49,60 +57,67 @@ export class Notifier {
     const deltaRate = Math.abs(event.new_rate_bps - event.old_rate_bps);
     const maxDelta = Math.max(deltaCq, deltaGi, deltaRate);
 
-    for (const addr of investorAddresses) {
-      try {
-        const pref = this.store.getPreference(addr);
-        if (!pref || !pref.enabled) continue;
-        if (maxDelta < pref.min_delta) continue;
+    // Bounded fan-out (#994): run up to NOTIFY_CONCURRENCY deliveries in
+    // parallel so a delayed endpoint doesn't stall all independent recipients,
+    // while preventing unbounded concurrency over very large audiences.
+    await runBounded(
+      investorAddresses,
+      NOTIFY_CONCURRENCY,
+      async (addr) => {
+        try {
+          const pref = this.store.getPreference(addr);
+          if (!pref || !pref.enabled) return;
+          if (maxDelta < pref.min_delta) return;
 
-        const hasEmail = !!(pref.email && this.transporter);
-        const hasWebhook = !!pref.webhook_url;
+          const hasEmail = !!(pref.email && this.transporter);
+          const hasWebhook = !!pref.webhook_url;
 
-        if (!hasEmail && !hasWebhook) continue;
+          if (!hasEmail && !hasWebhook) return;
 
-        const recipientKey = this.recipientKey(event, addr);
-        if (this.notifiedRecipients.has(recipientKey)) {
-          console.log(
-            `[notifier] Skipping duplicate notification to ${addr} for project #${event.project_id} at ledger ${event.ledger}`,
-          );
-          continue;
-        }
+          const recipientKey = this.recipientKey(event, addr);
+          if (this.notifiedRecipients.has(recipientKey)) {
+            console.log(
+              `[notifier] Skipping duplicate notification to ${addr} for project #${event.project_id} at ledger ${event.ledger}`,
+            );
+            return;
+          }
 
-        // Cross-restart dedup: check the persistent DB in case the in-memory
-        // Set was cleared by a process restart (#335).
-        if (this.store.hasBeenNotified(addr, event.project_id, event.ledger)) {
+          // Cross-restart dedup: check the persistent DB in case the in-memory
+          // Set was cleared by a process restart (#335).
+          if (this.store.hasBeenNotified(addr, event.project_id, event.ledger)) {
+            this.rememberRecipient(recipientKey);
+            return;
+          }
+
+          const subject = `[Heliobond] Score change for project #${event.project_id}`;
+          const text = this.formatEmailText(event, addr);
+
+          if (hasEmail && this.transporter && pref.email) {
+            await this.sendEmail(pref.email, subject, text);
+            this.store.recordNotification(
+              addr,
+              event.project_id,
+              "email",
+              event.ledger,
+            );
+            this.metrics?.recordNotificationSent();
+          }
+          if (hasWebhook && pref.webhook_url) {
+            await this.sendWebhook(pref.webhook_url, event, addr);
+            this.store.recordNotification(
+              addr,
+              event.project_id,
+              "webhook",
+              event.ledger,
+            );
+            this.metrics?.recordNotificationSent();
+          }
           this.rememberRecipient(recipientKey);
-          continue;
+        } catch (err) {
+          console.error(`[notifier] Failed to notify ${addr}:`, err);
         }
-
-        const subject = `[Heliobond] Score change for project #${event.project_id}`;
-        const text = this.formatEmailText(event, addr);
-
-        if (hasEmail && this.transporter && pref.email) {
-          await this.sendEmail(pref.email, subject, text);
-          this.store.recordNotification(
-            addr,
-            event.project_id,
-            "email",
-            event.ledger,
-          );
-          this.metrics?.recordNotificationSent();
-        }
-        if (hasWebhook && pref.webhook_url) {
-          await this.sendWebhook(pref.webhook_url, event, addr);
-          this.store.recordNotification(
-            addr,
-            event.project_id,
-            "webhook",
-            event.ledger,
-          );
-          this.metrics?.recordNotificationSent();
-        }
-        this.rememberRecipient(recipientKey);
-      } catch (err) {
-        console.error(`[notifier] Failed to notify ${addr}:`, err);
-      }
-    }
+      },
+    );
   }
 
   private async sendEmail(
@@ -206,4 +221,40 @@ export class Notifier {
       portfolioUrl,
     ].join("\n");
   }
+}
+
+/**
+ * Run `fn` over every item in `items` with at most `concurrency` calls
+ * in-flight at once. Errors thrown by `fn` propagate to the caller; each
+ * item's work is fully isolated so one failure does not cancel the others.
+ */
+async function runBounded<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  const queue = items.slice();
+  let inFlight = 0;
+
+  await new Promise<void>((resolve, reject) => {
+    function next() {
+      while (inFlight < concurrency && queue.length > 0) {
+        const item = queue.shift()!;
+        inFlight++;
+        fn(item).then(
+          () => {
+            inFlight--;
+            if (queue.length === 0 && inFlight === 0) resolve();
+            else next();
+          },
+          (err) => {
+            inFlight--;
+            reject(err);
+          },
+        );
+      }
+      if (queue.length === 0 && inFlight === 0) resolve();
+    }
+    next();
+  });
 }

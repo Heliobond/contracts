@@ -457,6 +457,123 @@ describe("Notifier bounded-eviction (#396)", () => {
   });
 });
 
+// ── Issue #994: bounded fan-out ───────────────────────────────────────────────
+
+describe("Notifier bounded fan-out (#994)", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  it("delivers to all recipients even when one endpoint is slow", async () => {
+    // Simulate one slow endpoint (100ms) and several fast ones (0ms).
+    const SLOW = "SLOW";
+    const addrs = [SLOW, "A2", "A3", "A4", "A5"];
+    const delivered: string[] = [];
+
+    const store: Store = {
+      getPreference: vi.fn((addr: string) => ({
+        investor_address: addr,
+        webhook_url: `https://example.invalid/${addr}`,
+        enabled: true,
+        min_delta: 1,
+        updated_at: new Date(0).toISOString(),
+      })),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn((addr: string) => delivered.push(addr)),
+    } as unknown as Store;
+
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes(SLOW)) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const addr = (url as string).split("/").pop()!;
+      return new Response(null, { status: 200 });
+    });
+
+    const notifier = new Notifier(config, store);
+    const event = makeEvent();
+    await notifier.notifyInvestors(event, addrs);
+
+    // Every address must have received a notification.
+    expect(fetchMock).toHaveBeenCalledTimes(addrs.length);
+    expect((store.recordNotification as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+      addrs.length,
+    );
+  });
+
+  it("observed concurrency never exceeds NOTIFY_CONCURRENCY (8)", async () => {
+    const CONCURRENCY_LIMIT = 8;
+    let inFlight = 0;
+    let maxObserved = 0;
+
+    const addrs = Array.from({ length: 24 }, (_, i) => `ADDR_${i}`);
+
+    const store: Store = {
+      getPreference: vi.fn((addr: string) => ({
+        investor_address: addr,
+        webhook_url: `https://example.invalid/${addr}`,
+        enabled: true,
+        min_delta: 1,
+        updated_at: new Date(0).toISOString(),
+      })),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn(),
+    } as unknown as Store;
+
+    fetchMock.mockImplementation(async () => {
+      inFlight++;
+      maxObserved = Math.max(maxObserved, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return new Response(null, { status: 200 });
+    });
+
+    const notifier = new Notifier(config, store);
+    await notifier.notifyInvestors(makeEvent(), addrs);
+
+    expect(maxObserved).toBeLessThanOrEqual(CONCURRENCY_LIMIT);
+    expect(fetchMock).toHaveBeenCalledTimes(addrs.length);
+  });
+
+  it("preserves delivery history accurately when a mixed batch has one failure", async () => {
+    const FAIL = "ADDR_FAIL";
+    const addrs = ["ADDR_OK1", FAIL, "ADDR_OK2"];
+    const recorded: string[] = [];
+
+    const store: Store = {
+      getPreference: vi.fn((addr: string) => ({
+        investor_address: addr,
+        webhook_url: `https://example.invalid/${addr}`,
+        enabled: true,
+        min_delta: 1,
+        updated_at: new Date(0).toISOString(),
+      })),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn((_addr: string, _pid: number, _ch: string) =>
+        recorded.push(_addr),
+      ),
+    } as unknown as Store;
+
+    fetchMock.mockImplementation(async (url: string) => {
+      if ((url as string).includes(FAIL)) {
+        return new Response("server error", { status: 500 });
+      }
+      return new Response(null, { status: 200 });
+    });
+
+    const notifier = new Notifier(config, store);
+    // Must not throw — errors are isolated per recipient.
+    await expect(
+      notifier.notifyInvestors(makeEvent(), addrs),
+    ).resolves.toBeUndefined();
+
+    // The two successful recipients must be in history; the failed one must not.
+    expect(recorded).toContain("ADDR_OK1");
+    expect(recorded).toContain("ADDR_OK2");
+    expect(recorded).not.toContain(FAIL);
 // ── Issue #1005: portfolio URL and network label ───────────────────────────────
 
 describe("networkLabel helper", () => {
