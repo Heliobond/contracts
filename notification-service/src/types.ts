@@ -119,4 +119,8 @@ export interface ServiceConfig {
     };
   };
   api_port: number;
+  /** Base URL for portfolio links in notification messages. */
+  portfolio_base_url: string;
+  /** Human-readable network label derived from network_passphrase. */
+  network_label: string;
 }

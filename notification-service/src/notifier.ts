@@ -202,8 +202,10 @@ export class Notifier {
     event: ScoreChangedEvent,
     investorAddress: string,
   ): string {
+    const portfolioUrl = `${this.config.portfolio_base_url}/portfolio`;
+    const networkLabel = this.config.network_label;
     return [
-      `Heliobond — Score Change Alert`,
+      `Heliobond — Score Change Alert (${networkLabel})`,
       ``,
       `Project #${event.project_id} scores have been updated:`,
       ``,
@@ -213,9 +215,10 @@ export class Notifier {
       ``,
       `Your address: ${investorAddress}`,
       `Ledger:       #${event.ledger}`,
+      `Network:      ${networkLabel}`,
       ``,
       `This affects your expected returns. Review your portfolio at`,
-      `https://heliobond.io/portfolio`,
+      portfolioUrl,
     ].join("\n");
   }
 }
