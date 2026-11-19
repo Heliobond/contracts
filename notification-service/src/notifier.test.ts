@@ -6,6 +6,7 @@ import {
   NotificationPreference,
   ServiceConfig,
 } from "./types";
+import { networkLabel } from "./config";
 
 const sendMailMock = vi.fn(async () => ({ messageId: "test" }));
 vi.mock("nodemailer", () => ({
@@ -22,6 +23,8 @@ const config: ServiceConfig = {
   db_path: ":memory:",
   poll_interval_ms: 1000,
   api_port: 3000,
+  portfolio_base_url: "https://heliobond.io",
+  network_label: "Testnet",
 };
 
 const configWithEmail: ServiceConfig = {
@@ -451,5 +454,89 @@ describe("Notifier bounded-eviction (#396)", () => {
     // The oldest entry should have been evicted
     expect(firstKey).toBeDefined();
     expect(recipients.has(firstKey!)).toBe(false);
+  });
+});
+
+// ── Issue #1005: portfolio URL and network label ───────────────────────────────
+
+describe("networkLabel helper", () => {
+  it('returns "Mainnet" for the mainnet passphrase', () => {
+    expect(networkLabel("Public Global Stellar Network ; September 2015")).toBe("Mainnet");
+  });
+
+  it('returns "Testnet" for the testnet passphrase', () => {
+    expect(networkLabel("Test SDF Network ; September 2015")).toBe("Testnet");
+  });
+
+  it('returns "Custom Network" for an unrecognised passphrase', () => {
+    expect(networkLabel("My Private Stellar Network")).toBe("Custom Network");
+  });
+});
+
+describe("Notifier email portfolio URL and network label (#1005)", () => {
+  function captureEmailText(cfg: ServiceConfig): string {
+    // Access the private method via cast to test rendered text directly.
+    const notifier = new Notifier(cfg, makeStore());
+    return (
+      notifier as unknown as {
+        formatEmailText: (e: ScoreChangedEvent, addr: string) => string;
+      }
+    ).formatEmailText(makeEvent(), "GINVESTOR");
+  }
+
+  it("includes the testnet portfolio URL for a testnet config", () => {
+    const cfg: ServiceConfig = {
+      ...config,
+      portfolio_base_url: "https://testnet.heliobond.io",
+      network_label: "Testnet",
+    };
+    const text = captureEmailText(cfg);
+    expect(text).toContain("https://testnet.heliobond.io/portfolio");
+    expect(text).not.toContain("heliobond.io/portfolio\n");
+  });
+
+  it("includes the production portfolio URL for a production config", () => {
+    const cfg: ServiceConfig = {
+      ...config,
+      portfolio_base_url: "https://heliobond.io",
+      network_label: "Mainnet",
+    };
+    const text = captureEmailText(cfg);
+    expect(text).toContain("https://heliobond.io/portfolio");
+  });
+
+  it("includes the network label in the subject line", () => {
+    const cfg: ServiceConfig = { ...config, network_label: "Testnet" };
+    const text = captureEmailText(cfg);
+    expect(text).toMatch(/Score Change Alert \(Testnet\)/);
+  });
+
+  it("includes the network label in the body", () => {
+    const cfg: ServiceConfig = { ...config, network_label: "Mainnet" };
+    const text = captureEmailText(cfg);
+    expect(text).toContain("Network:      Mainnet");
+  });
+
+  it("preserves score, rate, investor and ledger details", () => {
+    const event = makeEvent({
+      project_id: 42,
+      old_credit_quality: 55,
+      new_credit_quality: 65,
+      old_rate_bps: 300,
+      new_rate_bps: 350,
+      ledger: 999,
+    });
+    const notifier = new Notifier(config, makeStore());
+    const text = (
+      notifier as unknown as {
+        formatEmailText: (e: ScoreChangedEvent, addr: string) => string;
+      }
+    ).formatEmailText(event, "GINVESTOR_XYZ");
+
+    expect(text).toContain("Project #42");
+    expect(text).toContain("55 → 65");
+    expect(text).toContain("300 bps → 350 bps");
+    expect(text).toContain("GINVESTOR_XYZ");
+    expect(text).toContain("#999");
   });
 });
