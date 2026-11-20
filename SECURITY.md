@@ -4,7 +4,9 @@
 
 Please **do not** open a public issue for security problems.
 
-Report privately through GitHub: go to the repository's **Security** tab → **Report a vulnerability** (this opens a private advisory). If you can't use that, email **daveproxy80@gmail.com**.
+Report privately through GitHub: go to the repository's **Security** tab → **Report a vulnerability** (this opens a private advisory — maintainers: ensure **private vulnerability reporting** is enabled under *Settings → Code security → Private vulnerability reporting*). If you can't use that channel, email **daveproxy80@gmail.com**.
+
+> **Note for maintainers:** GitHub private vulnerability reporting must be enabled manually in the repository settings; it cannot be turned on from a file in the repository. Until it is enabled, the "Report a vulnerability" button above will not appear for reporters.
 
 Include what you can: affected component, steps to reproduce, and impact. We aim to acknowledge within a few days and will coordinate a fix and disclosure with you.
 
