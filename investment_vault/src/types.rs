@@ -79,6 +79,10 @@ pub enum VaultError {
     RegistryPaused = 35,
     /// Withdrawal requested too soon after deposit.
     DepositLocked = 36,
+    /// Deposits are paused via the per-operation pause switch (#945).
+    DepositsPaused = 37,
+    /// Withdrawals are paused via the per-operation pause switch (#945).
+    WithdrawalsPaused = 38,
 }
 
 #[contracttype]
@@ -140,6 +144,14 @@ pub enum VaultKey {
     MultiSigThreshold,
     /// Circuit breaker pause state.
     Paused,
+    /// Per-operation deposit pause switch (#945).
+    DepositsPaused,
+    /// Per-operation withdrawal pause switch (#945).
+    WithdrawalsPaused,
+    /// Ledger timestamp when deposits were paused; used for PAUSE_MAX_DURATION_SECONDS (#945).
+    DepositsPauseStart,
+    /// Ledger timestamp when withdrawals were paused; used for PAUSE_MAX_DURATION_SECONDS (#945).
+    WithdrawalsPauseStart,
     /// Last deposit ledger sequence per address.
     LastDeposit(Address),
 }

@@ -318,6 +318,7 @@ impl InvestmentVault {
     /// The remaining investable amount is converted to shares at the current NAV.
     pub fn deposit(env: Env, from: Address, usdc_amount: i128) -> i128 {
         require_not_paused(&env);
+        require_deposits_not_paused(&env);
         require_current_state(&env);
         from.require_auth();
         if usdc_amount <= 0 {
@@ -435,6 +436,7 @@ impl InvestmentVault {
     /// in FIFO order — call `claim()` once liquidity is restored.
     pub fn withdraw(env: Env, from: Address, shares_amount: i128, min_usdc_return: i128) -> i128 {
         require_not_paused(&env);
+        require_withdrawals_not_paused(&env);
         require_current_state(&env);
         check_deposit_lock(&env, &from);
         // Note: from.require_auth() is called inside Base::burn
@@ -1662,6 +1664,12 @@ fn require_current_state(env: &Env) {
     }
 }
 
+/// Maximum wall-clock seconds a per-operation pause may remain active before it
+/// expires automatically. After `PAUSE_MAX_DURATION_SECONDS` have elapsed since
+/// the pause was set, the guard functions treat the pause as lifted without
+/// requiring an explicit unpause call (#945).
+const PAUSE_MAX_DURATION_SECONDS: u64 = 86_400; // 24 hours
+
 fn require_not_paused(env: &Env) {
     let paused: bool = env
         .storage()
@@ -1670,6 +1678,36 @@ fn require_not_paused(env: &Env) {
         .unwrap_or(false);
     if paused {
         panic_with_error!(env, VaultError::Paused);
+    }
+}
+
+fn is_pause_active(env: &Env, start_key: &VaultKey) -> bool {
+    let start: u64 = match env.storage().instance().get(start_key) {
+        Some(t) => t,
+        None => return false,
+    };
+    env.ledger().timestamp().saturating_sub(start) < PAUSE_MAX_DURATION_SECONDS
+}
+
+fn require_deposits_not_paused(env: &Env) {
+    let paused: bool = env
+        .storage()
+        .instance()
+        .get(&VaultKey::DepositsPaused)
+        .unwrap_or(false);
+    if paused && is_pause_active(env, &VaultKey::DepositsPauseStart) {
+        panic_with_error!(env, VaultError::DepositsPaused);
+    }
+}
+
+fn require_withdrawals_not_paused(env: &Env) {
+    let paused: bool = env
+        .storage()
+        .instance()
+        .get(&VaultKey::WithdrawalsPaused)
+        .unwrap_or(false);
+    if paused && is_pause_active(env, &VaultKey::WithdrawalsPauseStart) {
+        panic_with_error!(env, VaultError::WithdrawalsPaused);
     }
 }
 
@@ -1711,6 +1749,48 @@ impl InvestmentVault {
             .instance()
             .get(&VaultKey::Paused)
             .unwrap_or(false)
+    }
+
+    // ── Per-operation pause switches (#945) ───────────────────────────────────
+
+    /// Pause deposits only, leaving withdrawals and claims unaffected.
+    /// Auto-expires after PAUSE_MAX_DURATION_SECONDS.
+    #[only_owner]
+    pub fn pause_deposits(env: Env) {
+        env.storage().instance().set(&VaultKey::DepositsPaused, &true);
+        env.storage().instance().set(&VaultKey::DepositsPauseStart, &env.ledger().timestamp());
+    }
+
+    /// Lift the deposits pause before its natural expiry.
+    #[only_owner]
+    pub fn unpause_deposits(env: Env) {
+        env.storage().instance().set(&VaultKey::DepositsPaused, &false);
+    }
+
+    /// Return whether deposits are currently paused (and the pause has not yet expired).
+    pub fn is_deposits_paused(env: Env) -> bool {
+        let paused: bool = env.storage().instance().get(&VaultKey::DepositsPaused).unwrap_or(false);
+        paused && is_pause_active(&env, &VaultKey::DepositsPauseStart)
+    }
+
+    /// Pause withdrawals only, leaving deposits and claims unaffected.
+    /// Auto-expires after PAUSE_MAX_DURATION_SECONDS.
+    #[only_owner]
+    pub fn pause_withdrawals(env: Env) {
+        env.storage().instance().set(&VaultKey::WithdrawalsPaused, &true);
+        env.storage().instance().set(&VaultKey::WithdrawalsPauseStart, &env.ledger().timestamp());
+    }
+
+    /// Lift the withdrawals pause before its natural expiry.
+    #[only_owner]
+    pub fn unpause_withdrawals(env: Env) {
+        env.storage().instance().set(&VaultKey::WithdrawalsPaused, &false);
+    }
+
+    /// Return whether withdrawals are currently paused (and the pause has not yet expired).
+    pub fn is_withdrawals_paused(env: Env) -> bool {
+        let paused: bool = env.storage().instance().get(&VaultKey::WithdrawalsPaused).unwrap_or(false);
+        paused && is_pause_active(&env, &VaultKey::WithdrawalsPauseStart)
     }
 
     // ── Storage compaction (#88) ───────────────────────────────────────────────
