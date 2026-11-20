@@ -1227,6 +1227,107 @@ fn test_conversion_roundtrip_first_deposit_exact() {
     }
 }
 
+// ── Donation / first-depositor attack (#957) ──────────────────────────────────
+
+/// Establish whether VIRTUAL_SHARES_OFFSET prevents the classic first-depositor
+/// share-inflation (donation) attack (#744 / #957):
+///
+///   1. Attacker makes the minimum deposit to seed the vault.
+///   2. Attacker "donates" a large USDC amount directly to the vault address
+///      (bypasses `deposit`; inflates `liquid_usdc` and hence `total_assets`
+///      without issuing new shares).
+///   3. A victim deposits.
+///   4. Assert the victim's shares are worth no less than 90 % of what they
+///      paid — a 10 % bound is a deliberately generous tolerance; EIP-4626's
+///      offset pattern should hold within rounding (< 1 stroop loss).
+///
+/// If this test fails it confirms the regression reported against #744: the
+/// 1_000-stroop virtual offset is too small to protect against a donation that
+/// is orders of magnitude larger.
+#[test]
+fn test_donation_attack_virtual_offset_bounds_victim_loss() {
+    let s = setup();
+
+    // ── step 1: attacker seeds the vault with the smallest useful deposit ──
+    let attacker = Address::generate(&s.env);
+    let seed = 1_0000000i128; // 1 USDC
+    mint_usdc(&s.env, &s.usdc_sac, &attacker, seed);
+    let attacker_shares = s
+        .vault_client
+        .deposit(&attacker, &seed, &0i128, &u64::MAX);
+    assert!(attacker_shares > 0, "attacker must receive shares");
+
+    // ── step 2: attacker donates 1 000 USDC directly to the vault address ──
+    // This inflates liquid_usdc (and therefore total_assets) without minting
+    // shares, skewing the exchange rate against the next depositor.
+    let donation = 1_000_0000000i128; // 1 000 USDC
+    mint_usdc(&s.env, &s.usdc_sac, &s.vault_address, donation);
+
+    // Confirm the NAV inflated as expected.
+    let total_assets_after_donation = s.vault_client.total_assets();
+    assert!(
+        total_assets_after_donation > donation,
+        "total_assets should include the donated USDC"
+    );
+
+    // ── step 3: victim deposits 1 USDC ────────────────────────────────────
+    let victim = Address::generate(&s.env);
+    let victim_deposit = 1_0000000i128; // 1 USDC
+    mint_usdc(&s.env, &s.usdc_sac, &victim, victim_deposit);
+    let victim_shares = s
+        .vault_client
+        .deposit(&victim, &victim_deposit, &0i128, &u64::MAX);
+
+    // investable after 0.5 % insurance premium
+    let victim_investable = victim_deposit - victim_deposit * 50 / 10_000;
+
+    // ── step 4: assert the offset bounds the victim's loss ─────────────────
+    // convert_to_assets uses total_shares / total_assets without the virtual
+    // offset, so the victim's redemption value is computed on the inflated NAV.
+    let victim_redeemable = s.vault_client.convert_to_assets(&victim_shares);
+
+    // Verify the offset is effective: victim should recover at least 90 % of
+    // what they invested.  If VIRTUAL_SHARES_OFFSET = 1_000 is too small for
+    // a 1 000 USDC donation this assertion will fail, confirming the regression.
+    assert!(
+        victim_redeemable >= victim_investable * 9 / 10,
+        "donation attack succeeded: victim investable={} but can only redeem {} \
+         ({}% loss) — VIRTUAL_SHARES_OFFSET={} is insufficient for a {} donation",
+        victim_investable,
+        victim_redeemable,
+        (victim_investable - victim_redeemable) * 100 / victim_investable,
+        1_000i128,  // VIRTUAL_SHARES_OFFSET
+        donation,
+    );
+}
+
+/// Companion to the donation-attack test: with no donation the first depositor
+/// and a second depositor both receive fair share prices (the virtual offset
+/// should be transparent when NAV is undisturbed).
+#[test]
+fn test_no_donation_second_depositor_gets_fair_price() {
+    let s = setup();
+
+    let first = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &first, 100_0000000i128);
+    let first_shares = s
+        .vault_client
+        .deposit(&first, &100_0000000i128, &0i128, &u64::MAX);
+
+    let second = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &second, 100_0000000i128);
+    let second_shares = s
+        .vault_client
+        .deposit(&second, &100_0000000i128, &0i128, &u64::MAX);
+
+    // Without a donation the exchange rate is undisturbed, so both depositors
+    // should receive the same number of shares (same deposit, same NAV).
+    assert_eq!(
+        first_shares, second_shares,
+        "equal deposits on undisturbed NAV must yield equal shares"
+    );
+}
+
 // ── Redemption queue tests (#3) ────────────────────────────────────────────────
 
 #[test]
