@@ -1,0 +1,2 @@
+gas_budget contract.func instructions=900 fee=90
+gas_budget contract.other_func instructions=500 fee=50

@@ -1,20 +1,41 @@
 import nodemailer from "nodemailer";
-import {
-  ScoreChangedEvent,
-  NotificationPreference,
-  WebhookPayload,
-  ServiceConfig,
-} from "./types";
+import { ScoreChangedEvent, WebhookPayload, ServiceConfig } from "./types";
 import { Store } from "./db";
+import { Metrics } from "./metrics";
+
+/** Upper bound on tracked dedup keys, so long-running processes don't grow unbounded. */
+const MAX_TRACKED_NOTIFICATIONS = 5000;
+
+/** Upper bound on a single webhook delivery, so one unresponsive investor-supplied
+ * endpoint can't stall the sequential notification loop for everyone behind it (#443). */
+const WEBHOOK_TIMEOUT_MS = 10_000;
+
+/**
+ * Maximum number of investor deliveries that may be in-flight simultaneously.
+ * Keeps fan-out bounded so a large audience can't exhaust file descriptors or
+ * overwhelm the SMTP relay, while still letting independent recipients proceed
+ * concurrently instead of waiting for a slow endpoint (#994).
+ */
+const NOTIFY_CONCURRENCY = 8;
 
 export class Notifier {
   private config: ServiceConfig;
   private store: Store;
+  private metrics?: Metrics;
   private transporter?: nodemailer.Transporter;
+  /**
+   * Keys of (event, investor) pairs already successfully notified, to guard
+   * against redelivery from the listener. Recorded per-investor and only
+   * after a successful send, so a delivery failure for one investor doesn't
+   * suppress a retry for them, and a redelivery doesn't re-notify investors
+   * who already received it.
+   */
+  private notifiedRecipients: Set<string> = new Set();
 
-  constructor(config: ServiceConfig, store: Store) {
+  constructor(config: ServiceConfig, store: Store, metrics?: Metrics) {
     this.config = config;
     this.store = store;
+    this.metrics = metrics;
 
     if (config.email_transport) {
       this.transporter = nodemailer.createTransport(config.email_transport);
@@ -32,38 +53,71 @@ export class Notifier {
     const deltaCq = Math.abs(
       event.new_credit_quality - event.old_credit_quality,
     );
-    const deltaGi = Math.abs(
-      event.new_green_impact - event.old_green_impact,
+    const deltaGi = Math.abs(event.new_green_impact - event.old_green_impact);
+    const deltaRate = Math.abs(event.new_rate_bps - event.old_rate_bps);
+    const maxDelta = Math.max(deltaCq, deltaGi, deltaRate);
+
+    // Bounded fan-out (#994): run up to NOTIFY_CONCURRENCY deliveries in
+    // parallel so a delayed endpoint doesn't stall all independent recipients,
+    // while preventing unbounded concurrency over very large audiences.
+    await runBounded(
+      investorAddresses,
+      NOTIFY_CONCURRENCY,
+      async (addr) => {
+        try {
+          const pref = this.store.getPreference(addr);
+          if (!pref || !pref.enabled) return;
+          if (maxDelta < pref.min_delta) return;
+
+          const hasEmail = !!(pref.email && this.transporter);
+          const hasWebhook = !!pref.webhook_url;
+
+          if (!hasEmail && !hasWebhook) return;
+
+          const recipientKey = this.recipientKey(event, addr);
+          if (this.notifiedRecipients.has(recipientKey)) {
+            console.log(
+              `[notifier] Skipping duplicate notification to ${addr} for project #${event.project_id} at ledger ${event.ledger}`,
+            );
+            return;
+          }
+
+          // Cross-restart dedup: check the persistent DB in case the in-memory
+          // Set was cleared by a process restart (#335).
+          if (this.store.hasBeenNotified(addr, event.project_id, event.ledger)) {
+            this.rememberRecipient(recipientKey);
+            return;
+          }
+
+          const subject = `[Heliobond] Score change for project #${event.project_id}`;
+          const text = this.formatEmailText(event, addr);
+
+          if (hasEmail && this.transporter && pref.email) {
+            await this.sendEmail(pref.email, subject, text);
+            this.store.recordNotification(
+              addr,
+              event.project_id,
+              "email",
+              event.ledger,
+            );
+            this.metrics?.recordNotificationSent();
+          }
+          if (hasWebhook && pref.webhook_url) {
+            await this.sendWebhook(pref.webhook_url, event, addr);
+            this.store.recordNotification(
+              addr,
+              event.project_id,
+              "webhook",
+              event.ledger,
+            );
+            this.metrics?.recordNotificationSent();
+          }
+          this.rememberRecipient(recipientKey);
+        } catch (err) {
+          console.error(`[notifier] Failed to notify ${addr}:`, err);
+        }
+      },
     );
-    const maxDelta = Math.max(deltaCq, deltaGi);
-
-    for (const addr of investorAddresses) {
-      const pref = this.store.getPreference(addr);
-      if (!pref || !pref.enabled) continue;
-      if (maxDelta < pref.min_delta) continue;
-
-      const hasEmail = !!(pref.email && this.transporter);
-      const hasWebhook = !!pref.webhook_url;
-
-      if (!hasEmail && !hasWebhook) continue;
-
-      const subject = `[Heliobond] Score change for project #${event.project_id}`;
-      const text = this.formatEmailText(event, addr);
-
-      try {
-        if (hasEmail && this.transporter && pref.email) {
-          await this.sendEmail(pref.email, subject, text);
-        }
-        if (hasWebhook && pref.webhook_url) {
-          await this.sendWebhook(pref.webhook_url, event, addr);
-        }
-      } catch (err) {
-        console.error(
-          `[notifier] Failed to notify ${addr}:`,
-          err,
-        );
-      }
-    }
   }
 
   private async sendEmail(
@@ -107,6 +161,7 @@ export class Notifier {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -117,12 +172,40 @@ export class Notifier {
     console.log(`[notifier] Webhook sent to ${url} (${response.status})`);
   }
 
-  private formatEmailText(
+  /** Unique key identifying a specific on-chain ScoreChanged event delivered to one investor. */
+  private recipientKey(
     event: ScoreChangedEvent,
     investorAddress: string,
   ): string {
     return [
-      `Heliobond — Score Change Alert`,
+      event.project_id,
+      event.ledger,
+      event.old_credit_quality,
+      event.new_credit_quality,
+      event.old_green_impact,
+      event.new_green_impact,
+      event.old_rate_bps,
+      event.new_rate_bps,
+      investorAddress,
+    ].join(":");
+  }
+
+  private rememberRecipient(key: string): void {
+    this.notifiedRecipients.add(key);
+    if (this.notifiedRecipients.size > MAX_TRACKED_NOTIFICATIONS) {
+      const oldest = this.notifiedRecipients.values().next().value;
+      if (oldest !== undefined) this.notifiedRecipients.delete(oldest);
+    }
+  }
+
+  private formatEmailText(
+    event: ScoreChangedEvent,
+    investorAddress: string,
+  ): string {
+    const portfolioUrl = `${this.config.portfolio_base_url}/portfolio`;
+    const networkLabel = this.config.network_label;
+    return [
+      `Heliobond — Score Change Alert (${networkLabel})`,
       ``,
       `Project #${event.project_id} scores have been updated:`,
       ``,
@@ -132,9 +215,46 @@ export class Notifier {
       ``,
       `Your address: ${investorAddress}`,
       `Ledger:       #${event.ledger}`,
+      `Network:      ${networkLabel}`,
       ``,
       `This affects your expected returns. Review your portfolio at`,
-      `https://heliobond.io/portfolio`,
+      portfolioUrl,
     ].join("\n");
   }
+}
+
+/**
+ * Run `fn` over every item in `items` with at most `concurrency` calls
+ * in-flight at once. Errors thrown by `fn` propagate to the caller; each
+ * item's work is fully isolated so one failure does not cancel the others.
+ */
+async function runBounded<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  const queue = items.slice();
+  let inFlight = 0;
+
+  await new Promise<void>((resolve, reject) => {
+    function next() {
+      while (inFlight < concurrency && queue.length > 0) {
+        const item = queue.shift()!;
+        inFlight++;
+        fn(item).then(
+          () => {
+            inFlight--;
+            if (queue.length === 0 && inFlight === 0) resolve();
+            else next();
+          },
+          (err) => {
+            inFlight--;
+            reject(err);
+          },
+        );
+      }
+      if (queue.length === 0 && inFlight === 0) resolve();
+    }
+    next();
+  });
 }

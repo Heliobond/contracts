@@ -1,4 +1,11 @@
-/** Matches the on-chain ScoreChanged event from ProjectRegistry (#131). */
+/**
+ * Matches the on-chain `score_changed` event from ProjectRegistry (#131).
+ * All fields are required -- the on-chain event always carries every value
+ * (see EVENTS.md), and `listener.ts` rejects any payload that doesn't decode
+ * to all of these as finite numbers rather than admitting nulls/NaN here.
+ * `project_id` the event's only topic field; the rest arrive as a Map
+ * keyed by field name (the `#contractevent` macro's default data format).
+ */
 export interface ScoreChangedEvent {
   project_id: number;
   old_credit_quality: number;
@@ -10,6 +17,32 @@ export interface ScoreChangedEvent {
   /** Block timestamp when the event was emitted. */
   timestamp: number;
   /** Stellar ledger sequence number. */
+  ledger: number;
+}
+
+/**
+ * Matches the on-chain `Deposit` event from InvestmentVault.
+ * This event is used to track investor participation in a project.
+ * Only the identity linkage (investor <-> project) is needed, so
+ * amount is included for completeness but not strictly required.
+ */
+export interface DepositEvent {
+  project_id: number;
+  investor_address: string;
+  amount: number;
+  timestamp: number;
+  ledger: number;
+}
+
+/**
+ * Matches the on-chain `ProjectFunded` event from InvestmentVault.
+ * This event signifies that a project reached its funding target.
+ * It carries the investor and project identity linkage.
+ */
+export interface ProjectFundedEvent {
+  project_id: number;
+  investor_address: string;
+  timestamp: number;
   ledger: number;
 }
 
@@ -49,6 +82,24 @@ export interface InvestorProjectRow {
   last_seen_ledger: number;
 }
 
+/** A single record of a notification that was sent to an investor. */
+export interface NotificationHistoryEntry {
+  id: number;
+  investor_address: string;
+  project_id: number;
+  channel: "email" | "webhook";
+  ledger: number;
+  sent_at: string;
+}
+
+/** A page of notification history results. */
+export interface NotificationHistoryPage {
+  items: NotificationHistoryEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 /** Configuration for the notification service. */
 export interface ServiceConfig {
   rpc_url: string;
@@ -62,10 +113,14 @@ export interface ServiceConfig {
     host: string;
     port: number;
     secure: boolean;
-    auth: {
+    auth?: {
       user: string;
       pass: string;
     };
   };
   api_port: number;
+  /** Base URL for portfolio links in notification messages. */
+  portfolio_base_url: string;
+  /** Human-readable network label derived from network_passphrase. */
+  network_label: string;
 }

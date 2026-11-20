@@ -1,0 +1,14 @@
+[advisories]
+# David approved these host/test-only exceptions on 2026-11-16.
+# Neither crate occurs in `cargo tree --target wasm32v1-none --edges normal`.
+# Revisit on every Soroban SDK/host update and remove once upstream is fixed.
+ignore = [
+  # crypto-bigint 0.5.5 is required by elliptic-curve 0.13 in the Soroban host.
+  # Fixed >=0.7.6 is incompatible. Latest SDK 29.0.1 still uses that chain.
+  # https://github.com/RustSec/advisory-db/blob/main/crates/crypto-bigint/RUSTSEC-2026-0387.md
+  "RUSTSEC-2026-0387",
+  # Unmaintained paste 1.0.15 is required by ark-ff/wasmi_core in the host.
+  # Replacing it requires an upstream parent-crate migration to pastey.
+  # https://rustsec.org/advisories/RUSTSEC-2024-0436
+  "RUSTSEC-2024-0436",
+]

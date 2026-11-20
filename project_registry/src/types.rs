@@ -1,4 +1,4 @@
-use soroban_sdk::{contracterror, contracttype, Address, String};
+use soroban_sdk::{contracterror, contracttype, Address, BytesN, String};
 
 /// A timestamped snapshot of a project's scores, for on-chain history tracking (#123).
 #[contracttype]
@@ -86,6 +86,51 @@ pub enum RegistryError {
     ProjectNotArchived = 34,
     /// Circuit breaker is active (paused).
     Paused = 35,
+    /// Caller is neither the owner nor the configured emergency admin.
+    NotEmergencyAdmin = 36,
+    /// Batch score update request exceeds the configured maximum batch size (#31).
+    BatchTooLarge = 37,
+    /// Project is already certified with the target status.
+    AlreadyCertified = 38,
+    /// create_proposal's description exceeds MAX_PROPOSAL_DESCRIPTION_LEN (#455).
+    ProposalDescriptionTooLong = 39,
+    /// #713 — create_proposal's description is empty or too short.
+    ProposalDescriptionTooShort = 53,
+    /// update_impact_scores_batch received an empty updates list (#445).
+    EmptyBatchUpdate = 40,
+    /// set_project_status was asked to set or clear `Archived` — use
+    /// `archive_project` instead, since archived projects are immutable (#329).
+    InvalidStatusTransition = 41,
+    /// set_project_status was called with the project's current status (#329).
+    ProjectStatusUnchanged = 42,
+    /// compact_storage input exceeds the maximum allowed batch size (#332).
+    CompactStorageTooLarge = 43,
+    /// create_proposal voting_duration_secs exceeds the maximum allowed period (#332).
+    VotingPeriodTooLong = 44,
+    /// delete_project was called before the investment vault address was set
+    /// via `set_vault`, so active investments cannot be ruled out (#526).
+    VaultNotConfigured = 45,
+    /// Whitelist entry has expired (#752).
+    WhitelistExpired = 46,
+    /// Timelock entry not found (#749).
+    TimelockNotFound = 47,
+    /// Timelock entry has not yet reached its execution time (#749).
+    TimelockNotReady = 48,
+    /// Timelock entry has already been executed (#749).
+    TimelockAlreadyExecuted = 49,
+    /// Vote weight would cause overflow (#754).
+    VoteOverflow = 50,
+    /// deposit_collateral received a token that is not on the accepted-collateral allowlist (#603).
+    CollateralTokenNotAllowed = 54,
+    /// update_impact_scores_batch received the same project_id more than once (#715).
+    DuplicateBatchUpdate = 55,
+    /// liquidate_collateral received a recipient that is not the vault or
+    /// insurance fund (#714).
+    InvalidLiquidationRecipient = 56,
+    /// Multisig is enabled; use the _with_approvals/_approved variant instead (#764).
+    MultisigEnabledUseApprovedVariant = 51,
+    /// Project has outstanding collateral that must be released first (#766).
+    ProjectHasCollateral = 52,
 }
 
 /// Certification state for a green project (#130).
@@ -99,6 +144,13 @@ pub enum CertificationStatus {
     Revoked = 3,
 }
 
+/// Lifecycle status of a project (#27).
+///
+/// `Pending` is set at creation and `Archived` via `archive_project`.
+/// `Active`, `Funded`, and `Completed` are set via `set_project_status`
+/// (admin/vault-callable) — this contract does not transition into them on
+/// its own; a cross-contract call from the vault on real funding events is
+/// tracked separately (#329).
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 #[repr(u32)]
@@ -126,6 +178,20 @@ pub struct ProjectData {
     pub last_update_timestamp: u64,
     /// The lifecycle status of the project (#27).
     pub status: ProjectStatus,
+    /// Ledger timestamp at project creation (#40).
+    ///
+    /// NOTE: this field was added after initial deployment. Projects created by
+    /// contract builds predating this change will not have a value for it;
+    /// any state-migration for existing persisted `ProjectData` records (see
+    /// `migrate_state`) must backfill this field, e.g. from `last_update_timestamp`
+    /// or 0, since it cannot be reconstructed from on-chain data otherwise.
+    pub created_at: u64,
+    /// Content hash (e.g. sha256) of the off-chain metadata pointed to by `uri` (#44).
+    ///
+    /// Lets callers verify metadata hasn't been tampered with by hashing the
+    /// fetched content and comparing it against this value (see
+    /// `verify_metadata_hash`), without trusting the off-chain host.
+    pub metadata_hash: BytesN<32>,
 }
 
 /// Compact archive record stored when a project's full data is compacted (#73).
@@ -141,6 +207,10 @@ pub struct ArchiveSummary {
     pub final_green_impact: u32,
     pub maturity_date: u64,
     pub certification_status: CertificationStatus,
+    /// Preserved so `verify_metadata_hash` keeps working after compaction (#448).
+    pub metadata_hash: BytesN<32>,
+    /// Timestamp of project creation, preserved across compaction (#768).
+    pub created_at: u64,
 }
 
 /// A governance proposal that HBS holders vote on (#134).
@@ -158,6 +228,33 @@ pub struct Proposal {
     /// Weighted votes against.
     pub votes_against: i128,
     /// True once the proposal outcome has been finalised.
+    pub executed: bool,
+}
+
+/// Whitelist entry with optional expiry (#752).
+///
+/// `valid_until` is a Unix timestamp (seconds) after which the entry expires.
+/// `0` means no expiry (permanent entry).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct WhitelistEntry {
+    pub status: bool,
+    pub valid_until: u64,
+}
+
+/// A queued privileged operation awaiting its timelock delay (#749).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct TimelockEntry {
+    /// The kind of operation being queued.
+    pub op_type: u32,
+    /// Target parameter (e.g. new wasm hash, new address).
+    pub target: BytesN<32>,
+    /// Unix timestamp (seconds) after which the operation may be executed.
+    pub execute_after: u64,
+    /// Unix timestamp (seconds) when the operation was queued.
+    pub queued_at: u64,
+    /// Whether the operation has been executed.
     pub executed: bool,
 }
 
@@ -179,6 +276,8 @@ pub enum DataKey {
     Arch(u32),
     /// Collateral balance for (project_id, token) held by this contract (#128).
     Collateral(u32, Address),
+    /// Tokens deposited as collateral, including tokens removed from the allowlist.
+    CollateralTokens(u32),
     /// Reputation score (0-100) for a project creator (#46).
     CreatorReputation(Address),
     /// Configured multi-sig signer set for critical admin operations (#69).
@@ -187,8 +286,38 @@ pub enum DataKey {
     MultiSigThreshold,
     /// Score history ring-buffer slot for (project_id, slot_index) (#123).
     ScoreHistorySlot(u32, u32),
+    /// Oracle address authorized to update impact/credit scores (#748).
+    Oracle,
     /// Total score updates ever written for a project (ring-buffer counter) (#123).
     ScoreHistoryTotal(u32),
     /// Circuit breaker pause state (#72).
     Paused,
+    /// Tracks who paused the contract: "owner" or "emergency" (#763).
+    PausedBy,
+    /// Optional emergency-admin address that may pause/unpause without
+    /// holding full owner privileges (#43). Unset means no emergency admin.
+    EmergencyAdmin,
+    /// Investment vault queried by `delete_project` for active investments (#526).
+    Vault,
+    /// Whitelist entries with expiry: stores (status, valid_until) per account (#752).
+    WhitelistExpiry(Address),
+    /// Timelock queue for privileged operations (#749).
+    TimelockQueue,
+    /// Next timelock operation ID counter (#749).
+    TimelockCounter,
+    /// Whether `token` is on the accepted-collateral allowlist (#603).
+    AcceptedCollateral(Address),
+}
+
+/// Consolidated operational status for monitoring/health-check integrations (#77).
+///
+/// Bundles the getters an off-chain monitor would otherwise have to poll
+/// individually into a single call.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct HealthStatus {
+    pub state_version: u32,
+    pub is_paused: bool,
+    pub total_projects: u32,
+    pub has_emergency_admin: bool,
 }

@@ -1,0 +1,367 @@
+#![no_std]
+
+//! Shared multi-sig admin approval logic (issue #459), used by both
+//! `investment_vault` and `project_registry`. Each caller maps the returned
+//! error variant to its own `contracterror` enum, so this crate is agnostic
+//! to which contract's error codes end up on-chain.
+
+use soroban_sdk::{Address, Vec};
+
+pub enum ConfigError {
+    TooManySigners,
+    InvalidThreshold,
+    DuplicateSigner,
+}
+
+pub enum ApprovalError {
+    InvalidThreshold,
+    DuplicateApproval,
+    NotSigner,
+    InsufficientApprovals,
+}
+
+/// Validates a proposed signer set + threshold before storing it.
+pub fn validate_multisig_config(
+    signers: &Vec<Address>,
+    threshold: u32,
+    max_signers: u32,
+) -> Result<(), ConfigError> {
+    if signers.len() > max_signers {
+        return Err(ConfigError::TooManySigners);
+    }
+    if threshold == 0 || threshold > signers.len() {
+        return Err(ConfigError::InvalidThreshold);
+    }
+    for i in 0..signers.len() {
+        let signer = signers.get(i).unwrap();
+        for j in (i + 1)..signers.len() {
+            if signer == signers.get(j).unwrap() {
+                return Err(ConfigError::DuplicateSigner);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Enforces multi-sig approval for an admin action. When `threshold` is 0
+/// (multi-sig disabled), falls back to requiring `owner`'s auth directly.
+/// Calls `require_auth()` on each distinct approver that is a registered
+/// signer.
+pub fn require_admin_approval(
+    owner: &Address,
+    threshold: u32,
+    signers: &Vec<Address>,
+    approvals: Vec<Address>,
+) -> Result<(), ApprovalError> {
+    if threshold == 0 {
+        owner.require_auth();
+        return Ok(());
+    }
+    if threshold > signers.len() {
+        return Err(ApprovalError::InvalidThreshold);
+    }
+
+    let mut approved = 0u32;
+    for i in 0..approvals.len() {
+        let approver = approvals.get(i).unwrap();
+        for j in 0..i {
+            if approver == approvals.get(j).unwrap() {
+                return Err(ApprovalError::DuplicateApproval);
+            }
+        }
+
+        let mut is_signer = false;
+        for signer in signers.iter() {
+            if approver == signer {
+                is_signer = true;
+                break;
+            }
+        }
+        if !is_signer {
+            return Err(ApprovalError::NotSigner);
+        }
+        approver.require_auth();
+        approved += 1;
+    }
+
+    if approved < threshold {
+        return Err(ApprovalError::InsufficientApprovals);
+    }
+    Ok(())
+}
+
+/// Returns `false` (multi-sig is enabled) when `threshold > 0`.
+pub fn is_multisig_disabled(threshold: u32) -> bool {
+    threshold == 0
+}
+
+/// Pure check for the "direct" (multisig-disabled) entry-point guard.
+/// Returns `Err(ApprovalError::InvalidThreshold)` when multi-sig is active
+/// (threshold > 0). Contract wrappers call this and map the error to their
+/// own `MultisigEnabledUseApprovedVariant` code — the pure form is testable
+/// without an `Env` and is the `_approved`-sibling counterpart to
+/// `require_admin_approval`. (#969)
+pub fn check_multisig_disabled(threshold: u32) -> Result<(), ApprovalError> {
+    if threshold == 0 {
+        Ok(())
+    } else {
+        Err(ApprovalError::InvalidThreshold)
+    }
+}
+
+/// Returns `true` when `approved` meets or exceeds `threshold`.
+/// Extracted so callers can query sufficiency before committing approvals
+/// and so the invariant has an isolated, `Env`-free test. (#969)
+pub fn is_approval_sufficient(approved: u32, threshold: u32) -> bool {
+    threshold > 0 && approved >= threshold
+}
+
+// ── #711: unit tests for shared multisig helpers ──────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
+
+    #[soroban_sdk::contract]
+    struct ApprovalTestContract;
+    #[soroban_sdk::contractimpl]
+    impl ApprovalTestContract {}
+
+    fn check_approval(
+        env: &Env,
+        owner: &Address,
+        threshold: u32,
+        signers: &Vec<Address>,
+        approvals: Vec<Address>,
+    ) -> Result<(), ApprovalError> {
+        let contract = env.register(ApprovalTestContract, ());
+        env.as_contract(&contract, || {
+            require_admin_approval(owner, threshold, signers, approvals)
+        })
+    }
+
+    fn make_env() -> Env {
+        Env::default()
+    }
+
+    fn make_signers(env: &Env, n: u32) -> Vec<Address> {
+        let mut v = Vec::new(env);
+        for _ in 0..n {
+            v.push_back(Address::generate(env));
+        }
+        v
+    }
+
+    // ── validate_multisig_config ────────────────────────────────────────────
+
+    #[test]
+    fn config_valid_with_threshold_eq_signers() {
+        let env = make_env();
+        let signers = make_signers(&env, 3);
+        assert!(validate_multisig_config(&signers, 3, 5).is_ok());
+    }
+
+    #[test]
+    fn config_valid_with_threshold_less_than_signers() {
+        let env = make_env();
+        let signers = make_signers(&env, 5);
+        assert!(validate_multisig_config(&signers, 3, 10).is_ok());
+    }
+
+    #[test]
+    fn config_rejects_too_many_signers() {
+        let env = make_env();
+        let signers = make_signers(&env, 6);
+        assert!(matches!(
+            validate_multisig_config(&signers, 3, 5),
+            Err(ConfigError::TooManySigners)
+        ));
+    }
+
+    #[test]
+    fn config_rejects_zero_threshold() {
+        let env = make_env();
+        let signers = make_signers(&env, 3);
+        assert!(matches!(
+            validate_multisig_config(&signers, 0, 5),
+            Err(ConfigError::InvalidThreshold)
+        ));
+    }
+
+    #[test]
+    fn config_rejects_threshold_exceeding_signers() {
+        let env = make_env();
+        let signers = make_signers(&env, 2);
+        assert!(matches!(
+            validate_multisig_config(&signers, 3, 5),
+            Err(ConfigError::InvalidThreshold)
+        ));
+    }
+
+    #[test]
+    fn config_rejects_duplicate_signers() {
+        let env = make_env();
+        let addr = Address::generate(&env);
+        let mut signers = Vec::new(&env);
+        signers.push_back(addr.clone());
+        signers.push_back(addr);
+        assert!(matches!(
+            validate_multisig_config(&signers, 1, 5),
+            Err(ConfigError::DuplicateSigner)
+        ));
+    }
+
+    #[test]
+    fn config_validates_single_signer() {
+        let env = make_env();
+        let signers = make_signers(&env, 1);
+        assert!(validate_multisig_config(&signers, 1, 5).is_ok());
+    }
+
+    #[test]
+    fn config_empty_signers_with_threshold_fails() {
+        let env = make_env();
+        let signers = Vec::new(&env);
+        assert!(matches!(
+            validate_multisig_config(&signers, 1, 5),
+            Err(ConfigError::InvalidThreshold)
+        ));
+    }
+
+    // ── require_admin_approval ──────────────────────────────────────────────
+
+    #[test]
+    fn approval_zero_threshold_requires_owner_auth() {
+        let env = make_env();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let signers = make_signers(&env, 3);
+        let approvals = Vec::new(&env);
+        assert!(check_approval(&env, &owner, 0, &signers, approvals).is_ok());
+    }
+
+    #[test]
+    fn approval_sufficient_approvals_pass() {
+        let env = make_env();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let signers = make_signers(&env, 3);
+        let mut approvals = Vec::new(&env);
+        approvals.push_back(signers.get(0).unwrap());
+        approvals.push_back(signers.get(1).unwrap());
+        assert!(check_approval(&env, &owner, 2, &signers, approvals).is_ok());
+    }
+
+    #[test]
+    fn approval_insufficient_approvals_fails() {
+        let env = make_env();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let signers = make_signers(&env, 3);
+        let mut approvals = Vec::new(&env);
+        approvals.push_back(signers.get(0).unwrap());
+        assert!(matches!(
+            check_approval(&env, &owner, 2, &signers, approvals),
+            Err(ApprovalError::InsufficientApprovals)
+        ));
+    }
+
+    #[test]
+    fn approval_duplicate_approval_fails() {
+        let env = make_env();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let signers = make_signers(&env, 3);
+        let mut approvals = Vec::new(&env);
+        approvals.push_back(signers.get(0).unwrap());
+        approvals.push_back(signers.get(0).unwrap());
+        assert!(matches!(
+            check_approval(&env, &owner, 2, &signers, approvals),
+            Err(ApprovalError::DuplicateApproval)
+        ));
+    }
+
+    #[test]
+    fn approval_non_signer_fails() {
+        let env = make_env();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let signers = make_signers(&env, 3);
+        let outsider = Address::generate(&env);
+        let mut approvals = Vec::new(&env);
+        approvals.push_back(outsider);
+        assert!(matches!(
+            check_approval(&env, &owner, 1, &signers, approvals),
+            Err(ApprovalError::NotSigner)
+        ));
+    }
+
+    #[test]
+    fn approval_threshold_exceeding_signers_fails() {
+        let env = make_env();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let signers = make_signers(&env, 2);
+        let mut approvals = Vec::new(&env);
+        approvals.push_back(signers.get(0).unwrap());
+        approvals.push_back(signers.get(1).unwrap());
+        assert!(matches!(
+            check_approval(&env, &owner, 3, &signers, approvals),
+            Err(ApprovalError::InvalidThreshold)
+        ));
+    }
+
+    // ── is_multisig_disabled ────────────────────────────────────────────────
+
+    #[test]
+    fn multisig_disabled_when_threshold_zero() {
+        assert!(is_multisig_disabled(0));
+    }
+
+    #[test]
+    fn multisig_enabled_when_threshold_positive() {
+        assert!(!is_multisig_disabled(1));
+        assert!(!is_multisig_disabled(5));
+    }
+
+    // ── check_multisig_disabled (#969) ──────────────────────────────────────
+
+    #[test]
+    fn check_disabled_passes_when_threshold_zero() {
+        assert!(check_multisig_disabled(0).is_ok());
+    }
+
+    #[test]
+    fn check_disabled_errors_when_threshold_nonzero() {
+        assert!(matches!(
+            check_multisig_disabled(1),
+            Err(ApprovalError::InvalidThreshold)
+        ));
+        assert!(matches!(
+            check_multisig_disabled(5),
+            Err(ApprovalError::InvalidThreshold)
+        ));
+    }
+
+    // ── is_approval_sufficient (#969) ───────────────────────────────────────
+
+    #[test]
+    fn approval_sufficient_when_met() {
+        assert!(is_approval_sufficient(2, 2));
+        assert!(is_approval_sufficient(3, 2));
+    }
+
+    #[test]
+    fn approval_insufficient_when_below_threshold() {
+        assert!(!is_approval_sufficient(1, 2));
+        assert!(!is_approval_sufficient(0, 1));
+    }
+
+    #[test]
+    fn approval_insufficient_when_threshold_zero() {
+        // threshold == 0 means multisig disabled; this helper is for the
+        // approved path only, so a zero threshold is treated as "not sufficient".
+        assert!(!is_approval_sufficient(5, 0));
+    }
+}

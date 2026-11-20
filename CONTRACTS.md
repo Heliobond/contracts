@@ -5,6 +5,32 @@ All functions live in the `InvestmentVault` or `ProjectRegistry` crates.
 
 ---
 
+## Glossary (#242)
+
+Domain terms used throughout this document and the rest of the `contracts` docs.
+
+| Term | Definition |
+|---|---|
+| **Credit quality score** | Oracle-set score (0–100) on a project's `ProjectData.credit_quality`, reflecting the creditworthiness of the underlying bond. Feeds into the project's interest rate via `compute_rate`; updated with `update_impact_score` or `update_credit_quality_score`. |
+| **Green impact score** | Oracle-set score (0–100) on a project's `ProjectData.green_impact`, reflecting the environmental/climate benefit of the project. Feeds into the interest rate alongside credit quality and into `calculate_carbon_credits`; updated with `update_impact_score`. |
+| **HBS token** | "Heliobond Shares" — the SEP-41 fungible token minted by `InvestmentVault` to represent an investor's proportional claim on the pooled USDC. Minted on `deposit`, burned on `withdraw`; see [Secondary Market Trading](#secondary-market-trading-issue-126) below. |
+| **Whitelister** | The address authorised to grant or revoke project-creation rights via `set_whitelist`. A separate role from the contract owner/admin. |
+| **Certification status** | `ProjectData.certification_status` (`None`, `Pending`, `Certified`, `Revoked`) — an independent attestation of a project's legitimacy, set by the whitelister or admin via `certify_project`. Distinct from the numeric credit/green scores. |
+| **Maturity date** | Unix timestamp on `ProjectData.maturity_date` after which a project is considered mature (`is_mature`). `0` means open-ended (never matures). `release_collateral` requires maturity when one is set; `compact_archive` does not check it directly — it requires the project to already be archived instead. |
+| **Interest rate (bps)** | The annualized rate, in basis points (10,000 bps = 100%), that `get_interest_rate` derives from a project's credit quality and green impact scores via `compute_rate`. |
+| **Insurance premium / insurance fund** | A fixed 50 bps (`INSURANCE_PREMIUM_BPS`) cut of every vault deposit that accumulates in the vault's insurance fund. Paid out via `claim_insurance` to compensate investors when a project defaults. |
+| **Management fee** | An optional, admin-configured fee (in bps, capped at `MAX_MANAGEMENT_FEE_BPS` = 500) deducted from each deposit before shares are minted, sent to a configured recipient via `set_management_fee`. |
+| **Yield-per-share accumulator** | The vault's global, monotonically increasing `YieldPerShareAccum` value (scaled by `YIELD_SCALE`), used with each investor's last-claim checkpoint (`YieldDebt`) to compute claimable yield in O(1) without iterating investors. |
+| **Multi-sig admin** | An optional `(signers, threshold)` configuration (`set_multisig_admin`) that requires `threshold` distinct signer approvals for critical operations instead of a single owner signature. `threshold = 0` disables it. |
+| **Collateral** | Tokens deposited against a specific project (`deposit_collateral`) as security, released to the owner at maturity (`release_collateral`) or seized by the admin on default (`liquidate_collateral`). |
+| **Archive / compaction** | Two-step lifecycle for retiring a project's storage footprint: `archive_project` flags a project inactive, and `compact_archive` later replaces its full `ProjectData` with a much smaller `ArchiveSummary` to reduce ongoing rent. |
+| **Governance proposal** | A time-boxed on-chain vote (`create_proposal`, `cast_vote`, `execute_proposal`) that HBS holders use to approve or reject a described action; passes if `votes_for > votes_against` once voting closes. |
+| **Carbon credits** | Units calculated from a project's green impact score and funding amount (`calculate_carbon_credits`), issuable to an address (`issue_carbon_credits`) and transferable independently of HBS or USDC balances. |
+| **Bridge transfer** | Cross-chain movement of HBS value via a Wormhole-style message: `initiate_bridge_transfer` burns HBS and emits a VAA-verifiable message; `complete_bridge_transfer` verifies the VAA against trusted emitters and mints HBS on the destination side. |
+| **State version / migration** | `STATE_VERSION` is the storage schema version a given contract build supports; `stored_state_version()` is what's actually persisted on-chain. `migrate_state` upgrades storage from an older version. See [MIGRATION.md](MIGRATION.md). |
+
+---
+
 ## ProjectRegistry
 
 Crate: `project_registry`
@@ -15,7 +41,7 @@ Constructor args: `admin: Address, whitelister: Address`
 | Function | Auth | Args | Returns | Events |
 |---|---|---|---|---|
 | `set_whitelist(account, status)` | whitelister | `account: Address, status: bool` | `()` | `WhitelistSet { account, status }` |
-| `create_project(creator, uri, maturity_date)` | creator (whitelisted) | `creator: Address, uri: String, maturity_date: u64` | `u32` (project\_id) | `ProjectCreated { project_id, owner }` |
+| `create_project(creator, uri, maturity_date, metadata_hash)` | creator (whitelisted) | `creator: Address, uri: String, maturity_date: u64, metadata_hash: BytesN<32>` | `u32` (project\_id) | `ProjectCreated { project_id, owner }` |
 | `get_project(id)` | none | `id: u32` | `ProjectData` | — |
 | `total_projects()` | none | — | `u32` | — |
 | `get_all_projects()` | none | — | `Vec<(u32, ProjectData)>` | — |
@@ -38,9 +64,15 @@ pub struct ProjectData {
     pub green_impact: u32,     // 0–100, oracle-set
     pub maturity_date: u64,    // Unix timestamp; 0 = open-ended
     pub certification_status: CertificationStatus,
+    pub last_update_timestamp: u64,
+    pub status: ProjectStatus,
+    pub created_at: u64,
+    pub metadata_hash: BytesN<32>,
 }
 
-pub enum CertificationStatus { None, Certified, Revoked }
+pub enum CertificationStatus { None, Pending, Certified, Revoked }
+
+pub enum ProjectStatus { Pending, Active, Funded, Completed, Archived }
 
 pub struct Proposal {
     pub description: String,
@@ -85,7 +117,7 @@ Token: HBS (Heliobond Shares) — SEP-41 fungible token via `FungibleToken` trai
 | Function | Auth | Args | Returns | Events |
 |---|---|---|---|---|
 | `deposit(from, usdc_amount)` | from | `from: Address, usdc_amount: i128` (≤ MAX\_DEPOSIT) | `i128` (shares minted) | `Deposit { from, usdc_amount, shares_minted }` |
-| `withdraw(from, shares_amount)` | from (via `burn`) | `from: Address, shares_amount: i128` | `i128` (USDC returned) | `Withdraw { from, shares_burned, usdc_returned }` |
+| `withdraw(from, shares_amount, min_usdc_return)` | from (via `burn`) | `from: Address, shares_amount: i128, min_usdc_return: i128` | `i128` (USDC returned) | `Withdraw { from, shares_burned, usdc_returned }` |
 
 **Deposit fee deduction order:**
 1. `insurance_premium = usdc_amount × 50 / 10_000`
@@ -220,8 +252,47 @@ Investor                       |                              |
    - Updates `TotalInvestments` and `ProjectInvestment(project_id)` ledger entries
    - Emits `ProjectFunded`
 
-3. **Investor calls `withdraw(from, shares_amount)`**
+3. **Investor calls `withdraw(from, shares_amount, min_usdc_return)`**
    - Calls `convert_to_assets(shares_amount)` to determine USDC to return
+   - Panics if the USDC return is below `min_usdc_return` (slippage protection)
    - Burns HBS shares via `Base::burn`
    - Transfers USDC from vault to investor
-   - Emits `Withdraw`
+
+---
+
+## Upgrading a Deployed Contract (#262)
+
+Both contracts support in-place WASM upgrade (`upgrade(new_wasm_hash)`, owner-only)
+plus a versioned storage-migration mechanism (`STATE_VERSION` /
+`state_version()` / `stored_state_version()` / `migrate_state(from_version)`).
+This section is the short operational summary; **`MIGRATION.md` is the
+authoritative reference** — read it in full before performing a real upgrade,
+especially its "Adding a New Storage Layout Version" and "Build Order for
+Cross-Contract Dependencies" sections and the hard-prerequisite warning about
+upgrade ordering between the two contracts.
+
+**Summary of the procedure** (see `MIGRATION.md` for the full command-by-command
+walkthrough):
+
+1. Build the new WASM for both contracts and run the full test suite.
+2. Upload the new WASM to the network (`stellar contract upload`) for both
+   contracts.
+3. Pause both contracts (`pause()`, owner-only) to prevent state changes
+   during the upgrade window.
+4. Invoke `upgrade(new_wasm_hash)` on **ProjectRegistry first, then
+   InvestmentVault** — the vault calls into the registry's interface, so
+   upgrading the vault first against an un-upgraded registry can break
+   cross-contract calls with no automatic rollback.
+5. If `STATE_VERSION` was incremented, call `migrate_state(from_version)` on
+   each contract that changed. It panics with `UnsupportedStateVersion` if
+   `from_version` doesn't match the currently stored version, which prevents
+   double-migration.
+6. Verify `stored_state_version()` reflects the new version on both
+   contracts, then `unpause()` both.
+
+**Rollback:** Soroban WASM upgrades are irreversible on-chain — the only
+"rollback" is re-uploading and re-invoking `upgrade` with the previous WASM
+hash (keep every uploaded hash recorded, see `deploy/testnet.json` and
+`scripts/check_deploy_wasm_hash.py`). State written under the new version may
+not be readable by the old WASM if the storage layout changed, so this is not
+a true undo.

@@ -7,13 +7,29 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag (e.g. v1.2.0)
-        required: true
+        description: >-
+          Release tag (e.g. v1.2.0). Leave blank to auto-compute the next
+          SemVer version from Conventional Commits since the last tag (#255):
+          any "BREAKING CHANGE"/"!" commit bumps major, "feat" bumps minor,
+          anything else conventional-changelog treats as a fix bumps patch.
+        required: false
+
+# Serialize every changelog/release run (#672, regression of #559). Each run
+# pushes CHANGELOG.md to main and creates/edits a release, so the group is
+# repo-wide rather than per-ref: two different v* tags are different refs and
+# would otherwise still race on `git push origin HEAD:main`. Queued runs wait
+# instead of being cancelled so no tag ends up without its release.
+concurrency:
+  group: changelog
+  cancel-in-progress: false
 
 jobs:
   generate-changelog:
     name: Generate changelog & release notes
     runs-on: ubuntu-latest
+    # Skip runs triggered by the bot's own tag push (auto-compute path) to
+    # prevent the workflow re-triggering itself indefinitely (#975).
+    if: github.actor != 'github-actions[bot]'
     permissions:
       contents: write
 
@@ -22,22 +38,53 @@ jobs:
         with:
           fetch-depth: 0   # need full history for conventional-changelog
 
-      - name: Resolve tag
-        id: tag
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Install conventional-changelog-cli
-        run: npm install -g conventional-changelog-cli
+        run: npm install -g conventional-changelog-cli conventional-recommended-bump conventional-changelog-angular
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "created_tag=false" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # No tag given — auto-compute the next SemVer version (#255).
+            LAST_TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo "v0.0.0")
+            LAST_VERSION="${LAST_TAG#v}"
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$LAST_VERSION"
+
+            BUMP=$(conventional-recommended-bump --preset angular || echo "patch")
+            echo "Recommended bump: $BUMP (since $LAST_TAG)"
+
+            case "$BUMP" in
+              major)
+                NEW_TAG="v$((MAJOR + 1)).0.0"
+                ;;
+              minor)
+                NEW_TAG="v${MAJOR}.$((MINOR + 1)).0"
+                ;;
+              *)
+                NEW_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+                ;;
+            esac
+
+            echo "Computed next version: $NEW_TAG"
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$NEW_TAG" -m "Release $NEW_TAG (auto-computed: $BUMP bump)"
+            git push origin "$NEW_TAG"
+
+            echo "name=$NEW_TAG" >> "$GITHUB_OUTPUT"
+            echo "created_tag=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "created_tag=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # Generate a full CHANGELOG.md (all history, Angular preset matches our
       # Conventional Commits format: feat/fix/docs/ci/refactor/chore).

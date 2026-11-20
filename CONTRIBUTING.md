@@ -17,14 +17,26 @@ Browse [open issues](https://github.com/heliobond/contracts/issues). Issues tagg
 | Rust | stable (≥ 1.78) | `rustup update stable` |
 | wasm target | `wasm32v1-none` | `rustup target add wasm32v1-none` |
 | Stellar CLI | ≥ 26.1.0 | [docs.stellar.org/tools/cli](https://developers.stellar.org/docs/tools/cli) |
+| Node.js (only for `notification-service/`) | 20.x – 22.x (see `notification-service/.nvmrc`) | `nvm install` / `nvm use` inside `notification-service/` — newer Node can't build `better-sqlite3` 11 |
 
 ```bash
 # Clone and verify the setup
 git clone https://github.com/heliobond/contracts
 cd contracts
-cargo test        # run the test suite
-make build        # stellar contract build → target/wasm32v1-none/release/
+make build        # stellar contract build → target/wasm32v1-none/release/ (must run first)
+make test         # runs `make build`, then `cargo test`
+make install-hooks # install the cargo fmt --check pre-commit hook
 ```
+
+> **Build order matters.** `investment_vault` pulls in the registry client with
+> `contractimport!(file = "../target/wasm32v1-none/release/project_registry.wasm")`,
+> so on a clean checkout a bare `cargo build` / `cargo test` fails with
+> `No such file or directory` followed by `could not find Client in registry_interface`.
+> That WASM can't be produced with plain `cargo build --target wasm32v1-none` either:
+> soroban-sdk's `experimental_spec_shaking_v2` feature aborts unless the build is driven
+> by `stellar contract build` (stellar-cli ≥ 26.1.0, see the table above). Always run
+> `make build` once before `cargo test`, and again whenever `project_registry` changes —
+> or just use `make test` / `make test-vault`, which do it for you.
 
 ### Editor
 
@@ -45,10 +57,10 @@ Any editor works. If you use VS Code, the `rust-analyzer` extension provides inl
 3. **Run the full quality gate locally** before pushing:
    ```bash
    cargo fmt --all                  # format (CI checks this)
+   make build                       # contracts must compile to WASM (also required before cargo test)
    cargo test --all                 # all tests must pass
-   make build                       # contracts must compile to WASM
    ```
-4. **Open a PR** with `Closes #<issue>` in the body. CI runs `cargo fmt --check`, `cargo test`, and a WASM size check — all must be green.
+4. **Open a PR** with `Closes #<issue>` in the body. CI (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml) for the definitive, up-to-date list) runs considerably more than `fmt`/`test`/size — currently: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all`, a WASM size check, `check_interface_docs.py`, `check_event_field_types.py`, the gas-budget script's own unit tests, a gas profile/budget check, the `notification-service` job's `npm run lint`/`npm run format:check`, a `cargo-audit` security scan, a dependency-review check, and — on pull requests — an ABI-breaking-change check against the base branch. All must be green.
 
 ### Commit message format
 
@@ -72,6 +84,18 @@ fix(project_registry): guard u32 counter against overflow at u32::MAX
 docs(adr): add ADR-003 explaining share vault model
 ci: add WASM size budget check to CI
 ```
+
+### Changelog
+
+`CHANGELOG.md` is generated automatically, not written by hand — do not edit it in your PR. [`.github/workflows/changelog.yml`](.github/workflows/changelog.yml) runs on every `v*` tag push (or manually via `workflow_dispatch`), scans commit history with `conventional-changelog` (Angular preset), regenerates `CHANGELOG.md`, and publishes it as the GitHub release notes. Runs are serialized by a single `changelog` concurrency group, so tags pushed in quick succession are processed one after another (never cancelled) instead of racing on the push to `main`.
+
+This means your changelog entry *is* your commit message, so it has to follow the format above correctly:
+- `feat:` commits bump the minor version and appear under "Features"
+- `fix:` (and anything else conventional-changelog treats as a fix) bumps patch and appears under "Bug Fixes"
+- A `BREAKING CHANGE:` footer, or a `!` after the type/scope (e.g. `feat(investment_vault)!: ...`), bumps major
+- `docs:`, `ci:`, `chore:`, `refactor:`, `test:` commits are included in the changelog under their own sections but don't trigger a version bump on their own
+
+If a PR is squash-merged, the squash commit message is what the changelog picks up — make sure the squash message (not just the individual commits) follows the format.
 
 ---
 
@@ -106,6 +130,7 @@ Anything touching `deposit`, `withdraw`, `fund_project`, or share math needs tes
 ### Running a single test
 
 ```bash
+# Requires target/wasm32v1-none/release/project_registry.wasm — run `make build` first.
 cargo test -p investment-vault test_deposit   # filter by test name
 cargo test --all -- --nocapture               # see println! output
 ```
@@ -140,6 +165,15 @@ If you find a security vulnerability, **do not open a public issue**. See [SECUR
 Significant architectural choices are documented in [`adr/`](./adr/). Before making a change that alters a storage pattern, access control model, or the share vault logic, read the relevant ADR. If your change supersedes a decision, open a new ADR and mark the old one as _Superseded_.
 
 ---
+
+## Seeing the whole flow end-to-end
+
+New to the codebase and want to see how the pieces fit together before diving
+into an issue? [`scripts/example_full_flow.sh`](./scripts/example_full_flow.sh)
+walks through the full happy path — whitelist a creator, create a project,
+deposit into the vault, fund the project, and certify it — against an
+already-deployed local or testnet instance, printing each `stellar contract
+invoke` call as it runs (#259).
 
 ## Deployment procedures
 

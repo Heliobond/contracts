@@ -14,8 +14,9 @@ and interface tests. Types use Soroban SDK names.
 
 ## Multi-Sig Admin Pattern
 
-Both contracts support `set_multisig_admin(signers: Vec<Address>, threshold: u32)`,
-`clear_multisig_admin()`, and `get_multisig_admin() -> (Vec<Address>, u32)`.
+Both contracts support `set_multisig_admin(signers: Vec<Address>, threshold: u32)`
+and `get_multisig_admin() -> (Vec<Address>, u32)`. `clear_multisig_admin()` is
+currently ProjectRegistry-only — InvestmentVault has no equivalent function.
 
 The owner configures the signer set. `threshold = 0` means multi-sig is disabled
 and legacy owner auth is used. When enabled, critical operations must use the
@@ -37,9 +38,17 @@ Multi-sig errors:
 
 ### Data Types
 
-`ProjectData { owner: Address, uri: String, credit_quality: u32, green_impact: u32, maturity_date: u64, certification_status: CertificationStatus }`
+`ProjectData { owner: Address, uri: String, credit_quality: u32, green_impact: u32, maturity_date: u64, certification_status: CertificationStatus, last_update_timestamp: u64, status: ProjectStatus, created_at: u64, metadata_hash: BytesN<32> }`
 
 `CertificationStatus`: `None`, `Pending`, `Certified`, `Revoked`.
+
+`ProjectStatus`: `Pending`, `Active`, `Funded`, `Completed`, `Archived`.
+
+`ArchiveSummary { owner: Address, final_credit_quality: u32, final_green_impact: u32, maturity_date: u64, certification_status: CertificationStatus }`
+
+`ScoreHistoryEntry { timestamp: u64, credit_quality: u32, green_impact: u32 }`
+
+`HealthStatus { state_version: u32, is_paused: bool, total_projects: u32, has_emergency_admin: bool }` (see `health_check`, #77).
 
 `Proposal { description: String, proposer: Address, voting_ends_at: u64, votes_for: i128, votes_against: i128, executed: bool }`
 
@@ -49,16 +58,19 @@ Multi-sig errors:
 | --- | --- | --- | --- |
 | `__constructor(admin: Address, whitelister: Address)` | none | none | Sets owner, whitelister, counters. |
 | `set_whitelist(account: Address, status: bool)` | `whitelister` | none | Grants or revokes project creation rights. |
-| `create_project(creator: Address, uri: String, maturity_date: u64)` | `creator` | `u32` | Requires whitelist, URI length 8..512, future maturity when nonzero. |
+| `create_project(creator: Address, uri: String, maturity_date: u64, metadata_hash: BytesN<32>)` | `creator` | `u32` | Requires whitelist, URI length 8..512, future maturity when nonzero. `metadata_hash` is the content hash of the off-chain `uri` payload (#44). |
 | `get_project(id: u32)` | none | `ProjectData` | `ProjectNotFound`. |
 | `total_projects()` | none | `u32` | Highest assigned project id. |
-| `update_impact_score(project_id: u32, credit_quality: u32, green_impact: u32)` | owner, or disabled when multi-sig is enabled | none | Scores 0..100. Use approval variant after enabling multi-sig. |
+| `verify_metadata_hash(project_id: u32, candidate_hash: BytesN<32>)` | none | `bool` | True if `candidate_hash` matches the hash recorded at creation (#44). |
+| `update_impact_score(project_id: u32, credit_quality: u32, green_impact: u32)` | configured oracle, or owner fallback; disabled when multi-sig is enabled | none | Scores 0..100. Rate-limited to one update per ~hour, see `next_update_allowed_at`. Use approval variant after enabling multi-sig. |
 | `update_impact_score_approved(project_id: u32, credit_quality: u32, green_impact: u32, approvals: Vec<Address>)` | multi-sig signers | none | Critical operation. |
-| `update_credit_quality_score(project_id: u32, credit_quality: u32)` | owner, or disabled when multi-sig is enabled | none | Updates credit score only. |
-| `update_credit_quality_approved(project_id: u32, credit_quality: u32, approvals: Vec<Address>)` | multi-sig signers | none | Critical operation. |
+| `update_credit_quality_score(project_id: u32, credit_quality: u32)` | configured oracle, or owner fallback; disabled when multi-sig is enabled | none | Updates credit score only. Use `update_credit_quality_approved` when multi-sig is enabled. |
+| `next_update_allowed_at(project_id: u32)` | none | `u64` | Earliest ledger timestamp for the next oracle score update: `last_update_timestamp + 3600 - 60` (`MIN_UPDATE_INTERVAL` minus a 60 s `UPDATE_INTERVAL_TOLERANCE` for ledger-close jitter), or `0` if never updated. Earlier updates fail with `UpdateTooFrequent` (#628). `ProjectNotFound`. |
+| `get_score_history(project_id: u32)` | none | `Vec<ScoreHistoryEntry>` | Chronological ring buffer of past score updates (#123). |
 | `certify_project(caller: Address, project_id: u32, status: CertificationStatus)` | `caller` | none | Caller must be whitelister or owner. |
 | `is_mature(project_id: u32)` | none | `bool` | False for open-ended projects. |
 | `get_all_projects()` | none | `Vec<(u32, ProjectData)>` | O(n) over registered ids. |
+| `get_projects_page(offset: u32, limit: u32)` | none | `Vec<(u32, ProjectData)>` | Non-archived projects with ID > `offset`, up to `limit` entries; stable ordering when paged with no writes in between (#269). |
 | `create_proposal(proposer: Address, description: String, voting_duration_secs: u64)` | `proposer` | `u32` | Duration must be at least 86,400 seconds. |
 | `cast_vote(voter: Address, proposal_id: u32, support: bool, weight: i128)` | `voter` | none | Weight must be positive; callers must supply verified HBS balance. |
 | `execute_proposal(proposal_id: u32)` | none | `bool` | Callable after voting ends. |
@@ -77,6 +89,44 @@ Multi-sig errors:
 | `get_creator_funding_limit_bps(creator: Address)` | none | `u32` | Reputation-derived suggested limit. |
 | `set_whitelister(new_whitelister: Address)` | owner | none | Replaces whitelister. |
 | `get_whitelister()` | none | `Address` | Current whitelister. |
+| `archive_project(project_id: u32)` | owner | none | Marks a project archived; excluded from `get_all_projects` by default (#26). |
+| `set_project_status(project_id: u32, status: ProjectStatus)` | owner | none | Transitions status between `Pending`/`Active`/`Funded`/`Completed`; cannot set or clear `Archived` (#329). |
+| `delete_project(project_id: u32)` | owner | none | Rejects deletion when the project has active investments: queries `get_project_investment(project_id)` on the vault set via `set_vault` and panics with `ProjectHasInvestments` if non-zero. Fails closed with `VaultNotConfigured` if no vault is set (#526). |
+| `set_vault(vault: Address)` | owner | none | Sets the investment vault `delete_project` queries for active investments (#526). |
+| `get_vault()` | anyone | `Option<Address>` | Returns the configured investment vault, if any (#526). |
+| `get_all_projects_with_archived()` | none | `Vec<(u32, ProjectData)>` | Like `get_all_projects` but includes archived projects. |
+| `compact_archive(project_id: u32)` | owner | none | Replaces a full `ProjectData` with a minimal `ArchiveSummary` (#73). Project must already be archived. |
+| `get_archive_summary(project_id: u32)` | none | `ArchiveSummary` | Panics if the project hasn't been compacted. |
+| `compact_storage(project_ids: Vec<u32>, tokens: Vec<Address>)` | owner | `u32` | Removes zero-value collateral storage entries; returns count removed. Each list ≤ 20 and `project_ids.len() * tokens.len()` ≤ 20 pairs, else `CompactStorageTooLarge`. |
+| `pause()` | owner | none | Blocks state-mutating operations; getters remain available (#72). |
+| `unpause()` | owner | none | Reverses `pause()`. |
+| `is_paused()` | none | `bool` | Circuit-breaker status. |
+| `set_emergency_admin(emergency_admin: Option<Address>)` | owner | none | Configures (or clears) an address that can call `emergency_pause`/`emergency_unpause` without full owner privileges (#43). |
+| `get_emergency_admin()` | none | `Option<Address>` | Currently configured emergency admin, if any. |
+| `emergency_pause(caller: Address)` | `caller` must be the configured emergency admin | none | Pauses without owner auth (#43). |
+| `emergency_unpause(caller: Address)` | `caller` must be the configured emergency admin | none | Unpauses without owner auth (#43). |
+| `health_check()` | none | `HealthStatus` | Consolidated status snapshot for monitoring integrations (#77). |
+| `state_version()` | none | `u32` | Schema version supported by this contract build. |
+| `stored_state_version()` | none | `u32` | Schema version recorded in instance storage; 0 for unversioned deployments. |
+| `migrate_state(from_version: u32)` | owner | `u32` | Migrates storage from `from_version` to the current schema version. |
+| `upgrade(new_wasm_hash: BytesN<32>)` | owner | none | Deploys new contract code at the current address. |
+
+
+### Additional exported operations
+
+| Function | Authorization | Returns |
+| --- | --- | --- |
+| `cancel_timelock(id: u32)` | owner | `none` |
+| `execute_timelock(id: u32)` | owner | `none` |
+| `get_oracle()` | public | `Option<Address>` |
+| `get_timelock(id: u32)` | public | `Option<TimelockEntry>` |
+| `is_accepted_collateral_token(token: Address)` | public | `bool` |
+| `queue_timelock(op_type: u32, target: BytesN<32>, delay_secs: u64)` | owner | `u32` |
+| `set_accepted_collateral(token: Address, accepted: bool)` | owner | `none` |
+| `set_oracle(oracle: Option<Address>)` | owner | `none` |
+| `update_credit_quality_approved(project_id: u32, credit_quality: u32, approvals: Vec<Address>)` | multi-sig signers | `none` |
+| `update_impact_scores_batch(updates: Vec<(u32, u32, u32)>)` | configured oracle, or owner fallback | `none` |
+| `update_scores_batch_approved(updates: Vec<(u32, u32, u32)>, approvals: Vec<Address>)` | multi-sig signers | `none` |
 
 ## InvestmentVault
 
@@ -91,6 +141,8 @@ Multi-sig errors:
 Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 `RegulatoryReport`. Bridge type: `BridgeTransferPayload`.
 
+`HealthStatus { state_version: u32, is_paused: bool, utilization_bps: u32, has_emergency_admin: bool }` (see `health_check`, #77).
+
 ### Functions
 
 | Function | Auth | Returns | Errors / Notes |
@@ -98,23 +150,31 @@ Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 | `__constructor(admin: Address, usdc_sac: Address, registry: Address)` | none | none | Validates registry via `total_projects()`, sets HBS metadata. |
 | `deposit(from: Address, usdc_amount: i128)` | `from` | `i128` | Transfers USDC, deducts insurance premium and optional fee, mints shares. |
 | `batch_deposit(deposits: Vec<(Address, i128)>)` | each depositor | `Vec<i128>` | Runs multiple deposits in order; keep batches small enough for Soroban resource limits. |
-| `withdraw(from: Address, shares_amount: i128)` | `from` via burn | `i128` | Burns shares; may enqueue if liquid USDC is insufficient. |
+| `withdraw(from: Address, shares_amount: i128, min_usdc_return: i128)` | `from` via burn | `i128` | Burns shares; may enqueue if liquid USDC is insufficient. Panics if the actual USDC return is below `min_usdc_return` (slippage protection). |
 | `claim()` | none | `i128` | Settles queued withdrawals FIFO. |
 | `fund_project(project_id: u32, amount: i128)` | owner, or disabled when multi-sig is enabled | none | Critical operation; checks score thresholds and insurance reserve. |
 | `fund_project_with_approvals(project_id: u32, amount: i128, approvals: Vec<Address>)` | multi-sig signers | none | Critical operation. |
 | `batch_fund_projects(fundings: Vec<(u32, i128)>, approvals: Vec<Address>)` | owner when multi-sig disabled, otherwise multi-sig signers | none | Common batch funding path. |
-| `receive_yield(from: Address, amount: i128)` | owner, or disabled when multi-sig is enabled | none | Transfers repayment USDC and updates yield accumulator. |
-| `receive_yield_with_approvals(from: Address, amount: i128, approvals: Vec<Address>)` | multi-sig signers | none | Critical operation. |
+| `repay_principal(from: Address, project_id: u32, amount: i128)` | `from` | none | Returns project principal to the vault and reduces its outstanding investment; any excess over the outstanding balance stays liquid. `ProjectAlreadySettled` after settlement. Emits `PrincipalRepaid` (#631). |
+| `settle_project(project_id: u32)` | owner | none | Requires registry `is_mature`, else `ProjectNotMature`. Writes remaining outstanding principal off as impairment, then blocks further funding/repayment (`ProjectAlreadySettled`). Emits `ProjectSettled`. The registry owner then sets `Completed` via `set_project_status` (#631). |
+| `get_project_position(project_id: u32)` | none | `ProjectPosition` | `{ funded, repaid, outstanding, impairment, mature, settled }`; `funded = outstanding + repaid + impairment` (#631). |
+| `receive_yield(from: Address, amount: i128)` | owner, or disabled when multi-sig is enabled | none | Transfers repayment USDC and updates yield accumulator. Use `update_credit_quality_approved` when multi-sig is enabled. |
 | `claim_yield(from: Address)` | `from` | `i128` | Pays accrued yield when liquid. |
+| `get_project_investment(project_id: u32)` | none | `i128` | Cumulative USDC funded into `project_id`; 0 if never funded. |
+| `max_hbs_supply()` | none | `i128` | Hard cap on total HBS share supply enforced by `deposit` (#20). |
 | `claim_insurance(project_id: u32, recipient: Address, amount: i128)` | owner, or disabled when multi-sig is enabled | none | Critical operation; one claim per project. |
 | `claim_insurance_with_approvals(project_id: u32, recipient: Address, amount: i128, approvals: Vec<Address>)` | multi-sig signers | none | Critical operation. |
 | `set_multisig_admin(signers: Vec<Address>, threshold: u32)` | owner | none | Configures 1..10 unique signers. |
-| `clear_multisig_admin()` | owner | none | Restores owner-only critical operations. |
-| `get_multisig_admin()` | none | `(Vec<Address>, u32)` | Returns signers and threshold. |
+| `get_multisig_admin()` | none | `(Vec<Address>, u32)` | Returns signers and threshold. InvestmentVault has no `clear_multisig_admin()`. |
 | `get_expected_returns()` | none | `i128` | O(n) over registry projects. |
-| `total_assets()` | none | `i128` | Liquid USDC + investments + expected returns. |
+| `total_assets()` | none | `i128` | Liquid USDC + investments + expected returns. Also refreshes the cached NAV (writes storage); the #617 views read NAV without writing. |
 | `convert_to_shares(usdc_amount: i128)` | none | `i128` | ERC-4626-style conversion. |
 | `convert_to_assets(shares_amount: i128)` | none | `i128` | ERC-4626-style conversion. |
+| `share_price()` | none | `i128` | USDC per whole share, scaled by 10^7; 10^7 (1:1) when no shares exist. Read-only (#617). |
+| `preview_deposit(usdc_amount: i128)` | none | `i128` | Exact shares `deposit` would mint now, after the 50 bps insurance premium and management / volume-tier fee. Panics with the same errors as `deposit`. Read-only (#617). |
+| `preview_withdraw(shares_amount: i128)` | none | `(i128, i128)` | `(usdc_now, usdc_queued)` that `withdraw` would produce now; panics with `WithdrawalExceedsLimit` under the graduated utilization limit. Ignores the per-account deposit lock (see `max_withdraw`). Read-only (#617). |
+| `max_withdraw(account: Address)` | none | `i128` | Max USDC `account` can withdraw now: balance value capped by the utilization tier limit and max-transaction cap; 0 while paused, deposit-locked, or below the minimum. Read-only (#617). |
+| `max_deposit(account: Address)` | none | `i128` | Max USDC depositable now: `MAX_DEPOSIT` capped by the max-transaction cap and remaining HBS supply headroom; 0 while paused. Funding rounds don't affect deposits. Read-only (#617). |
 | `get_utilization_bps()` | none | `u32` | Investments over liquid plus investments. |
 | `claimable_yield(account: Address)` | none | `i128` | View-only accrued yield. |
 | `get_portfolio(account: Address)` | none | `PortfolioInfo` | Investor analytics snapshot. |
@@ -135,8 +195,8 @@ Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 | `bridge_burn(from: Address, amount: i128)` | `from` | none | Amount positive. |
 | `set_wormhole_core(core: Address)` | owner | none | Configures Wormhole core. |
 | `set_trusted_emitter(chain_id: u32, emitter_address: BytesN<32>, trusted: bool)` | owner | none | Updates trusted emitter map. |
-| `initiate_bridge_transfer(from: Address, amount: i128, target_chain: u32, recipient: BytesN<32>, nonce: u64)` | `from` | `u64` | Burns HBS and publishes Wormhole message. |
-| `complete_bridge_transfer(vaa: Bytes)` | none | none | Verifies VAA, trusted emitter, replay guard, mints HBS. |
+| `initiate_bridge_transfer(from: Address, amount: i128, target_chain: u32, recipient: BytesN<32>, recipient_kind: u32, nonce: u64)` | `from` | `u64` | Burns HBS and publishes a version 1 Wormhole message. `recipient_kind` is 0 for account or 1 for contract. |
+| `complete_bridge_transfer(vaa: Bytes)` | none | none | Verifies VAA, trusted emitter and replay guard, then mints HBS. Requires the exact 101-byte `HBS\x01` payload with recipient kind 0 (account) or 1 (contract). Legacy untagged payloads are rejected. |
 | `set_flash_loan_fee(fee_bps: i128)` | owner | none | 0..1000 bps. |
 | `flash_loan_fee()` | none | `i128` | Defaults to 30 bps. |
 | `execute_flash_loan(initiator: Address, borrower: Address, amount: i128, data: Bytes)` | `initiator` | none | Calls borrower callback and collects amount plus fee. |
@@ -144,17 +204,54 @@ Compliance/reporting types: `ComplianceEventData`, `ReportingSnapshotData`,
 | `set_carbon_credit_price(price: i128)` | oracle | none | Price positive. |
 | `carbon_credit_price()` | none | `i128` | Defaults to 0. |
 | `calculate_carbon_credits(project_id: u32, amount: i128)` | none | `CarbonCreditCalculation` | Uses project green impact. |
-| `issue_carbon_credits(to: Address, project_id: u32, amount: i128)` | none | `i128` | Issues calculated credits when positive. |
+| `issue_carbon_credits(to: Address, project_id: u32, amount: i128)` | owner | `i128` | Issues calculated credits when positive. |
 | `transfer_carbon_credits(from: Address, to: Address, amount: i128)` | `from` | none | Balance must cover amount. |
 | `carbon_credit_balance(address: Address)` | none | `i128` | Defaults to 0. |
 | `set_max_transaction_amount(amount: i128)` | owner | none | Compliance cap; 0 disables. |
 | `max_transaction_amount()` | none | `i128` | Defaults to 0. |
 | `record_compliance_event(event_type: String, data: String)` | owner | none | Appends event. |
 | `get_compliance_event(seq: u64)` | none | `ComplianceEventData` | Panics if missing. |
-| `get_compliance_events(from: u64, to: u64)` | none | `Vec<ComplianceEventData>` | Inclusive range; skips missing entries. |
+| `get_compliance_events(from: u64, to: u64)` | none | `Vec<ComplianceEventData>` | Inclusive range; skips missing entries. Returns at most 99 events per call to fit the protocol storage footprint. |
 | `take_reporting_snapshot()` | owner | none | Captures latest reporting metrics. |
 | `get_latest_snapshot()` | none | `ReportingSnapshotData` | Panics if no snapshot exists. |
 | `export_regulatory_data()` | none | `RegulatoryReport` | Includes latest snapshot and up to 50 recent events. |
+| `compact_storage()` | owner | `u32` | Removes zero-value `ProjectInvestment` entries; returns count removed (#88). |
+| `pause()` | owner | none | Blocks state-mutating operations; getters remain available (#72). |
+| `unpause()` | owner | none | Reverses `pause()`. |
+| `is_paused()` | none | `bool` | Circuit-breaker status. |
+| `set_emergency_admin(emergency_admin: Option<Address>)` | owner | none | Configures (or clears) an address that can call `emergency_pause`/`emergency_unpause` without full owner privileges (#43). |
+| `get_emergency_admin()` | none | `Option<Address>` | Currently configured emergency admin, if any. |
+| `emergency_pause(caller: Address)` | `caller` must be the configured emergency admin | none | Pauses without owner auth (#43). |
+| `emergency_unpause(caller: Address)` | `caller` must be the configured emergency admin | none | Unpauses without owner auth (#43). |
+| `health_check()` | none | `HealthStatus` | Consolidated status snapshot for monitoring integrations (#77). |
+| `state_version()` | none | `u32` | Schema version supported by this contract build. |
+| `stored_state_version()` | none | `u32` | Schema version recorded in instance storage; 0 for unversioned deployments. |
+| `migrate_state(from_version: u32)` | owner | `u32` | Migrates storage from `from_version` to the current schema version. |
+| `upgrade(new_wasm_hash: BytesN<32>)` | owner | none | Deploys new contract code at the current address. |
+
+### Additional exported operations
+
+| Function | Authorization | Returns |
+| --- | --- | --- |
+| `end_funding_round()` | owner | `none` |
+| `get_all_project_investments()` | public | `Vec<(u32, i128)>` |
+| `get_deposit_lock_expiry(account: Address)` | public | `u64` |
+| `get_project_investments_batch(project_ids: Vec<u32>)` | public | `Vec<i128>` |
+| `get_volume_fee_tier()` | public | `(i128, u32)` |
+| `get_withdrawal_window()` | public | `u32` |
+| `investment_capacity(project_id: u32)` | public | `i128` |
+| `is_deposits_paused()` | public | `bool` |
+| `is_funding_round_active()` | public | `bool` |
+| `is_withdrawals_paused()` | public | `bool` |
+| `pause_deposits()` | owner | `none` |
+| `pause_withdrawals()` | owner | `none` |
+| `receive_yield_with_approvals(from: Address, amount: i128, approvals: Vec<Address>)` | multi-sig signers | `none` |
+| `set_max_investment_per_project(cap: i128)` | owner | `none` |
+| `set_volume_fee_tier(threshold: i128, discounted_bps: u32)` | owner | `none` |
+| `set_withdrawal_window(ledgers: u32)` | owner | `none` |
+| `start_funding_round()` | owner | `none` |
+| `unpause_deposits()` | owner | `none` |
+| `unpause_withdrawals()` | owner | `none` |
 
 ## Batch Operation Limits
 

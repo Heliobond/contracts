@@ -26,9 +26,15 @@ Options for creator access control:
 **Creator access control:** use a dedicated `whitelister` address stored in instance storage. The whitelister calls `set_whitelist(account, true/false)` to approve or revoke creators. Only whitelisted addresses can call `create_project`.
 
 Rationale:
-- Single-owner is simple and auditable. Multisig complexity (threshold, key rotation) is handled at the Stellar account layer where it belongs, not duplicated in the contract.
+- Single-owner is simple and auditable. Multisig complexity (threshold, key rotation) is handled at the Stellar account layer where it belongs, not duplicated in the contract. **(Updated, #401 — see "On-chain multisig subsystem" below: this is no longer the whole story.)**
 - A separate whitelister role decouples day-to-day project onboarding from protocol admin. The admin can be a cold multisig; the whitelister can be a warmer operational key.
 - A simple boolean whitelist is sufficient for the current scale. Graduated tiers or KYC attestation can be added later without breaking the existing interface.
+
+### On-chain multisig subsystem (updated, #401)
+
+Both contracts have since (#184) grown a complete **on-chain** multisig subsystem: `set_multisig_admin`/`get_multisig_admin` configure a signer set and approval threshold (`MultiSigSigners`/`MultiSigThreshold`), `require_admin_approval` verifies a call carries enough signer approvals, and every critical admin function gained an `_with_approvals`/`_approved` variant (`fund_project_with_approvals`, `claim_insurance_with_approvals`, `batch_fund_projects`, `update_impact_score_approved`, `liquidate_collateral_approved`, and more) — exactly the "complexity... duplicated in the contract" the original decision above explicitly avoided.
+
+This wasn't a reversal so much as an additional option: the security model is now "single owner *or* on-chain multisig, admin's choice," not "single owner, multisig handled off-chain only." An owner can still use a Stellar-account-layer multisig as originally decided, or opt into the on-chain subsystem via `set_multisig_admin` for on-chain-auditable approval trails without relying on account-layer tooling. GOVERNANCE.md documents this subsystem in detail as "Phase 1: Multisig Administration" of the project's roadmap — this ADR previously gave no indication that subsystem existed. Note investment_vault's on-chain multisig is a one-way migration once enabled (`threshold > 0`); there is no on-chain path back to single-owner operation for that contract (project_registry has `clear_multisig_admin()` for the reverse case).
 
 ## Consequences
 

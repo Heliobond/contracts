@@ -70,6 +70,8 @@ The command deploys `ProjectRegistry` first, then deploys `InvestmentVault` with
 deploy/testnet.json
 ```
 
+It then runs `scripts/check_deploy_wasm_hash.py update` on that manifest (the same step `deploy.yml` runs), so `project_registry_wasm_hash` / `investment_vault_wasm_hash` are recorded too. Without them, a later `check_deploy_wasm_hash.py check` (e.g. `network-tests.yml`) would skip verification for both contracts instead of catching drift (#534).
+
 ## Manual Deployment
 
 For testnet:
@@ -145,3 +147,8 @@ Both calls should return `1`.
 - `invalid address`: ensure contract IDs start with `C` and account addresses start with `G`.
 - `gas budget exceeded`: open `gas-report.md`, compare the changed function to `gas-budgets.json`, and either optimize the code or intentionally raise the budget with justification.
 - `stored_state_version` returns `0` after an upgrade: call `migrate_state --from_version 0` as the contract owner, then re-run verification.
+- `deploy/testnet.json` has empty `project_registry` / `investment_vault` fields: this is the checked-in template's starting state before any deploy has run. Don't script against it directly — use the contract IDs printed by `make deploy-testnet` or the Deploy workflow's own output/summary; the manifest is only guaranteed current for `testnet` after a successful GitHub Actions deploy.
+- `HASH MISMATCH` from `scripts/check_deploy_wasm_hash.py` or the Deploy workflow's "Verify on-chain WASM hash" step: the on-chain contract doesn't match the locally built WASM recorded in the manifest. Confirm the deploy you expect actually landed on the contract ID in `deploy/testnet.json`; if the on-chain upgrade was intentional, re-run `python3 scripts/check_deploy_wasm_hash.py update deploy/testnet.json project_registry=<wasm> investment_vault=<wasm>` to resync the manifest.
+- Deploy workflow fails immediately in the `deploy` job with an auth/signing error: the `STELLAR_SECRET_KEY` secret must be configured on the GitHub **Environment** matching the chosen `network` input (`testnet` or `mainnet`), not just as a repo-level secret — check *Settings → Environments*.
+- `deploy/testnet.json`'s `"network"` field still says `"testnet"` after a mainnet deploy: only `network: testnet` runs trigger the "Update deploy manifest" step (`if: github.event.inputs.network == 'testnet'` in `deploy.yml`); mainnet contract IDs are not written back to this file and must be tracked separately.
+- Deploy succeeded but `deploy/testnet.json` wasn't updated in git: the workflow's "Commit updated deploy manifest" step pushes directly to `main` — if branch protection blocks direct pushes, that step fails silently after a working deploy. Manually apply the same `project_registry` / `investment_vault` / `*_wasm_hash` updates and commit as a follow-up.

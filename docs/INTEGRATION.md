@@ -18,6 +18,68 @@ You also need:
 
 ---
 
+## Typed SDK (`@heliobond/contracts-sdk`)
+
+**Issue:** [#624](https://github.com/Heliobond/contracts/issues/624)
+
+Each release tag (`v*`) publishes `@heliobond/contracts-sdk` to GitHub Packages
+(`.github/workflows/sdk.yml`). It contains:
+
+- `ProjectRegistry` / `InvestmentVault` — typed clients generated with
+  `stellar contract bindings typescript` from that release's WASMs, so method
+  names, argument types and return types always match the deployed ABI;
+- `networks` — per-network `networkPassphrase`, `rpcUrl` and contract IDs,
+  generated from `deploy/*.json`;
+- `requireContractIds(name)` — returns a network's config, or throws if its
+  contracts aren't deployed yet.
+
+Prefer the SDK over hand-written `nativeToScVal` calls (the examples further
+down). Hand-encoded arguments drift silently when the ABI changes.
+
+```bash
+# .npmrc
+@heliobond:registry=https://npm.pkg.github.com
+```
+
+```bash
+npm install @heliobond/contracts-sdk @stellar/stellar-sdk
+```
+
+```typescript
+import { Keypair } from "@stellar/stellar-sdk";
+import { basicNodeSigner } from "@stellar/stellar-sdk/contract";
+import { InvestmentVault, requireContractIds } from "@heliobond/contracts-sdk";
+
+const net = requireContractIds("testnet");
+const keypair = Keypair.fromSecret(process.env.SECRET_KEY!);
+const vault = new InvestmentVault.Client({
+  contractId: net.investmentVault,
+  networkPassphrase: net.networkPassphrase,
+  rpcUrl: net.rpcUrl,
+  publicKey: keypair.publicKey(),
+  ...basicNodeSigner(keypair, net.networkPassphrase),
+});
+
+const tx = await vault.deposit({ from: keypair.publicKey(), usdc_amount: 1_000_000_000n });
+const { result: sharesMinted } = await tx.signAndSend();
+```
+
+A runnable version lives at `sdk/examples/deposit.ts`
+(`SECRET_KEY=S... npm run example:deposit` from `sdk/`).
+
+**Building locally:**
+
+```bash
+stellar contract build
+scripts/build_sdk.sh 0.0.0-dev   # bindings + networks.ts (gitignored)
+cd sdk && npm install && npm run build
+```
+
+> The frontend and backend will adopt the SDK in follow-up PRs, replacing their
+> hand-written calls and `src/lib/registry.ts`'s ScVal encoding.
+
+---
+
 ## Contract addresses
 
 | Contract | Testnet ID | Description |
@@ -27,6 +89,45 @@ You also need:
 | USDC SAC | `CZZZ…` | USDC Stellar Asset Contract on testnet |
 
 > Replace `CX…`, `CY…`, `CZ…` with the actual IDs from the latest deployment.
+
+---
+
+## Call flow: InvestmentVault <-> ProjectRegistry
+
+`InvestmentVault` never duplicates project data — it cross-calls `ProjectRegistry` at the moments it needs project state, and vice versa is not needed since `ProjectRegistry` has no dependency on the vault. The two flows below cover the full lifecycle: registering/funding a project, and an investor depositing and having a vote counted.
+
+```mermaid
+sequenceDiagram
+    participant Creator
+    participant Investor
+    participant Admin
+    participant Vault as InvestmentVault
+    participant Registry as ProjectRegistry
+    participant USDC as USDC SAC
+
+    Creator->>Registry: create_project(creator, uri)
+    Registry-->>Creator: project_id
+
+    Investor->>USDC: approve(investor, vault, amount)
+    Investor->>Vault: deposit(investor, amount)
+    Vault->>USDC: transfer(investor, vault, amount)
+    Vault-->>Investor: shares minted
+
+    Admin->>Vault: fund_project(project_id, amount)
+    Vault->>Registry: get_project(project_id)
+    Registry-->>Vault: ProjectData { owner, ... }
+    Vault->>USDC: transfer(vault, owner, amount)
+    Vault-->>Admin: ProjectFunded event
+
+    Investor->>Vault: balance(investor)
+    Vault-->>Investor: hbs_balance
+    Investor->>Registry: cast_vote(investor, proposal_id, support, hbs_balance)
+    Registry-->>Investor: VoteCast event
+```
+
+Notes:
+- `fund_project` is the only call where the vault reads from the registry (`get_project`) — this is how it resolves the payout address without storing project ownership itself.
+- `cast_vote`'s weight is supplied by the caller, not fetched on-chain — see the [governance doc](./GOVERNANCE.md#on-chain-proposal--voting-mechanism) for why, and what to verify off-chain before trusting a vote.
 
 ---
 
@@ -107,19 +208,32 @@ async function invokeContract(
 
 ### Check if an address is whitelisted
 
+> **Note:** There is no on-chain `get_whitelist` getter. The only way to
+> determine current whitelist status off-chain is to index `WhitelistSet`
+> events emitted by `set_whitelist`. The example below filters the event
+> stream for the most recent status for a given address.
+
 ```typescript
 const REGISTRY = "CXXX…";
 
-const result = await server.simulateTransaction(
-  new TransactionBuilder(account, { fee: "100", networkPassphrase: network })
-    .addOperation(new Contract(REGISTRY).call(
-      "get_whitelist",
-      nativeToScVal(keypair.publicKey(), { type: "address" }),
-    ))
-    .setTimeout(30)
-    .build()
-);
-const isWhitelisted: boolean = scValToNative((result as any).result.retval);
+// Index WhitelistSet events to reconstruct current whitelist status.
+// There is no direct on-chain query for this — set_whitelist emits
+// WhitelistSet { account, status } and that is the only source of truth.
+const events = await server.getEvents({
+  filters: [{ type: "contract", contractId: REGISTRY }],
+  startLedger: 0,
+  limit: 100,
+});
+const target = keypair.publicKey();
+let isWhitelisted = false;
+for (const event of events.events) {
+  if (event.type !== "contract") continue;
+  const topics = event.topics.map(scValToNative);
+  if (topics[0] !== "WhitelistSet") continue;
+  if (topics[1] === target) {
+    isWhitelisted = topics[2] as boolean;
+  }
+}
 ```
 
 ### Create a project
@@ -132,6 +246,7 @@ const projectId = scValToNative(await invokeContract(
     nativeToScVal(keypair.publicKey(), { type: "address" }),  // creator
     nativeToScVal("ipfs://QmYourHash",  { type: "string" }),  // uri
     nativeToScVal(0n,                   { type: "u64" }),     // maturity_date (0 = open-ended)
+    nativeToScVal(hash("project-metadata-v1"), { type: "bytesN<32>" }), // metadata_hash
   ],
   keypair,
 ));

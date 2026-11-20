@@ -1,0 +1,44 @@
+# Gitleaks config — repo-side substitute for GitHub secret scanning + push protection
+# (native scanning is disabled on this repo; see scripts/enable-github-secret-scanning.sh).
+# Run: gitleaks detect --config .gitleaks.toml --verbose
+# CI: .github/workflows/secret-scanning.yml fails the build on any leak.
+
+title = "Heliobond contracts secret scan"
+
+[extend]
+useDefault = true
+
+# Extra rules for Stellar/Soroban + common service keys not in defaults.
+
+[[rules]]
+id = "stellar-secret-seed"
+description = "Stellar secret seed key (S... 56 chars)"
+regex = '''\bS[A-Z2-7]{55}\b'''
+tags = ["stellar", "secret"]
+
+[[rules]]
+id = "soroban-rpc-auth-token"
+description = "Possible Soroban RPC / API bearer token in config"
+regex = '''(?i)(soroban|stellar)[_-]?(rpc|api)[_-]?(key|token|secret)\s*[:=]\s*['"]?[A-Za-z0-9_\-]{16,}['"]?'''
+tags = ["stellar", "api-key"]
+
+[[rules]]
+id = "generic-private-key-block"
+description = "PEM private key block"
+regex = '''-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'''
+tags = ["private-key"]
+
+[allowlist]
+description = "Test fixtures, docs examples, and build output"
+paths = [
+  '''\.gitleaks\.toml$''',
+  '''^target/''',
+  '''^node_modules/''',
+  '''Cargo\.lock$''',
+  '''.*test.*\.rs$''',
+  '''.*\.snap$''',
+]
+# Known-safe placeholder matches (extend only with review).
+regexes = [
+  '''EXAMPLE''',
+]

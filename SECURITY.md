@@ -12,6 +12,12 @@ Include what you can: affected component, steps to reproduce, and impact. We aim
 
 This is testnet, pre-production software. The smart contracts have not yet been audited. Treat anything on-chain as experimental until a release notes otherwise.
 
+## Dependency Updates
+
+[`.github/dependabot.yml`](.github/dependabot.yml) opens weekly update PRs for the Cargo workspace, the `notification-service` and `sdk` npm packages, and GitHub Actions. `soroban-sdk` and the exact-pinned `stellar-*` crates are grouped into a single PR because they must be upgraded together. Treat these PRs like any other: CI (including `cargo audit`) must be green before merging.
+
+Maintainers should also keep **Dependabot alerts** and **Dependabot security updates** enabled under *Settings → Code security*; that setting cannot be turned on from a file in the repo.
+
 ## Threat Model and Trust Assumptions
 
 ### Trust Boundaries
@@ -22,6 +28,47 @@ This is testnet, pre-production software. The smart contracts have not yet been 
 ### Known Limitations
 - The contracts currently rely on a centralized whitelister for project creation.
 - Maximum URI lengths and specific string size bounds are strictly enforced to prevent ledger bloat.
+
+## Pre-Merge Checklist for New Contract Functions
+
+Before merging a PR that adds or modifies a public entry point on either
+contract, walk through this checklist (#265):
+
+- [ ] **Auth checks**: Does this function require the right caller's
+      authorization? `#[only_owner]` for admin-only actions, an explicit
+      `caller.require_auth()` for actions gated to a specific non-admin
+      party (e.g. a project owner). Confirm the check happens *before* any
+      state mutation, not after. If the function is admin-only, add it to
+      `test_all_only_owner_functions_reject_non_admin_caller` in the
+      relevant crate's `test.rs` (#266) — don't rely solely on a one-off
+      test, since that consolidated test is what catches an entry point
+      that's accidentally left ungated.
+- [ ] **Pausability**: Should this function be blocked while the contract is
+      paused? If it mutates state (not a pure getter), it almost certainly
+      should call `require_not_paused` / `require_current_state`. Getters
+      are typically allowed to keep working while paused.
+- [ ] **Overflow / bounds checks**: Validate amounts are positive where
+      negative or zero doesn't make sense; check scores/percentages are
+      within their documented range (e.g. 0..100, 0..10_000 bps); confirm
+      arithmetic (multiplication in particular) can't silently overflow
+      `i128`/`u32` for the value ranges the function accepts.
+- [ ] **Event emission**: Does the function emit a `#[contractevent]` on
+      success, so off-chain indexers/monitoring can observe the state
+      change? See `EVENTS.md` for the existing catalogue and naming
+      conventions.
+- [ ] **Storage rent**: New persistent storage entries need an explicit TTL
+      extension (`extend_ttl`) at write time; instance storage doesn't need
+      this but is billed on every ledger close regardless of use, so prefer
+      persistent storage for anything per-project/per-address.
+- [ ] **Interface docs**: Add the function to `INTERFACE.md`'s function
+      table for its contract, and update `ProjectData`/other type docs if
+      you changed a struct. `scripts/check_interface_docs.py` (wired into CI,
+      #273) will fail the build if you forget — but it only catches missing
+      *names*, not incorrect auth/return/notes columns, so still write them
+      accurately by hand.
+- [ ] **Tests**: A happy-path test, at least one negative/panic test for
+      the primary validation failure mode, and (if admin-gated) an entry in
+      the consolidated admin-only test mentioned above.
 
 ## Security Best Practices for Integrators
 

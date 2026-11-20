@@ -29,6 +29,14 @@ an old storage layout.
 `stored_state_version` returns 0 for pre-versioned deployments (before v1 was
 introduced).
 
+**Contract-specific difference (verified against source, #275):**
+`ProjectRegistry`'s `require_current_state` special-cases a stored version of
+0 as compatible and does **not** reject calls in that case (0 is treated as
+equivalent to v1, since the v0→v1 migration involved no layout changes).
+`InvestmentVault`'s `require_current_state` has no such exception — it rejects
+any stored version that isn't exactly the current `STATE_VERSION`, including
+0. Both contracts reject any other mismatched version identically.
+
 ## Upgrade Procedure
 
 ### Step 1 — Build the new WASM

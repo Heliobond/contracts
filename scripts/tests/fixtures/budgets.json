@@ -1,0 +1,6 @@
+{
+  "contract.func": {
+    "instructions": 1000,
+    "fee": 100
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "contract.func": {
+    "instructions": 1000,
+    "fee": 100
+  },
+  "storage_key_sizes": {
+    "note": "Key bytes are XDR Symbol overhead + variant name length.",
+    "contract.SomeKey(u32)": { "key_bytes": 12, "value_bytes": 52 }
+  }
+}

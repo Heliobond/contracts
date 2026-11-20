@@ -2,11 +2,11 @@
 
 **Issue:** [#133](https://github.com/Heliobond/contracts/issues/133)
 
-The current `InvestmentVault` is single-asset: it accepts one USDC SAC address fixed at construction time. This document describes the design path for multi-asset vaults.
+**Status: Planned, not implemented.** The current `InvestmentVault` is single-asset: it accepts one USDC SAC address fixed at construction time. Everything under "Extension path for multi-asset" below describes a design proposal — none of it exists in the contract today. This document exists so readers don't assume multi-asset support, an asset whitelist, or a price oracle are already live; see "Current state" for what actually ships now.
 
 ---
 
-## Current state
+## Current state (implemented)
 
 `InvestmentVault.__constructor` stores one `usdc_sac: Address` in instance storage (`VaultKey::UsdcSac`). All `deposit`, `withdraw`, `fund_project`, and `claim_yield` flows use this single asset.
 
@@ -18,7 +18,9 @@ pub fn accepted_asset(env: Env) -> Address
 
 ---
 
-## Extension path for multi-asset
+## Extension path for multi-asset (planned, not implemented)
+
+None of the storage keys, functions, or oracle integration described in this section exist in `investment_vault/src/lib.rs` today. They describe the intended design for a future change.
 
 ### 1. Asset whitelist in instance storage
 
@@ -62,9 +64,9 @@ Vault shares (HBS) continue to represent a claim on the entire pool, regardless 
 
 ---
 
-## Integration checklist
+## Integration checklist (planned)
 
-Before adding a new asset:
+This checklist describes the intended workflow once the extension path above is implemented; `add_accepted_asset` and the other functions referenced below do not exist yet. Before adding a new asset:
 
 - [ ] Asset must be a Stellar SAC (SEP-41 compatible).
 - [ ] A price oracle feed must exist for `(asset, USDC)`.
@@ -74,7 +76,7 @@ Before adding a new asset:
 
 ---
 
-## Security considerations
+## Security considerations (for the planned design)
 
 - Never accept unverified assets — malicious tokens can emit fake transfer events. Only allow whitelisted SACs.
 - Oracle price manipulation risk: use time-weighted average prices (TWAP) where possible.

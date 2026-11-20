@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Pre-commit hook: reject commits with unformatted Rust code.
+# Install with `make install-hooks` (#251).
+set -euo pipefail
+
+if ! cargo fmt --all -- --check; then
+  echo "error: unformatted Rust code. Run 'cargo fmt --all' and re-commit." >&2
+  exit 1
+fi

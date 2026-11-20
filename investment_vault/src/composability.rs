@@ -4,11 +4,18 @@
 //! (DEXes, lending protocols, yield aggregators) should depend on when
 //! integrating with the Heliobond vault.
 //!
-//! # Usage
+//! # Status
 //!
-//! External contracts should use `soroban_sdk::contractimport!` to import the
-//! vault's WASM, which generates a typed client. These traits document the
-//! expected interface and can be implemented by mock contracts in tests.
+//! **These traits are aspirational design references — they are NOT implemented
+//! by `InvestmentVault`.** External contracts should use
+//! `soroban_sdk::contractimport!` to import the vault's WASM, which generates
+//! a typed client. Do not depend on these traits in production code until
+//! `impl` blocks are added.
+//!
+//! The `refresh_expected_returns` and `refresh_total_assets` methods below
+//! have been removed because no such functions exist in the vault's public
+//! API — `get_expected_returns()` and `total_assets()` already recompute from
+//! scratch on every call.
 
 #![allow(dead_code, unused_imports)]
 use soroban_sdk::{Address, BytesN, Env, String, Vec};
@@ -54,12 +61,6 @@ pub trait VaultQueryInterface {
 
     /// Return cached expected returns (O(1), no iteration).
     fn get_expected_returns(env: Env) -> i128;
-
-    /// Manually recompute expected returns from registry (O(n)).
-    fn refresh_expected_returns(env: Env) -> i128;
-
-    /// Manually recompute total_assets from current on-chain state.
-    fn refresh_total_assets(env: Env) -> i128;
 
     /// Return comprehensive regulatory data.
     fn export_regulatory_data(env: Env) -> RegulatoryReport;

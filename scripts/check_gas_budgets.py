@@ -39,8 +39,16 @@ def main() -> int:
     rows = ["# Gas Report", "", "| Function | Instructions | Budget | Fee | Budget | Status |", "| --- | ---: | ---: | ---: | ---: | --- |"]
     failed = False
 
-    for name in sorted(budgets):
-        budget = budgets[name]
+    # Entries without both `instructions` and `fee` (e.g. `storage_key_sizes`)
+    # are informational metadata, not a measured function budget — skip them.
+    function_budgets = {
+        name: budget
+        for name, budget in budgets.items()
+        if "instructions" in budget and "fee" in budget
+    }
+
+    for name in sorted(function_budgets):
+        budget = function_budgets[name]
         measured = measurements.get(name)
         if measured is None:
             rows.append(f"| `{name}` | missing | {budget['instructions']} | missing | {budget['fee']} | FAIL |")

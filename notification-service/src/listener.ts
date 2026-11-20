@@ -1,37 +1,76 @@
-import {
-  SorobanRpc,
-  Contract,
-  scValToNative,
-  xdr,
-} from "@stellar/stellar-sdk";
+import { SorobanRpc, StrKey, scValToNative, xdr } from "@stellar/stellar-sdk";
 import { ScoreChangedEvent, ServiceConfig } from "./types";
 
-const SCORE_CHANGED_TOPIC = "ScoreChanged";
+// The #[contractevent] macro derives the prefix topic from the struct name in
+// snake_case by default (ScoreChanged -> "score_changed") — see
+// project_registry/src/events.rs and EVENTS.md.
+const SCORE_CHANGED_TOPIC = "score_changed";
+
+/** Non-#[topic] fields of ScoreChanged, as published (default data_format = Map). */
+const SCORE_CHANGED_DATA_FIELDS = [
+  "old_credit_quality",
+  "new_credit_quality",
+  "old_green_impact",
+  "new_green_impact",
+  "old_rate_bps",
+  "new_rate_bps",
+] as const;
 
 /** Decode a ScoreChanged event from a Soroban transaction event. */
-function decodeScoreChanged(
-  event: xdr.ContractEvent,
+export function decodeScoreChanged(
+  event: xdr.ContractEvent | SorobanRpc.Api.EventResponse,
   ledger: number,
   timestamp: number,
+  expectedContractId?: string,
 ): ScoreChangedEvent | null {
   try {
-    const body = event.body();
-    if (body.switch() !== xdr.ContractEventType.contractEventTypeV0) {
-      return null;
+    let topics: xdr.ScVal[];
+    let value: xdr.ScVal;
+    let contractId: string | undefined;
+    if ("topic" in event) {
+      topics = event.topic;
+      value = event.value;
+      contractId = event.contractId?.contractId();
+    } else {
+      if (event.body().switch() !== 0) return null;
+      const body = event.body().v0();
+      topics = body.topics();
+      value = body.data();
+      const raw = event.contractId();
+      contractId = raw ? StrKey.encodeContract(raw) : undefined;
     }
-    const v0 = body.v0();
-    const topics = v0.topics();
+    if (expectedContractId !== undefined) {
+      const expected = /^[0-9a-f]{64}$/i.test(expectedContractId)
+        ? StrKey.encodeContract(Buffer.from(expectedContractId, "hex"))
+        : expectedContractId;
+      if (contractId !== expected) return null;
+    }
 
-    // topics[0] = event name (Symbol), topics[1] = project_id (u32)
-    if (topics.length() < 2) return null;
-    const eventName = scValToNative(topics.get(0));
+    // topics[0] = event name (Symbol), topics[1] = project_id (u32) — only
+    // `project_id` is marked #[topic] on the ScoreChanged struct.
+    if (topics.length < 2) return null;
+    const eventName = scValToNative(topics[0]);
     if (eventName !== SCORE_CHANGED_TOPIC) return null;
 
-    const projectId = Number(scValToNative(topics.get(1)));
-    const data = scValToNative(v0.data());
+    const projectId = Number(scValToNative(topics[1]));
 
-    // data is {Vec: [old_cq, new_cq, old_gi, new_gi, old_rate, new_rate]}
-    if (!Array.isArray(data)) return null;
+    // The remaining (non-topic) fields are published as a Map keyed by field
+    // name (the macro's default data_format), not a positional vector — see
+    // derive_event.rs's DataFormat::Map branch. scValToNative turns that into
+    // a plain object keyed by the Rust field names.
+    const data = scValToNative(value);
+    if (typeof data !== "object" || data === null || Array.isArray(data)) {
+      return null;
+    }
+
+    const fields = data as Record<string, unknown>;
+    // All fields are required (non-optional) on ScoreChangedEvent, so reject
+    // anything that doesn't decode to a finite number instead of letting
+    // undefined/NaN through.
+    const values = SCORE_CHANGED_DATA_FIELDS.map((key) => Number(fields[key]));
+    if (![projectId, ...values].every(Number.isFinite)) {
+      return null;
+    }
     const [
       old_credit_quality,
       new_credit_quality,
@@ -39,7 +78,7 @@ function decodeScoreChanged(
       new_green_impact,
       old_rate_bps,
       new_rate_bps,
-    ] = data.map(Number);
+    ] = values;
 
     return {
       project_id: projectId,
@@ -57,7 +96,7 @@ function decodeScoreChanged(
   }
 }
 
-/** Fetch events from Soroban RPC for a range of ledgers. */
+/** Fetch events from Soroban RPC for a range of ledgers, paginating through all results. */
 async function fetchEvents(
   server: SorobanRpc.Server,
   contractId: string,
@@ -65,37 +104,59 @@ async function fetchEvents(
   endLedger: number,
 ): Promise<ScoreChangedEvent[]> {
   const results: ScoreChangedEvent[] = [];
+  let cursor: string | undefined;
 
-  try {
+  do {
     const response = await server.getEvents({
-      startLedger,
+      ...(cursor ? {} : { startLedger }),
       filters: [
         {
-          contractId,
+          contractIds: [contractId],
           type: "contract",
         },
       ],
-      pagination: {
-        limit: 100,
-      },
+      limit: 100,
+      ...(cursor ? { cursor } : {}),
     });
 
+    let reachedBoundary = false;
     for (const event of response.events) {
-      if (!event.value) continue;
+      if (event.ledger > endLedger) {
+        // Ordered results have crossed the snapshot boundary; no later event
+        // in this or any subsequent page can be within range.
+        reachedBoundary = true;
+        break;
+      }
+      if (!event.inSuccessfulContractCall) continue;
       const decoded = decodeScoreChanged(
-        event.value,
+        event,
         event.ledger,
-        event.timestamp,
+        Date.parse(event.ledgerClosedAt) / 1000,
+        contractId,
       );
       if (decoded) {
+        console.log(
+          `[listener] Processed event: type=score_changed contract=${contractId} ledger=${event.ledger} project=${decoded.project_id}`,
+        );
         results.push(decoded);
       }
     }
-  } catch (err) {
-    console.error("Error fetching events:", err);
-  }
+
+    // Continue to the next page only when the page was full (more results may
+    // exist) AND the boundary ledger has not been crossed yet.
+    cursor =
+      !reachedBoundary && response.events.length === 100
+        ? response.events.at(-1)?.pagingToken
+        : undefined;
+  } while (cursor);
 
   return results;
+}
+
+/** Handle returned by {@link pollScoreChanges} to stop polling gracefully. */
+export interface PollHandle {
+  /** Stop scheduling further polls and wait for any in-flight poll to finish. */
+  stop(): Promise<void>;
 }
 
 /** Poll for new ScoreChanged events and invoke the callback. */
@@ -104,18 +165,62 @@ export async function pollScoreChanges(
   onEvent: (event: ScoreChangedEvent) => Promise<void>,
   getLastLedger: () => Promise<number>,
   setLastLedger: (ledger: number) => Promise<void>,
-): Promise<void> {
+): Promise<PollHandle> {
   const server = new SorobanRpc.Server(config.rpc_url);
+
+  // Sanity-check that rpc_url actually points at the network config claims to
+  // be (#433): network_passphrase was parsed from config and documented but
+  // never used anywhere, so a misconfigured RPC endpoint (e.g. prod pointed
+  // at testnet) would previously go undetected until symptoms showed up
+  // downstream. Fire-and-forget -- this must never delay or block the poll
+  // loop starting up; a confirmed mismatch is just logged loudly.
+  server
+    .getNetwork()
+    .then((network) => {
+      if (network.passphrase !== config.network_passphrase) {
+        console.error(
+          `[listener] Network passphrase mismatch: rpc_url reports "${network.passphrase}" but config expects "${config.network_passphrase}". Check STELLAR_RPC_URL/STELLAR_NETWORK_PASSPHRASE.`,
+        );
+      }
+    })
+    .catch((err) => {
+      console.error("[listener] Could not verify RPC network passphrase:", err);
+    });
 
   console.log(
     `[listener] Starting poll every ${config.poll_interval_ms}ms for contract ${config.registry_contract_id}`,
   );
 
+  let stopped = false;
+  let timer: NodeJS.Timeout | undefined;
+  let currentPoll: Promise<void> = Promise.resolve();
+
   const poll = async () => {
     try {
       const latestLedger = await server.getLatestLedger();
       const lastProcessed = await getLastLedger();
-      const startLedger = lastProcessed > 0 ? lastProcessed + 1 : latestLedger.sequence;
+      let startLedger =
+        lastProcessed > 0 ? lastProcessed + 1 : latestLedger.sequence;
+
+      // Detect an RPC retention gap: the checkpoint is older than the
+      // oldest ledger the endpoint still serves (#986).  This is distinct
+      // from transient downtime — the gap is permanent; retrying the same
+      // startLedger forever would loop on the same error.  Instead we
+      // record the skipped interval so an operator can replay it externally
+      // if needed, then resume from the oldest available ledger.
+      const oldestLedger: number = latestLedger.oldestLedger ?? 1;
+      if (startLedger < oldestLedger) {
+        console.error(
+          `[listener] RETENTION_GAP: checkpoint ${lastProcessed} is before ` +
+            `oldest retained ledger ${oldestLedger} (latest ${latestLedger.sequence}). ` +
+            `Ledgers ${startLedger}–${oldestLedger - 1} are no longer available from the RPC. ` +
+            `Skipping to ${oldestLedger}. Replay the missing interval externally if required.`,
+        );
+        // Advance the checkpoint so the gap is permanently recorded and the
+        // next poll starts cleanly from the oldest available ledger.
+        await setLastLedger(oldestLedger - 1);
+        startLedger = oldestLedger;
+      }
 
       if (startLedger > latestLedger.sequence) {
         return; // caught up
@@ -149,7 +254,28 @@ export async function pollScoreChanges(
     }
   };
 
-  // Initial poll, then interval
-  await poll();
-  setInterval(poll, config.poll_interval_ms);
+  const scheduleNext = () => {
+    if (stopped) return;
+    timer = setTimeout(() => {
+      currentPoll = poll();
+      currentPoll.then(scheduleNext);
+    }, config.poll_interval_ms);
+  };
+
+  // Kick off the initial poll but don't block on it — `stop()` already
+  // tracks it via `currentPoll`, so the handle (and therefore signal-based
+  // graceful shutdown) is available immediately rather than only after a
+  // full RPC round-trip, closing the window where a SIGTERM/SIGINT during
+  // startup would bypass cleanup entirely.
+  currentPoll = poll();
+  currentPoll.then(scheduleNext);
+
+  return {
+    async stop(): Promise<void> {
+      if (stopped) return;
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      await currentPoll;
+    },
+  };
 }

@@ -15,6 +15,13 @@ on:
     workflows: [CI]
     branches: [main]
     types: [completed]
+  # Periodic health check independent of push activity (#252) — catches
+  # testnet-side drift (RPC changes, funded-account expiry, network outages)
+  # that wouldn't otherwise surface until the next merge to main.
+  schedule:
+    - cron: "0 6 * * *" # daily at 06:00 UTC
+
+permissions: {}
 
 concurrency:
   group: network-tests-${{ github.ref }}
@@ -22,51 +29,93 @@ concurrency:
 
 env:
   STELLAR_CLI_VERSION: "26.1.0"
+  STELLAR_CLI_SHA256: "e18d5a7629102e1ccc07241acbcbebfc05b1c02476ce7d3204ba2d7418be5c0c"
 
 jobs:
   # Skip on failed upstream CI runs
   guard:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
+      sha: ${{ steps.check.outputs.sha }}
+      run_id: ${{ steps.check.outputs.run_id }}
+      run_attempt: ${{ steps.check.outputs.run_attempt }}
     steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - id: check
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.workflow_run.conclusion }}" = "success" ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: python3 scripts/ci_wasm_artifact.py guard
 
   deploy-and-test:
     name: Deploy & smoke-test on ${{ github.event.inputs.network || 'testnet' }}
     needs: guard
     if: needs.guard.outputs.should_run == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
     environment: testnet
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
+          persist-credentials: false
+
+      - name: Download validated main CI WASM
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: verified-contract-wasm-${{ needs.guard.outputs.sha }}
+          path: target/wasm32v1-none/release
+          repository: Heliobond/contracts
+          run-id: ${{ needs.guard.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify artifact run, commit and file hashes
+        if: github.event_name == 'workflow_run'
+        env:
+          EXPECTED_SHA: ${{ needs.guard.outputs.sha }}
+          EXPECTED_RUN_ID: ${{ needs.guard.outputs.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ needs.guard.outputs.run_attempt }}
+        run: python3 scripts/ci_wasm_artifact.py verify
 
       - name: Install Rust
+        if: github.event_name != 'workflow_run'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32v1-none
 
       - name: Cache cargo
+        if: github.event_name != 'workflow_run'
         uses: Swatinem/rust-cache@v2
 
       - name: Install Stellar CLI
         run: |
           url="https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-          curl -sSL "$url" | tar -xz
-          sudo mv stellar /usr/local/bin/stellar
+          curl -sSL -o /tmp/stellar-cli.tar.gz "$url"
+          echo "${STELLAR_CLI_SHA256}  /tmp/stellar-cli.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/stellar-cli.tar.gz -C /tmp
+          sudo mv /tmp/stellar /usr/local/bin/stellar
           stellar --version
 
       - name: Build contracts
+        if: github.event_name != 'workflow_run'
         run: stellar contract build
+
+      # Verify deploy manifest matches the validated or freshly-built WASM (#398). This catches
+      # drift between what the repo would build today and what was last recorded
+      # as deployed — independent of an active deploy.
+      - name: Check deploy manifest hashes
+        run: |
+          python3 scripts/check_deploy_wasm_hash.py check deploy/testnet.json \
+            project_registry=target/wasm32v1-none/release/project_registry.wasm \
+            investment_vault=target/wasm32v1-none/release/investment_vault.wasm
 
       - name: Set network variable
         id: net
@@ -86,7 +135,7 @@ jobs:
       - name: Fund test account via friendbot
         run: |
           PUB=$(stellar keys address ci-test 2>/dev/null || (
-            stellar keys generate ci-test --no-fund &&
+            stellar keys generate ci-test &&
             stellar keys address ci-test
           ))
           echo "TEST_PUB=$PUB" >> "$GITHUB_ENV"
@@ -126,6 +175,7 @@ jobs:
                --usdc_sac "$USDC_SAC" \
                --registry "${{ steps.registry.outputs.id }}")
           echo "id=$ID" >> "$GITHUB_OUTPUT"
+          echo "asset=$USDC_SAC" >> "$GITHUB_OUTPUT"
           echo "Vault deployed: $ID"
 
       # ── Smoke tests ───────────────────────────────────────────────────────────
@@ -138,7 +188,7 @@ jobs:
             --network ${{ steps.net.outputs.name }} \
             -- total_projects)
           echo "total_projects = $RESULT"
-          [ "$RESULT" = "0" ] || (echo "FAIL: expected 0"; exit 1)
+          [ "$(echo "$RESULT" | jq -r .)" = "0" ] || (echo "FAIL: expected 0"; exit 1)
 
       - name: Smoke — total_assets returns 0
         run: |
@@ -148,7 +198,7 @@ jobs:
             --network ${{ steps.net.outputs.name }} \
             -- total_assets)
           echo "total_assets = $RESULT"
-          [ "$RESULT" = "0" ] || (echo "FAIL: expected 0"; exit 1)
+          [ "$(echo "$RESULT" | jq -r .)" = "0" ] || (echo "FAIL: expected 0"; exit 1)
 
       - name: Smoke — whitelist and create project
         run: |
@@ -159,7 +209,7 @@ jobs:
             --id ${{ steps.registry.outputs.id }} \
             --source ci-test \
             --network ${{ steps.net.outputs.name }} \
-            -- set_whitelist --account "$ADMIN" --status true
+            -- set_whitelist --account "$ADMIN" --status true --valid_until 0
 
           # Create a project
           PROJECT_ID=$(stellar contract invoke \
@@ -169,7 +219,8 @@ jobs:
             -- create_project \
               --creator "$ADMIN" \
               --uri "ipfs://QmNetworkTestHeliobond" \
-              --maturity_date 0)
+              --maturity_date 0 \
+              --metadata_hash 0000000000000000000000000000000000000000000000000000000000000000)
           echo "Project created: $PROJECT_ID"
           [ "$PROJECT_ID" = "1" ] || (echo "FAIL: expected project_id=1"; exit 1)
 
@@ -181,6 +232,7 @@ jobs:
             --network ${{ steps.net.outputs.name }} \
             -- accepted_asset)
           echo "accepted_asset = $RESULT"
+          [ "$(echo "$RESULT" | jq -r .)" = "${{ steps.vault.outputs.asset }}" ] || (echo "FAIL: unexpected accepted asset"; exit 1)
 
       - name: Smoke — insurance_fund_balance returns 0
         run: |
@@ -190,7 +242,7 @@ jobs:
             --network ${{ steps.net.outputs.name }} \
             -- insurance_fund_balance)
           echo "insurance_fund_balance = $RESULT"
-          [ "$RESULT" = "0" ] || (echo "FAIL: expected 0"; exit 1)
+          [ "$(echo "$RESULT" | jq -r .)" = "0" ] || (echo "FAIL: expected 0"; exit 1)
 
       - name: Summary
         if: always()

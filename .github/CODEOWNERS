@@ -1,0 +1,33 @@
+# Code owners (#272)
+#
+# Automatically requests review from the listed owner(s) whenever a PR
+# touches files under the matching path. Order matters: later patterns
+# override earlier ones for files they both match.
+#
+# NOTE: the team handles below (@Heliobond/*) are placeholders — this
+# generator does not have visibility into the org's actual team structure.
+# A maintainer with org admin access should replace them with real
+# GitHub usernames or existing team slugs (Settings > Collaborators and
+# teams) before this takes effect for review routing.
+
+# Default owner for anything not matched more specifically below.
+*                        @Heliobond/maintainers
+
+# Soroban smart contracts
+/investment_vault/       @Heliobond/contracts-reviewers
+/project_registry/       @Heliobond/contracts-reviewers
+/contracts/               @Heliobond/contracts-reviewers
+
+# Off-chain notification service
+/notification-service/   @Heliobond/backend-reviewers
+
+# CI/CD, deploy tooling, and gas/performance budgets
+/.github/workflows/      @Heliobond/maintainers
+/deploy/                 @Heliobond/maintainers
+/scripts/                @Heliobond/maintainers
+gas-budgets.json         @Heliobond/maintainers
+.github/performance-budgets.json @Heliobond/maintainers
+
+# Architecture decision records and top-level docs
+/adr/                    @Heliobond/maintainers
+/docs/                   @Heliobond/maintainers

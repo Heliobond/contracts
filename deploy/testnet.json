@@ -1,5 +1,7 @@
 {
   "network": "testnet",
   "project_registry": "",
-  "investment_vault": ""
+  "investment_vault": "",
+  "project_registry_wasm_hash": "",
+  "investment_vault_wasm_hash": ""
 }

@@ -12,12 +12,26 @@ concurrency:
 
 env:
   STELLAR_CLI_VERSION: "26.1.0"
+  STELLAR_CLI_SHA256: "e18d5a7629102e1ccc07241acbcbebfc05b1c02476ce7d3204ba2d7418be5c0c"
 
 jobs:
+  wave-security:
+    uses: ./.github/workflows/wave-security.yml
+    permissions:
+      contents: read
+
   test:
+    needs: wave-security
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+
+      - name: Test the Wave scanner
+        run: python3 -I scripts/test_check_wave.py
+
+      - name: Test verified WASM artifact checks
+        run: python3 scripts/tests/test_ci_wasm_artifact.py
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -27,12 +41,16 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Install Stellar CLI
         run: |
           url="https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-          curl -sSL "$url" | tar -xz
-          sudo mv stellar /usr/local/bin/stellar
+          curl -sSL -o /tmp/stellar-cli.tar.gz "$url"
+          echo "${STELLAR_CLI_SHA256}  /tmp/stellar-cli.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/stellar-cli.tar.gz -C /tmp
+          sudo mv /tmp/stellar /usr/local/bin/stellar
           stellar --version
 
       - name: Format check
@@ -45,10 +63,30 @@ jobs:
       - name: Lint (clippy)
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Check INTERFACE.md matches contract exports (#273)
+        run: python3 scripts/check_interface_docs.py
+
+      - name: Check shared event field types are consistent (#258)
+        run: python3 scripts/check_event_field_types.py
+
+      - name: Test libs/multisig in isolation (#969)
+        # Run the shared crate's tests on their own so a regression in
+        # multisig logic fails here, visibly, rather than being swallowed by
+        # the broader workspace run.
+        run: cargo test -p multisig --quiet
+
       - name: Test
         run: cargo test --all --quiet
 
-      - name: Gas profile and budgets (#86)
+      - name: Test TotalDeposited lifetime TTL regression
+        run: |
+          cargo test --all --quiet -- --list | grep -q total_deposited_survives_inactivity
+          cargo test --all --quiet total_deposited_survives_inactivity -- --include-ignored
+
+      - name: Test check_gas_budgets.py (#250)
+        run: make test-gas-budget-check
+
+      - name: Gas profile and budgets (#86, #246)
         run: |
           cargo test --all --quiet cost_estimate -- --nocapture 2>&1 | tee gas-profile.txt
           python3 scripts/check_gas_budgets.py gas-budgets.json gas-profile.txt gas-report.md
@@ -82,8 +120,61 @@ jobs:
             exit 1
           fi
           echo "All contracts within budget."
-  security:
+
+      - name: Bind validated WASM to this main CI run
+        if: github.event_name == 'push' && github.repository == 'Heliobond/contracts' && github.ref == 'refs/heads/main'
+        run: python3 scripts/ci_wasm_artifact.py create
+
+      - name: Upload validated WASM for post-CI network tests
+        if: github.event_name == 'push' && github.repository == 'Heliobond/contracts' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-contract-wasm-${{ github.sha }}
+          path: |
+            target/wasm32v1-none/release/project_registry.wasm
+            target/wasm32v1-none/release/investment_vault.wasm
+            target/wasm32v1-none/release/verified-wasm.json
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+
+  notification-service:
+    needs: wave-security
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: notification-service
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          # Single source of truth for the supported Node version (#685).
+          node-version-file: notification-service/.nvmrc
+          cache: npm
+          cache-dependency-path: notification-service/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (eslint) (#248)
+        run: npm run lint
+
+      - name: Format check (prettier) (#248)
+        run: npm run format:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+  security:
+    needs: wave-security
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
@@ -92,15 +183,43 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        # Pinned version: before upgrading, run advisory and ban checks against
+        # the new release and verify it parses the committed audit.toml policy
+        # without suppressing errors. Update the version here and in the comment
+        # together so reviewers see both changes in the same diff.
+        run: cargo +stable install cargo-audit@0.23.0 --locked
+
+      - name: Keep approved advisory exceptions outside deployed WASM
+        run: |
+          cargo tree --locked --target wasm32v1-none --edges normal --prefix none > "$RUNNER_TEMP/wasm-dependencies.txt"
+          if grep -E '^(crypto-bigint|paste|spin) v' "$RUNNER_TEMP/wasm-dependencies.txt"; then
+            echo "::error::An approved host/test exception entered the deployed WASM dependency graph. Review the exception scope."
+            exit 1
+          fi
 
       - name: Security audit
-        run: cargo audit
+        run: cargo audit --deny unmaintained
+
+      - name: Install cargo-deny
+        # Pinned version: before upgrading, run advisory, ban, license and source
+        # checks against the new release and verify it parses deny.toml without
+        # suppressing policy errors. Update the version here and in the comment
+        # together so reviewers see both changes in the same diff.
+        run: cargo +stable install cargo-deny@0.21.0 --locked
+
+      - name: Supply-chain checks (advisories, bans, licenses, sources)
+        # Audit configuration documents approved host-only upstream exceptions
+        # for crypto-bigint, paste and yanked spin via the Soroban toolchain;
+        # any new advisory/yanked/ban/license/source drift fails here.
+        run: cargo deny check
 
   dependency-review:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v5
@@ -109,7 +228,9 @@ jobs:
         uses: actions/dependency-review-action@v4
 
   abi-check:
+    needs: wave-security
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v5
@@ -123,12 +244,16 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Install Stellar CLI
         run: |
           url="https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-          curl -sSL "$url" | tar -xz
-          sudo mv stellar /usr/local/bin/stellar
+          curl -sSL -o /tmp/stellar-cli.tar.gz "$url"
+          echo "${STELLAR_CLI_SHA256}  /tmp/stellar-cli.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/stellar-cli.tar.gz -C /tmp
+          sudo mv /tmp/stellar /usr/local/bin/stellar
 
       - name: Build PR branch contracts
         run: stellar contract build
@@ -140,39 +265,30 @@ jobs:
           stellar contract inspect --wasm target/wasm32v1-none/release/investment_vault.wasm > .abi/pr/investment_vault.txt 2>&1
 
       - name: Setup base branch worktree
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git fetch origin ${{ github.base_ref }}
-          git worktree add /tmp/base origin/${{ github.base_ref }}
+          # Bootstrap only the known uncompilable main revision against the repaired CI baseline.
+          # Remove this case after main advances. Every other base is built without substitution.
+          if [ "$BASE_SHA" = cc21876ecc118a0cd75047bc9b775f37dff555e4 ]; then
+            BASE_SHA=36c812a62bc6858c866080638f6f053e834f1b06
+            echo "::notice::Bootstrapping comparisons from repaired baseline $BASE_SHA"
+          fi
+          git worktree add --detach /tmp/base "$BASE_SHA"
 
       - name: Build base branch contracts
         working-directory: /tmp/base
-        env:
-          CARGO_TARGET_DIR: /tmp/base-target
         run: stellar contract build
 
       - name: Extract base branch ABI
-        env:
-          CARGO_TARGET_DIR: /tmp/base-target
         run: |
           mkdir -p .abi/base
-          stellar contract inspect --wasm /tmp/base-target/wasm32v1-none/release/project_registry.wasm > .abi/base/project_registry.txt 2>&1
-          stellar contract inspect --wasm /tmp/base-target/wasm32v1-none/release/investment_vault.wasm > .abi/base/investment_vault.txt 2>&1
+          stellar contract inspect --wasm /tmp/base/target/wasm32v1-none/release/project_registry.wasm > .abi/base/project_registry.txt 2>&1
+          stellar contract inspect --wasm /tmp/base/target/wasm32v1-none/release/investment_vault.wasm > .abi/base/investment_vault.txt 2>&1
 
       - name: Check for breaking ABI changes
-        run: |
-          failed=false
-          for contract in project_registry investment_vault; do
-            if ! diff -u .abi/base/${contract}.txt .abi/pr/${contract}.txt > /dev/null 2>&1; then
-              echo "ABI changed for ${contract}:"
-              diff -u .abi/base/${contract}.txt .abi/pr/${contract}.txt || true
-              failed=true
-            fi
-          done
-          if [ "$failed" = "true" ]; then
-            echo "::error::Breaking ABI changes detected. Review the diff above and update integrations accordingly."
-            exit 1
-          fi
-          echo "No ABI changes detected."
+        # Removed/changed ABI lines fail; purely additive changes only emit a notice.
+        run: bash scripts/check_abi_diff.sh .abi/base .abi/pr project_registry investment_vault
 
       - name: Upload ABI artifacts
         if: always()
@@ -182,7 +298,9 @@ jobs:
           path: .abi/
 
   docs:
+    needs: wave-security
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       pages: write
@@ -195,6 +313,20 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install Stellar CLI
+        run: |
+          url="https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -sSL -o /tmp/stellar-cli.tar.gz "$url"
+          echo "${STELLAR_CLI_SHA256}  /tmp/stellar-cli.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/stellar-cli.tar.gz -C /tmp
+          sudo mv /tmp/stellar /usr/local/bin/stellar
+          stellar --version
+
+      - name: Build contracts for cross-contract documentation imports
+        run: stellar contract build
 
       - name: Generate Documentation
         run: |

@@ -25,6 +25,7 @@ concurrency:
 
 env:
   STELLAR_CLI_VERSION: "26.1.0"
+  STELLAR_CLI_SHA256: "e18d5a7629102e1ccc07241acbcbebfc05b1c02476ce7d3204ba2d7418be5c0c"
 
 jobs:
   build-and-verify:
@@ -48,8 +49,10 @@ jobs:
       - name: Install Stellar CLI
         run: |
           url="https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-          curl -sSL "$url" | tar -xz
-          sudo mv stellar /usr/local/bin/stellar
+          curl -sSL -o /tmp/stellar-cli.tar.gz "$url"
+          echo "${STELLAR_CLI_SHA256}  /tmp/stellar-cli.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/stellar-cli.tar.gz -C /tmp
+          sudo mv /tmp/stellar /usr/local/bin/stellar
 
       - name: Build contracts
         run: stellar contract build
@@ -85,6 +88,16 @@ jobs:
           path: target/wasm32v1-none/release/*.wasm
           retention-days: 7
 
+      # #751: Generate build provenance attestations for release WASMs.
+      # Verifies that the deployed WASM came from this repository's source
+      # code and a specific commit, matching the contractmeta! metadata.
+      - name: Attest build provenance (#751)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            target/wasm32v1-none/release/project_registry.wasm
+            target/wasm32v1-none/release/investment_vault.wasm
+
   deploy:
     name: Deploy to ${{ github.event.inputs.network }}
     needs: build-and-verify
@@ -97,8 +110,10 @@ jobs:
       - name: Install Stellar CLI
         run: |
           url="https://github.com/stellar/stellar-cli/releases/download/v${STELLAR_CLI_VERSION}/stellar-cli-${STELLAR_CLI_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-          curl -sSL "$url" | tar -xz
-          sudo mv stellar /usr/local/bin/stellar
+          curl -sSL -o /tmp/stellar-cli.tar.gz "$url"
+          echo "${STELLAR_CLI_SHA256}  /tmp/stellar-cli.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/stellar-cli.tar.gz -C /tmp
+          sudo mv /tmp/stellar /usr/local/bin/stellar
 
       - name: Download wasm artifacts
         uses: actions/download-artifact@v4
@@ -179,16 +194,9 @@ jobs:
             LOCAL_HASH=$(sha256sum "$wasm_file" | awk '{print $1}')
 
             # Fetch the wasm hash stored on-chain for this contract instance.
-            # `stellar contract info` returns the installed wasm hash.
-            ON_CHAIN_HASH=$(stellar contract info \
-              --id "$CONTRACT_ID" \
-              --network "$NETWORK" \
-              --output json 2>/dev/null | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-# Field name may vary by CLI version; try both.
-print(data.get('wasm_hash') or data.get('wasmHash') or '')
-" || echo "")
+            # `stellar contract info` returns the installed wasm hash. Field
+            # name may vary by CLI version; try both.
+            ON_CHAIN_HASH=$(stellar contract info --id "$CONTRACT_ID" --network "$NETWORK" --output json 2>/dev/null | jq -r '.wasm_hash // .wasmHash // empty')
 
             if [ -z "$ON_CHAIN_HASH" ]; then
               echo "⚠️  Could not retrieve on-chain hash for $contract ($CONTRACT_ID) — skipping hash check"
@@ -207,6 +215,31 @@ print(data.get('wasm_hash') or data.get('wasmHash') or '')
             exit 1
           fi
 
+      - name: Update deploy manifest with WASM hashes (#274)
+        if: github.event.inputs.network == 'testnet'
+        run: |
+          python3 scripts/check_deploy_wasm_hash.py update deploy/testnet.json \
+            project_registry=target/wasm32v1-none/release/project_registry.wasm \
+            investment_vault=target/wasm32v1-none/release/investment_vault.wasm
+          jq --arg registry "${{ steps.deploy_registry.outputs.registry_id }}" \
+             --arg vault "${{ steps.deploy_vault.outputs.vault_id }}" \
+             '.project_registry = $registry | .investment_vault = $vault' \
+             deploy/testnet.json > deploy/testnet.json.tmp
+          mv deploy/testnet.json.tmp deploy/testnet.json
+
+      - name: Commit updated deploy manifest
+        if: github.event.inputs.network == 'testnet'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deploy/testnet.json
+          if git diff --cached --quiet; then
+            echo "deploy/testnet.json unchanged, nothing to commit."
+          else
+            git commit -m "chore: update deploy/testnet.json after deploy ${{ github.sha }} (#274)"
+            git push origin HEAD:main
+          fi
+
       - name: Summary
         run: |
           echo "## Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
@@ -217,3 +250,37 @@ print(data.get('wasm_hash') or data.get('wasmHash') or '')
           echo "| InvestmentVault | ${{ github.event.inputs.network }} | ${{ steps.deploy_vault.outputs.vault_id }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "WASM hash verification: see job logs above." >> "$GITHUB_STEP_SUMMARY"
+
+  notify-on-failure:
+    name: Notify on deploy failure
+    needs: [build-and-verify, deploy]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Post to Slack/Discord if a webhook is configured (#253)
+        if: env.NOTIFY_WEBHOOK_URL != ''
+        env:
+          NOTIFY_WEBHOOK_URL: ${{ secrets.DEPLOY_FAILURE_WEBHOOK_URL }}
+        run: |
+          curl -sf -X POST -H "Content-Type: application/json" \
+            -d "{\"text\": \"🚨 Heliobond deploy failed: ${{ github.event.inputs.network }} — run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "$NOTIFY_WEBHOOK_URL"
+
+      - name: Open a tracking issue (#253)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const network = context.payload.inputs?.network || 'unknown';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Deploy failed: ${network} (run ${context.runId})`,
+              body: `The [Deploy workflow](${runUrl}) failed for network \`${network}\`.\n\n` +
+                    `Triggered by: @${context.actor}\n` +
+                    `Commit: ${context.sha}\n\n` +
+                    `Check the run logs for which step failed before retrying.`,
+              labels: ['ci', 'deployment'],
+            });

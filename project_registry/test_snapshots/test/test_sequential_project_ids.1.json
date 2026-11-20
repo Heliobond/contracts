@@ -45,6 +45,9 @@
                 },
                 {
                   "u64": "0"
+                },
+                {
+                  "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
                 }
               ]
             }
@@ -70,6 +73,9 @@
                 },
                 {
                   "u64": "0"
+                },
+                {
+                  "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
                 }
               ]
             }
@@ -132,18 +138,18 @@
                 "map": [
                   {
                     "key": {
-                      "symbol": "archived"
-                    },
-                    "val": {
-                      "bool": false
-                    }
-                  },
-                  {
-                    "key": {
                       "symbol": "certification_status"
                     },
                     "val": {
                       "u32": 0
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "created_at"
+                    },
+                    "val": {
+                      "u64": "0"
                     }
                   },
                   {
@@ -180,10 +186,26 @@
                   },
                   {
                     "key": {
+                      "symbol": "metadata_hash"
+                    },
+                    "val": {
+                      "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "owner"
                     },
                     "val": {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "status"
+                    },
+                    "val": {
+                      "u32": 0
                     }
                   },
                   {
@@ -200,7 +222,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 518400
       },
       {
         "entry": {
@@ -224,18 +246,18 @@
                 "map": [
                   {
                     "key": {
-                      "symbol": "archived"
-                    },
-                    "val": {
-                      "bool": false
-                    }
-                  },
-                  {
-                    "key": {
                       "symbol": "certification_status"
                     },
                     "val": {
                       "u32": 0
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "created_at"
+                    },
+                    "val": {
+                      "u64": "0"
                     }
                   },
                   {
@@ -272,10 +294,26 @@
                   },
                   {
                     "key": {
+                      "symbol": "metadata_hash"
+                    },
+                    "val": {
+                      "bytes": "0707070707070707070707070707070707070707070707070707070707070707"
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "owner"
                     },
                     "val": {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "status"
+                    },
+                    "val": {
+                      "u32": 0
                     }
                   },
                   {
@@ -292,7 +330,7 @@
           },
           "ext": "v0"
         },
-        "live_until": 4095
+        "live_until": 518400
       },
       {
         "entry": {

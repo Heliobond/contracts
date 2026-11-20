@@ -83,6 +83,85 @@ pub enum VaultError {
     DepositsPaused = 37,
     /// Withdrawals are paused via the per-operation pause switch (#945).
     WithdrawalsPaused = 38,
+    /// Caller is neither the owner nor the configured emergency admin.
+    NotEmergencyAdmin = 37,
+    /// Deposit would push total HBS share supply above MAX_HBS_SUPPLY.
+    MaxSupplyExceeded = 38,
+    /// Attempted to fund a project owned by the vault's own admin (#14).
+    SelfFundingNotAllowed = 39,
+    /// A batch funding request contains duplicate project IDs (#188).
+    DuplicateProjectId = 40,
+    /// batch_deposit received an empty investor list (#178).
+    EmptyBatchDeposit = 41,
+    /// Share transfers are blocked because a funding round is active (#38).
+    FundingRoundActive = 42,
+    /// Funding would push cumulative investment in a project above its per-project cap (#32).
+    InvestmentCapExceeded = 43,
+    /// Requested amount exceeds the configured MaxTransactionAmount compliance limit (#457).
+    ExceedsMaxTransactionAmount = 44,
+    /// complete_bridge_transfer's decoded payload's token_address does not match
+    /// this vault's own contract address (#453).
+    BridgeTokenMismatch = 45,
+    /// complete_bridge_transfer's decoded payload targets a chain other than
+    /// Stellar (#454).
+    BridgeWrongTargetChain = 46,
+    /// Bridge payload is shorter than the minimum valid length (#761).
+    BridgePayloadTooShort = 66,
+    /// Bridge payload prefix does not match the expected magic bytes (#761).
+    BridgePayloadBadPrefix = 67,
+    /// Bridge payload contains an invalid recipient address (#761).
+    BridgeBadRecipient = 68,
+    /// Bridge payload length differs from the versioned wire format.
+    BridgePayloadInvalidLength = 71,
+    /// batch_fund_projects received an empty fundings list (#445).
+    EmptyBatchFunding = 47,
+    /// A batch deposit or fund-projects request exceeds the configured maximum
+    /// batch size (#447).
+    BatchTooLarge = 48,
+    /// set_flash_loan_fee's fee_bps argument is outside the allowed 0-1000 bps range (#402).
+    FlashLoanFeeOutOfRange = 49,
+    /// execute_flash_loan's borrower callback returned false (repayment not honoured) (#402).
+    FlashLoanCallbackFailed = 50,
+    /// set_carbon_credit_price called before set_carbon_oracle configured an oracle (#402).
+    CarbonOracleNotSet = 51,
+    /// set_carbon_credit_price's price argument is not positive (#402).
+    CarbonPriceNotPositive = 52,
+    /// issue_carbon_credits computed zero or fewer credits for the requested amount (#402).
+    NoCarbonCreditsToIssue = 53,
+    /// transfer_carbon_credits: sender's balance is less than the requested amount (#402).
+    InsufficientCarbonCredits = 54,
+    /// set_max_transaction_amount's amount argument is negative (#402).
+    NegativeMaxTransactionAmount = 55,
+    /// get_compliance_event: no event exists for the requested sequence number (#402).
+    ComplianceEventNotFound = 56,
+    /// Multisig is enabled; use the _with_approvals/_approved variant instead (#764).
+    MultisigEnabledUseApprovedVariant = 57,
+    /// get_latest_snapshot: no reporting snapshot has been taken yet (#402).
+    NoSnapshotTaken = 69,
+    /// transfer_ownership: no owner is currently set on the contract (#402).
+    OwnerNotSet = 58,
+    /// transfer_carbon_credits: from and to must be different addresses —
+    /// a self-transfer previously let both balance reads snapshot the same
+    /// pre-write value, and the second .set() overwrote the first, doubling
+    /// (or worse) the caller's balance for free (#564).
+    SelfTransferNotAllowed = 59,
+    /// fund_project / repay_principal / settle_project: the project has
+    /// already been settled at maturity and its books are closed (#631).
+    ProjectAlreadySettled = 60,
+    /// settle_project: the registry does not report the project as mature
+    /// yet (or it has no maturity date) (#631).
+    ProjectNotMature = 61,
+    /// `claim_insurance` for a project the vault has not settled with an
+    /// impairment, e.g. an unknown, still-active or fully repaid project (#700).
+    ProjectNotImpaired = 62,
+    /// `claim_insurance` amount exceeds the project's recorded impairment (#700).
+    ClaimExceedsImpairment = 63,
+    /// Deposit deadline has passed (#743).
+    DeadlineExpired = 64,
+    /// Deposit would mint zero shares due to rounding (#744).
+    ZeroShares = 65,
+    /// record_compliance_event's `event_type` or `data` exceeds MAX_COMPLIANCE_FIELD_LEN (#718).
+    ComplianceFieldTooLong = 70,
 }
 
 #[contracttype]
@@ -98,6 +177,10 @@ pub enum VaultKey {
     YieldPerShareAccum,
     /// Per-shareholder checkpoint: yield-per-share value at last claim (#125).
     YieldDebt(Address),
+    /// Total USDC received as yield but not yet claimed (#738).
+    /// Excluded from total_assets to prevent double-counting (yield is both
+    /// claimable via claim_yield AND would otherwise inflate NAV).
+    UnclaimedYield,
     /// Insurance fund USDC balance (#135).
     InsuranceFund,
     /// Whether a project default claim has been paid out (#135).
@@ -124,6 +207,8 @@ pub enum VaultKey {
     Bridge,
     /// Flash loan fee in basis points.
     FlashLoanFee,
+    /// Locks vault operations while flash-loan USDC is outstanding.
+    FlashLoanActive,
     /// Carbon credit oracle contract address.
     CarbonOracle,
     /// Carbon credit price in USD micro-units.
@@ -153,7 +238,56 @@ pub enum VaultKey {
     /// Ledger timestamp when withdrawals were paused; used for PAUSE_MAX_DURATION_SECONDS (#945).
     WithdrawalsPauseStart,
     /// Last deposit ledger sequence per address.
+    /// Tracks who paused the contract: "owner" or "emergency" (#763).
+    PausedBy,
+    /// Deposits paused flag (#750).
+    DepositsPaused,
+    /// Deposits paused expiry timestamp (#750).
+    DepositsPausedUntil,
+    /// Withdrawals paused flag (#750).
+    WithdrawalsPaused,
+    /// Withdrawals paused expiry timestamp (#750).
+    WithdrawalsPausedUntil,
+    /// Last deposit ledger *timestamp* per address; drives the MIN_LOCK_PERIOD
+    /// deposit lock (#33).
     LastDeposit(Address),
+    /// Optional emergency-admin address that may pause/unpause without
+    /// holding full owner privileges (#43). Unset means no emergency admin.
+    EmergencyAdmin,
+    /// Minimum ledger gap between a deposit and a withdrawal (#36).
+    /// Default is 1 (blocks same-ledger exit). Set via set_withdrawal_window.
+    WithdrawalWindowLedgers,
+    /// Ledger sequence of an address's last deposit; compared against
+    /// `WithdrawalWindowLedgers` in `withdraw` (#530).
+    LastDepositLedger(Address),
+    /// Minimum deposit amount (in USDC stroops) at which a volume-discount fee
+    /// rate applies instead of the flat ManagementFeeBps rate (#39).
+    VolumeTierThreshold,
+    /// Discounted management fee in basis points applied when a deposit meets
+    /// or exceeds VolumeTierThreshold (#39). Must be <= ManagementFeeBps.
+    VolumeTierFeeBps,
+    /// Whether a funding round is currently active (#38).
+    /// Share transfers are blocked while this flag is set to prevent
+    /// vault-accounting manipulation during active project funding.
+    FundingRoundActive,
+    /// Admin-configurable maximum USDC investment per project (#32).
+    /// Defaults to MAX_INVESTMENT_PER_PROJECT when not set.
+    MaxInvestmentPerProject,
+    /// Ledger timestamp (seconds) at which a project was first funded (#34).
+    /// Used for time-weighted expected-returns calculation.
+    InvestmentTimestamp(u32),
+    /// Principal returned by a project and applied against its outstanding
+    /// investment via `repay_principal` (#631).
+    ProjectRepaid(u32),
+    /// Outstanding principal written off as impairment by `settle_project` (#631).
+    ProjectImpairment(u32),
+    /// Set once `settle_project` closes a project's books; blocks further
+    /// funding and repayment for that ID (#631).
+    ProjectSettled(u32),
+    /// Sum of `usdc_owed` across unpaid redemption queue entries (#613).
+    /// Deducted from `total_assets` so burned-but-unpaid shares don't inflate
+    /// the share price for remaining holders.
+    QueuedLiabilities,
 }
 
 /// Container for wormhole bridge data keys.
@@ -179,6 +313,23 @@ pub struct ComplianceEventData {
     pub timestamp: u64,
     pub event_type: String,
     pub data: String,
+}
+
+/// Paged compliance-event result exposing a continuation sequence and retention
+/// bounds so clients can traverse sparse, pruned event logs without looping or
+/// dropping retained entries (#1053).
+#[contracttype]
+pub struct ComplianceEventPage {
+    /// Events found in the scanned window.
+    pub events: Vec<ComplianceEventData>,
+    /// Next sequence number to pass as `from` to continue pagination.
+    /// Equal to `retention_end + 1` when the scan has reached the newest event.
+    pub next_seq: u64,
+    /// Oldest sequence number currently retained in storage (pruned entries
+    /// below this are gone; callers should start no earlier).
+    pub retention_start: u64,
+    /// Newest sequence number recorded so far; the upper bound for pagination.
+    pub retention_end: u64,
 }
 
 /// A periodic snapshot of the vault's key metrics for regulatory reporting.
@@ -214,6 +365,19 @@ pub struct HBSTokenInfo {
     pub trading_enabled: bool,
 }
 
+/// Consolidated operational status for monitoring/health-check integrations (#77).
+///
+/// Bundles the getters an off-chain monitor would otherwise have to poll
+/// individually into a single call.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct HealthStatus {
+    pub state_version: u32,
+    pub is_paused: bool,
+    pub utilization_bps: u32,
+    pub has_emergency_admin: bool,
+}
+
 /// A pending withdrawal claim created when vault liquidity is insufficient (#3).
 /// Shares are burned immediately at enqueue; this records the fixed USDC owed.
 #[contracttype]
@@ -222,6 +386,26 @@ pub struct QueuedClaim {
     pub from: Address,
     /// USDC amount owed, fixed at the share price when the withdrawal was requested.
     pub usdc_owed: i128,
+}
+
+/// Vault-side lifecycle position of a single project (#631).
+///
+/// `funded = outstanding + repaid + impairment` always holds.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProjectPosition {
+    /// Total principal ever deployed to the project.
+    pub funded: i128,
+    /// Principal returned via `repay_principal`.
+    pub repaid: i128,
+    /// Principal still deployed (counted in `total_assets`).
+    pub outstanding: i128,
+    /// Principal written off at settlement because it was never repaid.
+    pub impairment: i128,
+    /// Registry reports the project's maturity date has passed.
+    pub mature: bool,
+    /// `settle_project` has closed the project's books.
+    pub settled: bool,
 }
 
 /// On-chain portfolio snapshot for a single investor (#132).

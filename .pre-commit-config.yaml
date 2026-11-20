@@ -1,0 +1,9 @@
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.28.0
+    hooks:
+      - id: gitleaks
+        name: gitleaks push protection (local equivalent of GitHub push protection)
+        entry: gitleaks protect --config .gitleaks.toml --verbose --staged
+        language: golang
+        pass_filenames: false

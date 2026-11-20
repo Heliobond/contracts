@@ -1,5 +1,5 @@
-use crate::types::CertificationStatus;
-use soroban_sdk::{contractevent, Address, Env, Symbol};
+use crate::types::{CertificationStatus, ProjectStatus};
+use soroban_sdk::{contractevent, Address, Env};
 
 /// Emitted when collateral is deposited for a project (#128).
 #[contractevent]
@@ -114,6 +114,27 @@ pub struct ProposalExecuted {
     pub passed: bool,
 }
 
+/// Emitted when a project is archived by the admin.
+#[contractevent]
+pub struct ProjectArchived {
+    #[topic]
+    pub project_id: u32,
+}
+
+/// Emitted when a project is deleted by the admin.
+#[contractevent]
+pub struct ProjectDeleted {
+    #[topic]
+    pub project_id: u32,
+}
+
+/// Emitted when project storage is compacted (#88).
+#[contractevent]
+pub struct ProjectCompacted {
+    #[topic]
+    pub project_id: u32,
+}
+
 pub fn project_created(env: &Env, project_id: u32, owner: &Address) {
     ProjectCreated {
         project_id,
@@ -162,16 +183,35 @@ pub fn whitelist_set(env: &Env, account: &Address, status: bool) {
     .publish(env);
 }
 
-#[allow(deprecated)]
 pub fn project_archived(env: &Env, project_id: u32) {
-    env.events()
-        .publish((Symbol::new(env, "project_archived"),), project_id);
+    ProjectArchived { project_id }.publish(env);
 }
 
-#[allow(deprecated)]
+/// Emitted when a project's lifecycle status is changed via `set_project_status` (#329).
+#[contractevent]
+pub struct ProjectStatusChanged {
+    #[topic]
+    pub project_id: u32,
+    pub old_status: ProjectStatus,
+    pub new_status: ProjectStatus,
+}
+
+pub fn project_status_changed(
+    env: &Env,
+    project_id: u32,
+    old_status: ProjectStatus,
+    new_status: ProjectStatus,
+) {
+    ProjectStatusChanged {
+        project_id,
+        old_status,
+        new_status,
+    }
+    .publish(env);
+}
+
 pub fn project_deleted(env: &Env, project_id: u32) {
-    env.events()
-        .publish((Symbol::new(env, "project_deleted"),), project_id);
+    ProjectDeleted { project_id }.publish(env);
 }
 
 pub fn project_certified(env: &Env, project_id: u32, status: CertificationStatus) {
@@ -309,6 +349,19 @@ pub fn registry_unpaused(env: &Env) {
     RegistryUnpaused {}.publish(env);
 }
 
+/// Emitted when the admin sets or clears the emergency-admin address (#43).
+#[contractevent]
+pub struct EmergencyAdminChanged {
+    pub new_emergency_admin: Option<Address>,
+}
+
+pub fn emergency_admin_changed(env: &Env, new_emergency_admin: Option<Address>) {
+    EmergencyAdminChanged {
+        new_emergency_admin,
+    }
+    .publish(env);
+}
+
 /// Emitted when the admin replaces the whitelister address (#76).
 #[contractevent]
 pub struct WhitelisterChanged {
@@ -324,10 +377,8 @@ pub fn whitelister_changed(env: &Env, old: &Address, new: &Address) {
     .publish(env);
 }
 
-#[allow(deprecated)]
 pub fn project_compacted(env: &Env, project_id: u32) {
-    env.events()
-        .publish((Symbol::new(env, "project_compacted"),), project_id);
+    ProjectCompacted { project_id }.publish(env);
 }
 
 /// Emitted when the admin initiates an ownership transfer (#30).

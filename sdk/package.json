@@ -1,0 +1,32 @@
+{
+  "name": "@heliobond/contracts-sdk",
+  "version": "0.0.0",
+  "description": "Typed TypeScript bindings and per-network contract IDs for the Heliobond Soroban contracts",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Heliobond/contracts.git",
+    "directory": "sdk"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "generate": "../scripts/build_sdk.sh",
+    "build": "tsc -p tsconfig.json",
+    "example:deposit": "tsx examples/deposit.ts"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^14.0.0",
+    "buffer": "^6.0.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  }
+}
