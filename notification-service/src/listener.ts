@@ -119,8 +119,15 @@ async function fetchEvents(
       ...(cursor ? { cursor } : {}),
     });
 
+    let reachedBoundary = false;
     for (const event of response.events) {
-      if (!event.inSuccessfulContractCall || event.ledger > endLedger) continue;
+      if (event.ledger > endLedger) {
+        // Ordered results have crossed the snapshot boundary; no later event
+        // in this or any subsequent page can be within range.
+        reachedBoundary = true;
+        break;
+      }
+      if (!event.inSuccessfulContractCall) continue;
       const decoded = decodeScoreChanged(
         event,
         event.ledger,
@@ -135,8 +142,10 @@ async function fetchEvents(
       }
     }
 
+    // Continue to the next page only when the page was full (more results may
+    // exist) AND the boundary ledger has not been crossed yet.
     cursor =
-      response.events.length === 100
+      !reachedBoundary && response.events.length === 100
         ? response.events.at(-1)?.pagingToken
         : undefined;
   } while (cursor);
