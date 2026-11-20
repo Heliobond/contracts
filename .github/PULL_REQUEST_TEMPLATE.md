@@ -18,7 +18,7 @@ Closes #<!-- issue number -->
 ## Checklist
 
 - [ ] Tied to an accepted issue (`Closes #…`)
-- [ ] Tests pass locally
+- [ ] All quality-gate checks pass locally (see [CONTRIBUTING.md — Before you push](../CONTRIBUTING.md#before-you-push))
 - [ ] New behaviour is covered by tests
 - [ ] No secrets committed
 - [ ] Docs updated where relevant
