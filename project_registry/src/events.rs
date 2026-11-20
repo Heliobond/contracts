@@ -397,3 +397,14 @@ pub fn ownership_transferred(env: &Env, old_owner: &Address, new_owner: &Address
     }
     .publish(env);
 }
+
+/// Emitted when the admin sets or clears the Oracle address (#748 / #944).
+#[contractevent]
+pub struct OracleSet {
+    /// The new oracle address, or `None` when the oracle is cleared.
+    pub oracle: Option<Address>,
+}
+
+pub fn oracle_set(env: &Env, oracle: &Option<Address>) {
+    OracleSet { oracle: oracle.clone() }.publish(env);
+}

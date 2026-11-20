@@ -18,8 +18,7 @@ The Admin role manages critical protocol configuration and capital allocation.
 
 | Action | Contract | Description |
 |---|---|---|
-| `update_impact_score` | `ProjectRegistry` | Sets `credit_quality` and `green_impact` scores (0–100) for a project. |
-| `update_credit_quality_score` | `ProjectRegistry` | Updates only the `credit_quality` score, preserving the existing `green_impact` score. |
+| `set_oracle` | `ProjectRegistry` | Sets or clears the Oracle address for score updates (see Oracle role below). |
 | `certify_project` | `ProjectRegistry` | Updates the certification status of a registered project (shares this capability with the Whitelister). |
 | `fund_project` | `InvestmentVault` | Disburses capital from the vault to the registered project creator's address. |
 | `receive_yield` | `InvestmentVault` | Registers interest/yield payments received from project owners. |
@@ -28,7 +27,36 @@ The Admin role manages critical protocol configuration and capital allocation.
 | `enable_secondary_trading` | `InvestmentVault` | Enables DEX listing discovery and updates official secondary market listing status. |
 | `pause` / `unpause` | Both | Temporarily freezes deposits, withdrawals, and proposal voting under emergency conditions. |
 
-### 2. Whitelister
+### 2. Oracle (#748 / #944)
+
+A dedicated address that is authorized to call the score-update family:
+`update_impact_score`, `update_impact_scores_batch`, and `update_credit_quality_score`.
+
+**Set by:** the Admin (owner) via `set_oracle(Some(address))`.  
+**Cleared by:** `set_oracle(None)` — reverts to owner-only score updates.  
+**Event:** `OracleSet { oracle }` is emitted on every set and clear.
+
+#### Oracle vs Owner: role is exclusive, not additive
+
+Once an oracle address is configured `require_oracle` gates the score functions on **the oracle address only** (via `oracle.require_auth()`). The owner can no longer call these functions directly — the owner retains the ability to change or clear the oracle, but the score-update entry points themselves are delegated exclusively to the oracle address.
+
+> **Summary:** owner retains full control over `set_oracle`; score updates belong to the oracle once one is set.
+
+#### Oracle and multisig scope
+
+The Oracle role is **outside** multisig scope. The `_approved` variants of score functions (`update_impact_score_approved`, `update_scores_batch_approved`) require a multisig signer, not the oracle. The oracle cannot present itself as a multisig approver. This keeps the oracle role narrowly scoped to plain (non-multisig) score updates.
+
+#### Oracle Capabilities
+
+| Action | Contract | Description |
+|---|---|---|
+| `update_impact_score` | `ProjectRegistry` | Sets `credit_quality` and `green_impact` scores (0–100) for a project. |
+| `update_impact_scores_batch` | `ProjectRegistry` | Batch score update for multiple projects in one call. |
+| `update_credit_quality_score` | `ProjectRegistry` | Updates only the `credit_quality` score, preserving `green_impact`. |
+
+---
+
+### 3. Whitelister
 An operational role focused on onboarding project creators and certifying projects. Separating this role prevents daily tasks from requiring the high-security Admin key.
 
 #### Whitelister Capabilities
