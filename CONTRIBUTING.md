@@ -40,7 +40,7 @@ make install-hooks # install the cargo fmt --check pre-commit hook
 
 ### Editor
 
-Any editor works. If you use VS Code, the `rust-analyzer` extension provides inline type hints and error squiggles. The repo ships a `.vscode/` config; accept the recommended extensions when prompted.
+Any editor works. `rust-analyzer` provides inline type hints and error squiggles regardless of which editor you use.
 
 ---
 
@@ -54,13 +54,34 @@ Any editor works. If you use VS Code, the `rust-analyzer` extension provides inl
    git checkout -b docs/short-description  # documentation
    ```
 2. **Write your change.** Keep it scoped to one issue.
-3. **Run the full quality gate locally** before pushing:
-   ```bash
-   cargo fmt --all                  # format (CI checks this)
-   make build                       # contracts must compile to WASM (also required before cargo test)
-   cargo test --all                 # all tests must pass
-   ```
-4. **Open a PR** with `Closes #<issue>` in the body. CI (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml) for the definitive, up-to-date list) runs considerably more than `fmt`/`test`/size — currently: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all`, a WASM size check, `check_interface_docs.py`, `check_event_field_types.py`, the gas-budget script's own unit tests, a gas profile/budget check, the `notification-service` job's `npm run lint`/`npm run format:check`, a `cargo-audit` security scan, a dependency-review check, and — on pull requests — an ABI-breaking-change check against the base branch. All must be green.
+3. **Run the full quality gate locally** before pushing (see [Before you push](#before-you-push) below for every command).
+4. **Open a PR** with `Closes #<issue>` in the body. All CI jobs listed in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) must be green before merge.
+
+### Before you push
+
+Run every check below before opening a PR. The table mirrors the jobs in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml); a red CI run almost always
+means one of these was skipped locally.
+
+| CI job | Local command |
+|--------|--------------|
+| Format check | `cargo fmt --all` |
+| Lint (clippy) | `cargo clippy --workspace --all-targets -- -D warnings` |
+| Build contracts (wasm) | `make build` *(also required before `cargo test`)* |
+| Test | `make test` |
+| Check INTERFACE.md | `make check-interface-docs` |
+| Check event field types | `make check-event-field-types` |
+| Gas-budget script tests | `make test-gas-budget-check` |
+| Gas profile / budgets | `python3 scripts/check_gas_budgets.py` |
+| `notification-service` lint | `cd notification-service && npm run lint` |
+| `notification-service` format | `cd notification-service && npm run format:check` |
+| `notification-service` typecheck | `cd notification-service && npm run typecheck` |
+| `notification-service` test | `cd notification-service && npm test` |
+| Security audit | `cargo audit` *(install: `cargo install cargo-audit`)* |
+
+**Pre-commit hook:** `make install-hooks` wires `scripts/hooks/pre-commit` into git
+so `cargo fmt --check` runs automatically before every commit. Run it once after
+cloning.
 
 ### Commit message format
 

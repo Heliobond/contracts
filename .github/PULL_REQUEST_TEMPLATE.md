@@ -18,8 +18,16 @@ Closes #<!-- issue number -->
 ## Checklist
 
 - [ ] Tied to an accepted issue (`Closes #…`)
-- [ ] Tests pass locally
+- [ ] All quality-gate checks pass locally (see [CONTRIBUTING.md — Before you push](../CONTRIBUTING.md#before-you-push))
 - [ ] New behaviour is covered by tests
 - [ ] No secrets committed
 - [ ] Docs updated where relevant
+
+## Security note (fund-flow changes only)
+
+<!-- Fill in if this PR touches deposit / withdraw / fund_project / share math. Otherwise delete this section. -->
+
+- Share math: division denominators cannot be zero; rounding favours vault
+- Fund flows: tokens transferred in correct direction, balances updated atomically
+- Access control: auth guard fires before any state change
 - [ ] `CHANGELOG.md` entry added under the correct heading (Added / Changed / Fixed / Security)
