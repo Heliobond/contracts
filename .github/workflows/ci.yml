@@ -69,6 +69,12 @@ jobs:
       - name: Check shared event field types are consistent (#258)
         run: python3 scripts/check_event_field_types.py
 
+      - name: Test libs/multisig in isolation (#969)
+        # Run the shared crate's tests on their own so a regression in
+        # multisig logic fails here, visibly, rather than being swallowed by
+        # the broader workspace run.
+        run: cargo test -p multisig --quiet
+
       - name: Test
         run: cargo test --all --quiet
 
