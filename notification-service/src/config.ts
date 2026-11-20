@@ -36,15 +36,46 @@ function requirePositiveInt(
   return n;
 }
 
+const MAINNET_PASSPHRASE = "Public Global Stellar Network ; September 2015";
+const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
+
+/** Derives a short, human-readable network label from the network passphrase. */
+export function networkLabel(passphrase: string): string {
+  if (passphrase === MAINNET_PASSPHRASE) return "Mainnet";
+  if (passphrase === TESTNET_PASSPHRASE) return "Testnet";
+  return "Custom Network";
+}
+
+/**
+ * Validates and normalises a portfolio base URL.
+ * Throws at startup if the value is set but cannot be parsed as an http/https URL.
+ */
+function requirePortfolioBaseUrl(raw: string | undefined): string {
+  const value = raw?.trim() || "https://heliobond.io";
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("must use http or https");
+    }
+  } catch {
+    throw new Error(
+      `PORTFOLIO_BASE_URL "${value}" is not a valid http/https URL`,
+    );
+  }
+  // Strip a trailing slash so callers can consistently append "/portfolio".
+  return value.replace(/\/+$/, "");
+}
+
 export function loadConfig(): ServiceConfig {
   assertRequiredEnvVars();
+
+  const passphrase =
+    process.env.STELLAR_NETWORK_PASSPHRASE || TESTNET_PASSPHRASE;
 
   return {
     rpc_url:
       process.env.STELLAR_RPC_URL || "https://soroban-testnet.stellar.org",
-    network_passphrase:
-      process.env.STELLAR_NETWORK_PASSPHRASE ||
-      "Test SDF Network ; September 2015",
+    network_passphrase: passphrase,
     registry_contract_id: process.env.REGISTRY_CONTRACT_ID || "",
     vault_contract_id: process.env.VAULT_CONTRACT_ID || "",
     db_path: process.env.DB_PATH || "./data/notifications.db",
@@ -70,5 +101,7 @@ export function loadConfig(): ServiceConfig {
         }
       : undefined,
     api_port: requirePositiveInt("API_PORT", process.env.API_PORT, 3000),
+    portfolio_base_url: requirePortfolioBaseUrl(process.env.PORTFOLIO_BASE_URL),
+    network_label: networkLabel(passphrase),
   };
 }
