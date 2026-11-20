@@ -1308,6 +1308,149 @@ fn test_deposit_blocked_when_vault_paused() {
     s.vault_client.deposit(&investor, &1_000_0000000i128);
 }
 
+// ── Per-operation pause switch tests (#945) ───────────────────────────────────
+
+#[test]
+fn test_deposits_paused_getter_default_false() {
+    let s = setup();
+    assert!(!s.vault_client.is_deposits_paused());
+}
+
+#[test]
+fn test_withdrawals_paused_getter_default_false() {
+    let s = setup();
+    assert!(!s.vault_client.is_withdrawals_paused());
+}
+
+#[test]
+fn test_pause_deposits_and_unpause() {
+    let s = setup();
+    s.vault_client.pause_deposits();
+    assert!(s.vault_client.is_deposits_paused());
+    s.vault_client.unpause_deposits();
+    assert!(!s.vault_client.is_deposits_paused());
+}
+
+#[test]
+fn test_pause_withdrawals_and_unpause() {
+    let s = setup();
+    s.vault_client.pause_withdrawals();
+    assert!(s.vault_client.is_withdrawals_paused());
+    s.vault_client.unpause_withdrawals();
+    assert!(!s.vault_client.is_withdrawals_paused());
+}
+
+#[test]
+#[should_panic]
+fn test_deposit_blocked_when_deposits_paused() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.pause_deposits();
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+}
+
+#[test]
+fn test_withdrawal_allowed_when_only_deposits_paused() {
+    // pause_deposits must not block withdrawals — investors must be able to exit.
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.env.ledger().with_mut(|l| l.sequence_number += 1);
+    s.vault_client.pause_deposits();
+    // Withdrawal should succeed even though deposits are paused.
+    let returned = s.vault_client.withdraw(&investor, &shares, &0i128);
+    assert!(returned > 0);
+}
+
+#[test]
+#[should_panic]
+fn test_withdraw_blocked_when_withdrawals_paused() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.env.ledger().with_mut(|l| l.sequence_number += 1);
+    s.vault_client.pause_withdrawals();
+    s.vault_client.withdraw(&investor, &shares, &0i128);
+}
+
+#[test]
+fn test_deposit_allowed_when_only_withdrawals_paused() {
+    // pause_withdrawals must not block deposits.
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.pause_withdrawals();
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    assert!(shares > 0);
+}
+
+#[test]
+fn test_deposits_pause_expires_after_max_duration() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.pause_deposits();
+    assert!(s.vault_client.is_deposits_paused());
+    // Advance time past PAUSE_MAX_DURATION_SECONDS (86_400).
+    s.env.ledger().with_mut(|l| l.timestamp += 86_401);
+    // Pause should have auto-expired.
+    assert!(!s.vault_client.is_deposits_paused());
+    // Deposit succeeds without an explicit unpause.
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    assert!(shares > 0);
+}
+
+#[test]
+fn test_withdrawals_pause_expires_after_max_duration() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.env.ledger().with_mut(|l| l.sequence_number += 1);
+    s.vault_client.pause_withdrawals();
+    assert!(s.vault_client.is_withdrawals_paused());
+    s.env.ledger().with_mut(|l| l.timestamp += 86_401);
+    assert!(!s.vault_client.is_withdrawals_paused());
+    let returned = s.vault_client.withdraw(&investor, &shares, &0i128);
+    assert!(returned > 0);
+}
+
+#[test]
+fn test_deposits_pause_still_active_just_before_expiry() {
+    let s = setup();
+    s.vault_client.pause_deposits();
+    // Advance to exactly the boundary — not yet expired.
+    s.env.ledger().with_mut(|l| l.timestamp += 86_399);
+    assert!(s.vault_client.is_deposits_paused());
+}
+
+#[test]
+#[should_panic]
+fn test_deposit_blocked_when_both_switches_paused() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    s.vault_client.pause_deposits();
+    s.vault_client.pause_withdrawals();
+    s.vault_client.deposit(&investor, &1_000_0000000i128);
+}
+
+#[test]
+#[should_panic]
+fn test_withdraw_blocked_when_both_switches_paused() {
+    let s = setup();
+    let investor = Address::generate(&s.env);
+    mint_usdc(&s.env, &s.usdc_sac, &investor, 1_000_0000000i128);
+    let shares = s.vault_client.deposit(&investor, &1_000_0000000i128);
+    s.env.ledger().with_mut(|l| l.sequence_number += 1);
+    s.vault_client.pause_deposits();
+    s.vault_client.pause_withdrawals();
+    s.vault_client.withdraw(&investor, &shares, &0i128);
+}
+
 // ── Storage compaction tests (#88) ────────────────────────────────────────────
 
 #[test]
