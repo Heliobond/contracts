@@ -190,8 +190,28 @@ export async function pollScoreChanges(
     try {
       const latestLedger = await server.getLatestLedger();
       const lastProcessed = await getLastLedger();
-      const startLedger =
+      let startLedger =
         lastProcessed > 0 ? lastProcessed + 1 : latestLedger.sequence;
+
+      // Detect an RPC retention gap: the checkpoint is older than the
+      // oldest ledger the endpoint still serves (#986).  This is distinct
+      // from transient downtime — the gap is permanent; retrying the same
+      // startLedger forever would loop on the same error.  Instead we
+      // record the skipped interval so an operator can replay it externally
+      // if needed, then resume from the oldest available ledger.
+      const oldestLedger: number = latestLedger.oldestLedger ?? 1;
+      if (startLedger < oldestLedger) {
+        console.error(
+          `[listener] RETENTION_GAP: checkpoint ${lastProcessed} is before ` +
+            `oldest retained ledger ${oldestLedger} (latest ${latestLedger.sequence}). ` +
+            `Ledgers ${startLedger}–${oldestLedger - 1} are no longer available from the RPC. ` +
+            `Skipping to ${oldestLedger}. Replay the missing interval externally if required.`,
+        );
+        // Advance the checkpoint so the gap is permanently recorded and the
+        // next poll starts cleanly from the oldest available ledger.
+        await setLastLedger(oldestLedger - 1);
+        startLedger = oldestLedger;
+      }
 
       if (startLedger > latestLedger.sequence) {
         return; // caught up
