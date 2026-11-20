@@ -242,11 +242,102 @@ npm start
 
 ### Docker
 
+#### Quick start (ephemeral — not for production)
+
 ```bash
 cd notification-service
 docker build -t heliobond-notification-service .
 docker run -p 3000:3000 --env-file .env heliobond-notification-service
 ```
+
+> **Warning:** the command above stores the database inside the container. Replacing or removing the container permanently loses all ledger checkpoints and notification-dedup history. The service will restart polling from the configured `START_LEDGER` and re-notify investors for every event it re-processes.
+
+#### Persistent storage with Docker Compose (recommended)
+
+Use `notification-service/docker-compose.yml`, which wires a named volume to `/data` and sets `DB_PATH=/data/notifications.db`:
+
+```bash
+cd notification-service
+cp .env.example .env   # fill in REGISTRY_CONTRACT_ID and other required vars
+docker compose up -d
+```
+
+The named volume `notification-data` is created automatically on first run and survives `docker compose down`, container rebuilds, and image updates.
+
+#### File ownership
+
+The service runs as the `node` user (uid `1000`, gid `1000`). The `/data` directory inside the container must be writable by that user.
+
+- **Named volume** (default): Docker creates the volume as root, but the container's entrypoint runs as `node`. On first start the directory is writable; on restart it already exists. No action required.
+- **Bind mount** (e.g. `./data:/data`): Create the host directory and set ownership before the first run:
+
+  ```bash
+  mkdir -p ./data
+  sudo chown 1000:1000 ./data
+  ```
+
+If the data directory is unwritable, `better-sqlite3` throws `SQLITE_CANTOPEN` and the process exits immediately. The Docker health check (`/health`) will then fail and the container will restart — it will not silently continue with a missing database.
+
+#### Replacing the container while retaining data
+
+```bash
+# 1. Pull or build the new image.
+docker compose pull          # or: docker compose build
+
+# 2. Recreate the container.  The volume is NOT removed.
+docker compose up -d
+
+# 3. Verify that the checkpoint cursor survived the upgrade.
+docker compose exec notification-service \
+  wget -qO- http://localhost:3000/health
+# Expected: {"status":"ok","db":true}
+
+# 4. Confirm the last processed ledger is non-zero (i.e. history was retained).
+docker compose exec notification-service \
+  node -e "
+    const Database = require('better-sqlite3');
+    const db = new Database(process.env.DB_PATH || '/data/notifications.db', { readonly: true });
+    const row = db.prepare('SELECT MAX(ledger) AS ledger FROM processed_ledgers').get();
+    console.log('Last processed ledger:', row.ledger ?? '(none — fresh database)');
+  "
+```
+
+A non-zero ledger value confirms that the processed-ledger cursor and notification-history rows from the previous container are intact.
+
+#### Backup
+
+SQLite supports online backups with the `.backup` command. Run it against the live database without stopping the service:
+
+```bash
+# Copy the database to a timestamped file on the host.
+docker compose exec notification-service \
+  node -e "
+    const Database = require('better-sqlite3');
+    const src  = new Database(process.env.DB_PATH || '/data/notifications.db', { readonly: true });
+    src.backup('/data/notifications-backup-\$(date +%Y%m%d-%H%M%S).db')
+      .then(() => { console.log('Backup complete'); src.close(); })
+      .catch((err) => { console.error('Backup failed:', err); process.exit(1); });
+  "
+
+# Or copy the named-volume data to the host using a temporary container.
+docker run --rm \
+  -v notification-service_notification-data:/data \
+  -v "$(pwd)/backups:/backups" \
+  busybox \
+  cp /data/notifications.db /backups/notifications-$(date +%Y%m%d-%H%M%S).db
+```
+
+Store backups outside the named volume so they survive an accidental `docker volume rm`.
+
+#### Failure modes
+
+| Situation | Behaviour | Resolution |
+|-----------|-----------|------------|
+| `DB_PATH` directory does not exist | `SQLITE_CANTOPEN` on startup, process exits | Create the directory and ensure write permission |
+| `DB_PATH` directory exists but is unwritable | Same as above | `chown 1000:1000 <dir>` on the host |
+| Container replaced without a volume | Fresh database; cursor resets to `START_LEDGER`; investors re-notified | Attach a named volume or bind mount before first run |
+| Named volume accidentally removed | Same as above | Restore from backup |
+| Disk full | SQLite returns `SQLITE_FULL`; write operations fail; process may exit | Free disk space; the volume can be resized online for most volume drivers |
 
 ---
 

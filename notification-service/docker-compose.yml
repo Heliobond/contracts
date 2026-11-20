@@ -1,0 +1,35 @@
+services:
+  notification-service:
+    image: heliobond-notification-service:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      # Override DB_PATH to point inside the named volume mount.
+      # The process runs as the node user (uid 1000), so the host directory
+      # must be owned by uid 1000 or the volume must grant write access
+      # (see "File ownership" in docs/NOTIFICATIONS.md#persistent-storage).
+      DB_PATH: /data/notifications.db
+    volumes:
+      # Named volume — survives container replacement.  Use a bind mount
+      # (e.g. ./data:/data) if you need direct host-filesystem access for
+      # backups; see docs/NOTIFICATIONS.md#backup for guidance.
+      - notification-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  notification-data:
+    # Omit 'external: true' here to let Compose create the volume on first
+    # run.  To adopt an existing volume created outside Compose, add:
+    #   external: true
+    #   name: my-existing-volume

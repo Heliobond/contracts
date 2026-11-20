@@ -552,6 +552,9 @@ impl InvestmentVault {
     /// 2. Management fee: optional `ManagementFeeBps` (0–500 bps) sent to the fee recipient.
     ///
     /// The remaining investable amount is converted to shares at the current NAV.
+    pub fn deposit(env: Env, from: Address, usdc_amount: i128) -> i128 {
+        require_not_paused(&env);
+        require_deposits_not_paused(&env);
     pub fn deposit(
         env: Env,
         from: Address,
@@ -721,6 +724,8 @@ impl InvestmentVault {
     /// the full redemption, shares are burned immediately and the claim is enqueued
     /// in FIFO order — call `claim()` once liquidity is restored.
     pub fn withdraw(env: Env, from: Address, shares_amount: i128, min_usdc_return: i128) -> i128 {
+        require_not_paused(&env);
+        require_withdrawals_not_paused(&env);
         if Self::is_withdrawals_paused(env.clone()) {
             panic_with_error!(&env, VaultError::Paused);
         }
@@ -2705,6 +2710,14 @@ fn require_current_state(env: &Env) {
     }
 }
 
+/// Maximum wall-clock seconds a per-operation pause may remain active before it
+/// expires automatically. After `PAUSE_MAX_DURATION_SECONDS` have elapsed since
+/// the pause was set, the guard functions treat the pause as lifted without
+/// requiring an explicit unpause call (#945).
+const PAUSE_MAX_DURATION_SECONDS: u64 = 86_400; // 24 hours
+
+fn require_not_paused(env: &Env) {
+    let paused: bool = env
 /// Enforce the configured compliance transaction limit, if any (#457).
 /// `0` (the default) means "no limit configured" — matches the documented
 /// convention for `MaxTransactionAmount`.
@@ -2779,8 +2792,14 @@ fn claimable_liquidity(env: &Env) -> i128 {
 }
 
 /// Virtual share offset to prevent first-depositor / donation share-inflation
-/// attacks (#744). Minted to the contract address on first deposit and never
-/// redeemable. Uses the ERC-4626 decimals-offset pattern.
+/// attacks (#744). Uses the ERC-4626 decimals-offset pattern.
+///
+/// **Known limitation (#957):** this offset (1 000 stroops = 0.0001 USDC) is
+/// applied only during share *minting* (`convert_to_shares` / `shares_for_assets`).
+/// `convert_to_assets` and `assets_for_shares` do not apply the offset on
+/// redemption, so the asymmetry means the protection weakens as the donation
+/// grows relative to the offset. The test `test_donation_attack_virtual_offset_bounds_victim_loss`
+/// exercises the attack scenario and will fail if the offset is insufficient.
 const VIRTUAL_SHARES_OFFSET: i128 = 1_000;
 
 /// Same formula as `convert_to_shares`, without caching NAV.
@@ -2923,6 +2942,36 @@ fn check_max_transaction_amount(env: &Env, amount: i128) {
 fn require_not_paused(env: &Env) {
     if vault_paused(env) {
         panic_with_error!(env, VaultError::Paused);
+    }
+}
+
+fn is_pause_active(env: &Env, start_key: &VaultKey) -> bool {
+    let start: u64 = match env.storage().instance().get(start_key) {
+        Some(t) => t,
+        None => return false,
+    };
+    env.ledger().timestamp().saturating_sub(start) < PAUSE_MAX_DURATION_SECONDS
+}
+
+fn require_deposits_not_paused(env: &Env) {
+    let paused: bool = env
+        .storage()
+        .instance()
+        .get(&VaultKey::DepositsPaused)
+        .unwrap_or(false);
+    if paused && is_pause_active(env, &VaultKey::DepositsPauseStart) {
+        panic_with_error!(env, VaultError::DepositsPaused);
+    }
+}
+
+fn require_withdrawals_not_paused(env: &Env) {
+    let paused: bool = env
+        .storage()
+        .instance()
+        .get(&VaultKey::WithdrawalsPaused)
+        .unwrap_or(false);
+    if paused && is_pause_active(env, &VaultKey::WithdrawalsPauseStart) {
+        panic_with_error!(env, VaultError::WithdrawalsPaused);
     }
 }
 
@@ -3243,6 +3292,48 @@ impl InvestmentVault {
         env.storage().instance().set(&VaultKey::Paused, &false);
         env.storage().instance().remove(&VaultKey::PausedBy);
         events::unpaused(&env);
+    }
+
+    // ── Per-operation pause switches (#945) ───────────────────────────────────
+
+    /// Pause deposits only, leaving withdrawals and claims unaffected.
+    /// Auto-expires after PAUSE_MAX_DURATION_SECONDS.
+    #[only_owner]
+    pub fn pause_deposits(env: Env) {
+        env.storage().instance().set(&VaultKey::DepositsPaused, &true);
+        env.storage().instance().set(&VaultKey::DepositsPauseStart, &env.ledger().timestamp());
+    }
+
+    /// Lift the deposits pause before its natural expiry.
+    #[only_owner]
+    pub fn unpause_deposits(env: Env) {
+        env.storage().instance().set(&VaultKey::DepositsPaused, &false);
+    }
+
+    /// Return whether deposits are currently paused (and the pause has not yet expired).
+    pub fn is_deposits_paused(env: Env) -> bool {
+        let paused: bool = env.storage().instance().get(&VaultKey::DepositsPaused).unwrap_or(false);
+        paused && is_pause_active(&env, &VaultKey::DepositsPauseStart)
+    }
+
+    /// Pause withdrawals only, leaving deposits and claims unaffected.
+    /// Auto-expires after PAUSE_MAX_DURATION_SECONDS.
+    #[only_owner]
+    pub fn pause_withdrawals(env: Env) {
+        env.storage().instance().set(&VaultKey::WithdrawalsPaused, &true);
+        env.storage().instance().set(&VaultKey::WithdrawalsPauseStart, &env.ledger().timestamp());
+    }
+
+    /// Lift the withdrawals pause before its natural expiry.
+    #[only_owner]
+    pub fn unpause_withdrawals(env: Env) {
+        env.storage().instance().set(&VaultKey::WithdrawalsPaused, &false);
+    }
+
+    /// Return whether withdrawals are currently paused (and the pause has not yet expired).
+    pub fn is_withdrawals_paused(env: Env) -> bool {
+        let paused: bool = env.storage().instance().get(&VaultKey::WithdrawalsPaused).unwrap_or(false);
+        paused && is_pause_active(&env, &VaultKey::WithdrawalsPauseStart)
     }
 
     // ── Storage compaction (#88) ───────────────────────────────────────────────

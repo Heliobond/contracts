@@ -4,13 +4,43 @@
 
 Please **do not** open a public issue for security problems.
 
-Report privately through GitHub: go to the repository's **Security** tab → **Report a vulnerability** (this opens a private advisory). If you can't use that, email **daveproxy80@gmail.com**.
+Report privately through GitHub: go to the repository's **Security** tab → **Report a vulnerability** (this opens a private advisory — maintainers: ensure **private vulnerability reporting** is enabled under *Settings → Code security → Private vulnerability reporting*). If you can't use that channel, email **daveproxy80@gmail.com**.
+
+> **Note for maintainers:** GitHub private vulnerability reporting must be enabled manually in the repository settings; it cannot be turned on from a file in the repository. Until it is enabled, the "Report a vulnerability" button above will not appear for reporters.
 
 Include what you can: affected component, steps to reproduce, and impact. We aim to acknowledge within a few days and will coordinate a fix and disclosure with you.
+
+## Severity Definitions
+
+Use these when filing a report so the team can triage immediately.
+
+| Severity | Definition | Examples from this codebase |
+|---|---|---|
+| **Critical** | Direct loss or theft of user funds with no special preconditions beyond calling a contract function. | Arithmetic overflow in `deposit`/`withdraw` share calculation that lets an attacker drain the vault; auth bypass on a fund-moving entry point. |
+| **High** | Loss or lock of funds that requires a privileged position (e.g. a malicious registry, an influenceable oracle), or a complete bypass of auth on a state-mutating entry point. | Malicious registry returning inflated scores to inflate NAV and over-issue shares (accepted-risk path documented in `investment_vault/src/lib.rs:4–17`); `set_registry` callable without admin auth. |
+| **Medium** | An attacker can cause material but bounded harm or extract value only under unusual conditions; denial-of-service making the vault temporarily unusable; privilege escalation that does not directly move funds. | Griefing via spam registrations that exhaust ledger entry limits; an event emitting an incorrect amount that misleads off-chain indexers. |
+| **Low / Informational** | No direct financial impact; deviations from best practice, documentation gaps, or issues that require admin cooperation to exploit. | A getter leaking non-sensitive internal state; a missing `extend_ttl` that could cause storage expiry on a low-traffic deployment. |
 
 ## Scope
 
 This is testnet, pre-production software. The smart contracts have not yet been audited. Treat anything on-chain as experimental until a release notes otherwise.
+
+### In scope
+
+- **InvestmentVault** (`investment_vault/`) — all public entry points: `deposit`, `withdraw`, `receive_yield`, `set_registry`, `pause`/`unpause`, admin functions
+- **ProjectRegistry** (`project_registry/`) — all public entry points: `register_project`, `update_project`, `whitelist`/`delist`, score reads
+- **Cross-contract trust path** — the vault's reliance on registry-supplied `ProjectData`, scores, and `total_projects()` for NAV calculation; a report demonstrating that a reachable code path lets a malicious or substituted registry cause the vault to mis-price shares or over-issue them is **in scope and treated as High**
+- **Oracle / score ingestion** — any path where score data flows into vault NAV or yield calculations and can be manipulated without compromising the oracle operator's key
+- **Auth and pausability** — missing `require_auth` or `require_not_paused` on state-mutating entry points
+- **Arithmetic correctness** — overflow, truncation, or rounding that affects deposit/withdraw/yield payout amounts
+
+### Out of scope
+
+- **Owner-key / admin-key compromise** — the protocol makes no claim about key-management security; a report whose only attack vector is "the admin key is stolen" will be treated as informational
+- **Wormhole guardian-set compromise** — the bridge's guardian consensus is an upstream dependency; vulnerabilities in Wormhole's own guardian set should be reported to the Wormhole team
+- **Testnet-only deployments** — until a mainnet release is announced, all deployed contracts are experimental; economic exploits on testnet tokens are out of scope
+- **Third-party dependencies** — vulnerabilities in `soroban-sdk`, `stellar-xdr`, or other upstream crates should be reported to their respective maintainers; we will update promptly once patches are available
+- **Social engineering / phishing** targeting team members or users
 
 ## Dependency Updates
 
@@ -21,13 +51,22 @@ Maintainers should also keep **Dependabot alerts** and **Dependabot security upd
 ## Threat Model and Trust Assumptions
 
 ### Trust Boundaries
-- **Project Registry & Investment Vault**: These contracts trust each other explicitly for interoperability where documented. Administrative functions are restricted to a multi-sig or single highly-trusted admin key.
-- **Oracles and External Data**: We assume our selected oracles (if any) provide accurate and timely data. Any compromise of the oracle may lead to incorrect valuations or interest rate calculations.
-- **End Users**: Users are responsible for securing their own private keys. The contracts do not have a mechanism to recover funds sent to the wrong address or lost due to compromised keys.
+
+There are three distinct trust boundaries in this codebase.
+
+**1. Owner / admin key**
+Administrative functions (`set_registry`, `pause`, `upgrade`, fee adjustments) are gated to a single owner address assumed to be uncompromised. Reports whose only attack surface is a stolen admin key are out of scope.
+
+**2. ProjectRegistry → InvestmentVault data path**
+The vault trusts the registry to return valid `ProjectData` including legitimate owner addresses and accurate scores used in NAV calculation. The registry address is validated at construction via `total_projects()` and can only be changed by the admin. As noted in `investment_vault/src/lib.rs:4–17`, a compromised or malicious registry could return manipulated data ("Consider using a registry interface trait" is a listed mitigation — not yet implemented). **This path is in scope.** A report demonstrating that a reachable code path allows a malicious registry to inflate NAV or over-issue shares is treated as High severity.
+
+**3. External oracles and bridge (Wormhole)**
+The vault assumes any configured oracle provides accurate and timely pricing. Wormhole guardian-set compromise is an upstream risk reported to the Wormhole team, not here. Oracle price-feed manipulation achievable without compromising the guardian set itself (e.g. a permissioned feed update or a vulnerable feed-aggregation path) is **in scope**.
 
 ### Known Limitations
 - The contracts currently rely on a centralized whitelister for project creation.
 - Maximum URI lengths and specific string size bounds are strictly enforced to prevent ledger bloat.
+- The registry–vault trust boundary has not yet been hardened with an interface trait; this is accepted pre-audit risk.
 
 ## Pre-Merge Checklist for New Contract Functions
 

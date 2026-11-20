@@ -30,3 +30,4 @@ Closes #<!-- issue number -->
 - Share math: division denominators cannot be zero; rounding favours vault
 - Fund flows: tokens transferred in correct direction, balances updated atomically
 - Access control: auth guard fires before any state change
+- [ ] `CHANGELOG.md` entry added under the correct heading (Added / Changed / Fixed / Security)

@@ -95,6 +95,27 @@ pub fn is_multisig_disabled(threshold: u32) -> bool {
     threshold == 0
 }
 
+/// Pure check for the "direct" (multisig-disabled) entry-point guard.
+/// Returns `Err(ApprovalError::InvalidThreshold)` when multi-sig is active
+/// (threshold > 0). Contract wrappers call this and map the error to their
+/// own `MultisigEnabledUseApprovedVariant` code — the pure form is testable
+/// without an `Env` and is the `_approved`-sibling counterpart to
+/// `require_admin_approval`. (#969)
+pub fn check_multisig_disabled(threshold: u32) -> Result<(), ApprovalError> {
+    if threshold == 0 {
+        Ok(())
+    } else {
+        Err(ApprovalError::InvalidThreshold)
+    }
+}
+
+/// Returns `true` when `approved` meets or exceeds `threshold`.
+/// Extracted so callers can query sufficiency before committing approvals
+/// and so the invariant has an isolated, `Env`-free test. (#969)
+pub fn is_approval_sufficient(approved: u32, threshold: u32) -> bool {
+    threshold > 0 && approved >= threshold
+}
+
 // ── #711: unit tests for shared multisig helpers ──────────────────────────────
 
 #[cfg(test)]
@@ -302,5 +323,45 @@ mod tests {
     fn multisig_enabled_when_threshold_positive() {
         assert!(!is_multisig_disabled(1));
         assert!(!is_multisig_disabled(5));
+    }
+
+    // ── check_multisig_disabled (#969) ──────────────────────────────────────
+
+    #[test]
+    fn check_disabled_passes_when_threshold_zero() {
+        assert!(check_multisig_disabled(0).is_ok());
+    }
+
+    #[test]
+    fn check_disabled_errors_when_threshold_nonzero() {
+        assert!(matches!(
+            check_multisig_disabled(1),
+            Err(ApprovalError::InvalidThreshold)
+        ));
+        assert!(matches!(
+            check_multisig_disabled(5),
+            Err(ApprovalError::InvalidThreshold)
+        ));
+    }
+
+    // ── is_approval_sufficient (#969) ───────────────────────────────────────
+
+    #[test]
+    fn approval_sufficient_when_met() {
+        assert!(is_approval_sufficient(2, 2));
+        assert!(is_approval_sufficient(3, 2));
+    }
+
+    #[test]
+    fn approval_insufficient_when_below_threshold() {
+        assert!(!is_approval_sufficient(1, 2));
+        assert!(!is_approval_sufficient(0, 1));
+    }
+
+    #[test]
+    fn approval_insufficient_when_threshold_zero() {
+        // threshold == 0 means multisig disabled; this helper is for the
+        // approved path only, so a zero threshold is treated as "not sufficient".
+        assert!(!is_approval_sufficient(5, 0));
     }
 }

@@ -6,6 +6,7 @@ import {
   NotificationPreference,
   ServiceConfig,
 } from "./types";
+import { networkLabel } from "./config";
 
 const sendMailMock = vi.fn(async () => ({ messageId: "test" }));
 vi.mock("nodemailer", () => ({
@@ -22,6 +23,8 @@ const config: ServiceConfig = {
   db_path: ":memory:",
   poll_interval_ms: 1000,
   api_port: 3000,
+  portfolio_base_url: "https://heliobond.io",
+  network_label: "Testnet",
 };
 
 const configWithEmail: ServiceConfig = {
@@ -451,5 +454,206 @@ describe("Notifier bounded-eviction (#396)", () => {
     // The oldest entry should have been evicted
     expect(firstKey).toBeDefined();
     expect(recipients.has(firstKey!)).toBe(false);
+  });
+});
+
+// ── Issue #994: bounded fan-out ───────────────────────────────────────────────
+
+describe("Notifier bounded fan-out (#994)", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  it("delivers to all recipients even when one endpoint is slow", async () => {
+    // Simulate one slow endpoint (100ms) and several fast ones (0ms).
+    const SLOW = "SLOW";
+    const addrs = [SLOW, "A2", "A3", "A4", "A5"];
+    const delivered: string[] = [];
+
+    const store: Store = {
+      getPreference: vi.fn((addr: string) => ({
+        investor_address: addr,
+        webhook_url: `https://example.invalid/${addr}`,
+        enabled: true,
+        min_delta: 1,
+        updated_at: new Date(0).toISOString(),
+      })),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn((addr: string) => delivered.push(addr)),
+    } as unknown as Store;
+
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes(SLOW)) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const addr = (url as string).split("/").pop()!;
+      return new Response(null, { status: 200 });
+    });
+
+    const notifier = new Notifier(config, store);
+    const event = makeEvent();
+    await notifier.notifyInvestors(event, addrs);
+
+    // Every address must have received a notification.
+    expect(fetchMock).toHaveBeenCalledTimes(addrs.length);
+    expect((store.recordNotification as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+      addrs.length,
+    );
+  });
+
+  it("observed concurrency never exceeds NOTIFY_CONCURRENCY (8)", async () => {
+    const CONCURRENCY_LIMIT = 8;
+    let inFlight = 0;
+    let maxObserved = 0;
+
+    const addrs = Array.from({ length: 24 }, (_, i) => `ADDR_${i}`);
+
+    const store: Store = {
+      getPreference: vi.fn((addr: string) => ({
+        investor_address: addr,
+        webhook_url: `https://example.invalid/${addr}`,
+        enabled: true,
+        min_delta: 1,
+        updated_at: new Date(0).toISOString(),
+      })),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn(),
+    } as unknown as Store;
+
+    fetchMock.mockImplementation(async () => {
+      inFlight++;
+      maxObserved = Math.max(maxObserved, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return new Response(null, { status: 200 });
+    });
+
+    const notifier = new Notifier(config, store);
+    await notifier.notifyInvestors(makeEvent(), addrs);
+
+    expect(maxObserved).toBeLessThanOrEqual(CONCURRENCY_LIMIT);
+    expect(fetchMock).toHaveBeenCalledTimes(addrs.length);
+  });
+
+  it("preserves delivery history accurately when a mixed batch has one failure", async () => {
+    const FAIL = "ADDR_FAIL";
+    const addrs = ["ADDR_OK1", FAIL, "ADDR_OK2"];
+    const recorded: string[] = [];
+
+    const store: Store = {
+      getPreference: vi.fn((addr: string) => ({
+        investor_address: addr,
+        webhook_url: `https://example.invalid/${addr}`,
+        enabled: true,
+        min_delta: 1,
+        updated_at: new Date(0).toISOString(),
+      })),
+      hasBeenNotified: vi.fn(() => false),
+      recordNotification: vi.fn((_addr: string, _pid: number, _ch: string) =>
+        recorded.push(_addr),
+      ),
+    } as unknown as Store;
+
+    fetchMock.mockImplementation(async (url: string) => {
+      if ((url as string).includes(FAIL)) {
+        return new Response("server error", { status: 500 });
+      }
+      return new Response(null, { status: 200 });
+    });
+
+    const notifier = new Notifier(config, store);
+    // Must not throw — errors are isolated per recipient.
+    await expect(
+      notifier.notifyInvestors(makeEvent(), addrs),
+    ).resolves.toBeUndefined();
+
+    // The two successful recipients must be in history; the failed one must not.
+    expect(recorded).toContain("ADDR_OK1");
+    expect(recorded).toContain("ADDR_OK2");
+    expect(recorded).not.toContain(FAIL);
+// ── Issue #1005: portfolio URL and network label ───────────────────────────────
+
+describe("networkLabel helper", () => {
+  it('returns "Mainnet" for the mainnet passphrase', () => {
+    expect(networkLabel("Public Global Stellar Network ; September 2015")).toBe("Mainnet");
+  });
+
+  it('returns "Testnet" for the testnet passphrase', () => {
+    expect(networkLabel("Test SDF Network ; September 2015")).toBe("Testnet");
+  });
+
+  it('returns "Custom Network" for an unrecognised passphrase', () => {
+    expect(networkLabel("My Private Stellar Network")).toBe("Custom Network");
+  });
+});
+
+describe("Notifier email portfolio URL and network label (#1005)", () => {
+  function captureEmailText(cfg: ServiceConfig): string {
+    // Access the private method via cast to test rendered text directly.
+    const notifier = new Notifier(cfg, makeStore());
+    return (
+      notifier as unknown as {
+        formatEmailText: (e: ScoreChangedEvent, addr: string) => string;
+      }
+    ).formatEmailText(makeEvent(), "GINVESTOR");
+  }
+
+  it("includes the testnet portfolio URL for a testnet config", () => {
+    const cfg: ServiceConfig = {
+      ...config,
+      portfolio_base_url: "https://testnet.heliobond.io",
+      network_label: "Testnet",
+    };
+    const text = captureEmailText(cfg);
+    expect(text).toContain("https://testnet.heliobond.io/portfolio");
+    expect(text).not.toContain("heliobond.io/portfolio\n");
+  });
+
+  it("includes the production portfolio URL for a production config", () => {
+    const cfg: ServiceConfig = {
+      ...config,
+      portfolio_base_url: "https://heliobond.io",
+      network_label: "Mainnet",
+    };
+    const text = captureEmailText(cfg);
+    expect(text).toContain("https://heliobond.io/portfolio");
+  });
+
+  it("includes the network label in the subject line", () => {
+    const cfg: ServiceConfig = { ...config, network_label: "Testnet" };
+    const text = captureEmailText(cfg);
+    expect(text).toMatch(/Score Change Alert \(Testnet\)/);
+  });
+
+  it("includes the network label in the body", () => {
+    const cfg: ServiceConfig = { ...config, network_label: "Mainnet" };
+    const text = captureEmailText(cfg);
+    expect(text).toContain("Network:      Mainnet");
+  });
+
+  it("preserves score, rate, investor and ledger details", () => {
+    const event = makeEvent({
+      project_id: 42,
+      old_credit_quality: 55,
+      new_credit_quality: 65,
+      old_rate_bps: 300,
+      new_rate_bps: 350,
+      ledger: 999,
+    });
+    const notifier = new Notifier(config, makeStore());
+    const text = (
+      notifier as unknown as {
+        formatEmailText: (e: ScoreChangedEvent, addr: string) => string;
+      }
+    ).formatEmailText(event, "GINVESTOR_XYZ");
+
+    expect(text).toContain("Project #42");
+    expect(text).toContain("55 → 65");
+    expect(text).toContain("300 bps → 350 bps");
+    expect(text).toContain("GINVESTOR_XYZ");
+    expect(text).toContain("#999");
   });
 });
