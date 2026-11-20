@@ -378,3 +378,121 @@ describe("pollScoreChanges network passphrase check", () => {
     errorSpy.mockRestore();
   });
 });
+
+// ── Issue #987: event pagination stops at the captured endLedger boundary ────
+
+/** Build a minimal SorobanEvent-shaped object for pagination tests. */
+function makeRawEvent(
+  contractId: string,
+  ledger: number,
+  projectId: number,
+  pagingToken: string,
+) {
+  return {
+    contractId: new Contract(
+      StrKey.encodeContract(Buffer.from(contractId.padEnd(64, "0").slice(0, 64), "hex")),
+    ),
+    topic: [
+      nativeToScVal("score_changed", { type: "symbol" }),
+      nativeToScVal(projectId, { type: "u32" }),
+    ],
+    value: buildDataMap(FULL_SCORES),
+    ledger,
+    ledgerClosedAt: new Date(TIMESTAMP * 1000).toISOString(),
+    inSuccessfulContractCall: true,
+    pagingToken,
+  };
+}
+
+describe("fetchEvents pagination boundary (issue #987)", () => {
+  const CONTRACT = TEST_REGISTRY_CONTRACT_ID_HEX;
+
+  const config: ServiceConfig = {
+    rpc_url: "https://example.invalid",
+    network_passphrase: "Test SDF Network ; September 2015",
+    registry_contract_id: CONTRACT,
+    vault_contract_id: "VAULT",
+    db_path: ":memory:",
+    poll_interval_ms: 50,
+    api_port: 3000,
+  };
+
+  beforeEach(() => {
+    getLatestLedgerMock.mockReset();
+    getEventsMock.mockReset();
+    getNetworkMock.mockReset();
+    getNetworkMock.mockResolvedValue({
+      passphrase: config.network_passphrase,
+      protocolVersion: "22",
+    });
+  });
+
+  it("does not request further pages when a full page crosses the endLedger boundary", async () => {
+    // Page 1: 100 events, the last few are beyond endLedger (200).
+    // If the bug is present, the loop sees length===100 and requests page 2.
+    // With the fix, it must stop because the boundary was crossed inside page 1.
+    const endLedger = 200;
+    const page1 = Array.from({ length: 97 }, (_, i) =>
+      makeRawEvent(CONTRACT, 199, i + 1, `199-${i + 1}`),
+    ).concat([
+      makeRawEvent(CONTRACT, 200, 98, "200-1"),
+      makeRawEvent(CONTRACT, 201, 99, "201-1"), // first event past boundary
+      makeRawEvent(CONTRACT, 202, 100, "202-1"),
+    ]);
+
+    getLatestLedgerMock.mockResolvedValue({ sequence: endLedger });
+    // Page 1 is a full page (100 events).
+    getEventsMock.mockResolvedValueOnce({ events: page1 });
+    // Page 2 must never be requested; if it is, return something to avoid hanging.
+    getEventsMock.mockResolvedValue({ events: [] });
+
+    const processed: ScoreChangedEvent[] = [];
+    const handle = await pollScoreChanges(
+      config,
+      async (ev) => processed.push(ev),
+      async () => 0,
+      async () => {},
+    );
+    await new Promise((r) => setTimeout(r, config.poll_interval_ms * 3));
+    await handle.stop();
+
+    // getEvents must have been called exactly once (page 1 only).
+    expect(getEventsMock).toHaveBeenCalledTimes(1);
+    // Events at ledger 201 and 202 must not appear in results.
+    expect(processed.every((e) => e.ledger <= endLedger)).toBe(true);
+    // Events within range (ledger 199 and 200) must all be present.
+    const inRange = processed.filter((e) => e.ledger <= endLedger);
+    expect(inRange.length).toBe(99); // 97 at ledger 199 + 2 at ledger 200
+  });
+
+  it("processes multiple full pages that fall entirely within the captured range", async () => {
+    // Three full pages, all within endLedger (500); a partial fourth page ends the scan.
+    const endLedger = 500;
+    const makePage = (ledger: number, count: number, tokenBase: string) =>
+      Array.from({ length: count }, (_, i) =>
+        makeRawEvent(CONTRACT, ledger, i + 1, `${tokenBase}-${i + 1}`),
+      );
+
+    getLatestLedgerMock.mockResolvedValue({ sequence: endLedger });
+    getEventsMock
+      .mockResolvedValueOnce({ events: makePage(100, 100, "p1") })
+      .mockResolvedValueOnce({ events: makePage(200, 100, "p2") })
+      .mockResolvedValueOnce({ events: makePage(300, 100, "p3") })
+      .mockResolvedValueOnce({ events: makePage(400, 50, "p4") }); // partial — stops here
+
+    const processed: ScoreChangedEvent[] = [];
+    const handle = await pollScoreChanges(
+      config,
+      async (ev) => processed.push(ev),
+      async () => 0,
+      async () => {},
+    );
+    await new Promise((r) => setTimeout(r, config.poll_interval_ms * 3));
+    await handle.stop();
+
+    // All four pages must have been fetched (350 events total within range).
+    expect(getEventsMock).toHaveBeenCalledTimes(4);
+    expect(processed).toHaveLength(350);
+    expect(processed.every((e) => e.ledger <= endLedger)).toBe(true);
+  });
+});
