@@ -22,3 +22,4 @@ Closes #<!-- issue number -->
 - [ ] New behaviour is covered by tests
 - [ ] No secrets committed
 - [ ] Docs updated where relevant
+- [ ] `CHANGELOG.md` entry added under the correct heading (Added / Changed / Fixed / Security)
