@@ -496,3 +496,140 @@ describe("fetchEvents pagination boundary (issue #987)", () => {
     expect(processed.every((e) => e.ledger <= endLedger)).toBe(true);
   });
 });
+
+// ── Issue #986: RPC retention gap detection ───────────────────────────────────
+
+describe("pollScoreChanges retention gap detection (#986)", () => {
+  const config: ServiceConfig = {
+    rpc_url: "https://example.invalid",
+    network_passphrase: "Test SDF Network ; September 2015",
+    registry_contract_id: TEST_REGISTRY_CONTRACT_ID_HEX,
+    vault_contract_id: "VAULT",
+    db_path: ":memory:",
+    poll_interval_ms: 50,
+    api_port: 3000,
+  };
+
+  beforeEach(() => {
+    getLatestLedgerMock.mockReset();
+    getEventsMock.mockReset();
+    getNetworkMock.mockReset();
+    getNetworkMock.mockResolvedValue({
+      passphrase: config.network_passphrase,
+      protocolVersion: "22",
+    });
+  });
+
+  it("detects a gap, advances the checkpoint to oldestLedger - 1, and resumes polling from oldestLedger", async () => {
+    // Service was down for a long time: last checkpoint is ledger 100, but
+    // the RPC only retains from ledger 50_000 onward.
+    const LAST_PROCESSED = 100;
+    const OLDEST_LEDGER = 50_000;
+    const LATEST_LEDGER = 60_000;
+
+    let storedLedger = LAST_PROCESSED;
+
+    getLatestLedgerMock.mockResolvedValue({
+      sequence: LATEST_LEDGER,
+      oldestLedger: OLDEST_LEDGER,
+    });
+    // After gap recovery the scan starts at OLDEST_LEDGER, returns no events.
+    getEventsMock.mockResolvedValue({ events: [] });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const handle = await pollScoreChanges(
+      config,
+      async () => {},
+      async () => storedLedger,
+      async (l) => { storedLedger = l; },
+    );
+
+    // One full poll cycle is enough.
+    await new Promise((r) => setTimeout(r, config.poll_interval_ms * 3));
+    await handle.stop();
+
+    // The gap must be logged with RETENTION_GAP and the skipped range.
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("RETENTION_GAP"),
+    );
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining(`${OLDEST_LEDGER}`),
+    );
+
+    // Checkpoint must have been advanced to oldestLedger - 1 so the next
+    // poll starts cleanly from oldestLedger.
+    expect(storedLedger).toBeGreaterThanOrEqual(OLDEST_LEDGER - 1);
+
+    // getEvents must have been called starting at oldestLedger (not 101).
+    expect(getEventsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ startLedger: OLDEST_LEDGER }),
+    );
+
+    errorSpy.mockRestore();
+  });
+
+  it("does not log RETENTION_GAP when the checkpoint is within the retention window", async () => {
+    const OLDEST_LEDGER = 1_000;
+    const LATEST_LEDGER = 2_000;
+    // checkpoint is after oldestLedger — no gap
+    let storedLedger = 1_500;
+
+    getLatestLedgerMock.mockResolvedValue({
+      sequence: LATEST_LEDGER,
+      oldestLedger: OLDEST_LEDGER,
+    });
+    getEventsMock.mockResolvedValue({ events: [] });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const handle = await pollScoreChanges(
+      config,
+      async () => {},
+      async () => storedLedger,
+      async (l) => { storedLedger = l; },
+    );
+
+    await new Promise((r) => setTimeout(r, config.poll_interval_ms * 3));
+    await handle.stop();
+
+    expect(errorSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("RETENTION_GAP"),
+    );
+    // Polling must resume from 1_501 (lastProcessed + 1), not reset.
+    expect(getEventsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ startLedger: 1_501 }),
+    );
+
+    errorSpy.mockRestore();
+  });
+
+  it("falls back gracefully when oldestLedger is absent from the RPC response", async () => {
+    // Some RPC implementations do not include oldestLedger; the gap check
+    // must not throw and must not falsely detect a gap.
+    let storedLedger = 500;
+    getLatestLedgerMock.mockResolvedValue({ sequence: 1_000 }); // no oldestLedger
+    getEventsMock.mockResolvedValue({ events: [] });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const handle = await pollScoreChanges(
+      config,
+      async () => {},
+      async () => storedLedger,
+      async (l) => { storedLedger = l; },
+    );
+
+    await new Promise((r) => setTimeout(r, config.poll_interval_ms * 3));
+    await handle.stop();
+
+    expect(errorSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining("RETENTION_GAP"),
+    );
+    expect(getEventsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ startLedger: 501 }),
+    );
+
+    errorSpy.mockRestore();
+  });
+});
