@@ -2779,8 +2779,14 @@ fn claimable_liquidity(env: &Env) -> i128 {
 }
 
 /// Virtual share offset to prevent first-depositor / donation share-inflation
-/// attacks (#744). Minted to the contract address on first deposit and never
-/// redeemable. Uses the ERC-4626 decimals-offset pattern.
+/// attacks (#744). Uses the ERC-4626 decimals-offset pattern.
+///
+/// **Known limitation (#957):** this offset (1 000 stroops = 0.0001 USDC) is
+/// applied only during share *minting* (`convert_to_shares` / `shares_for_assets`).
+/// `convert_to_assets` and `assets_for_shares` do not apply the offset on
+/// redemption, so the asymmetry means the protection weakens as the donation
+/// grows relative to the offset. The test `test_donation_attack_virtual_offset_bounds_victim_loss`
+/// exercises the attack scenario and will fail if the offset is insufficient.
 const VIRTUAL_SHARES_OFFSET: i128 = 1_000;
 
 /// Same formula as `convert_to_shares`, without caching NAV.
