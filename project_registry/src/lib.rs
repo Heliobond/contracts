@@ -498,14 +498,15 @@ impl ProjectRegistry {
     /// Owner-only. Pass `None` to disable Oracle updates (falling back to owner-only).
     #[only_owner]
     pub fn set_oracle(env: Env, oracle: Option<Address>) {
-        match oracle {
+        match &oracle {
             Some(addr) => {
-                env.storage().instance().set(&DataKey::Oracle, &addr);
+                env.storage().instance().set(&DataKey::Oracle, addr);
             }
             None => {
                 env.storage().instance().remove(&DataKey::Oracle);
             }
         }
+        events::oracle_set(&env, &oracle);
     }
 
     /// Return the current Oracle address, if any (#748).

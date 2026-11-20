@@ -3696,3 +3696,165 @@ fn score_updates_require_the_configured_oracle() {
     client.update_credit_quality_score(&id, &80);
     assert_eq!(env.auths()[0].0, oracle);
 }
+
+// ── Oracle role tests (#944) ──────────────────────────────────────────────────
+
+/// Oracle can call update_impact_score; a non-oracle non-owner address cannot.
+#[test]
+fn oracle_can_update_scores_non_oracle_cannot() {
+    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+    let (env, _admin, _, client) = setup();
+    let creator = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    client.set_whitelist(&creator, &true, &0);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://oracle-944-a"),
+        &0,
+        &test_metadata_hash(&env),
+    );
+    client.set_oracle(&Some(oracle.clone()));
+
+    // Stranger is rejected.
+    env.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "update_impact_score",
+            args: (id, 70u32, 50u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(
+        client.try_update_impact_score(&id, &70, &50).is_err(),
+        "non-oracle non-owner must not update scores"
+    );
+
+    // Oracle succeeds.
+    env.mock_all_auths();
+    client.update_impact_score(&id, &70, &50);
+    assert_eq!(env.auths()[0].0, oracle, "auth must come from the oracle");
+}
+
+/// Owner retains the capability when no oracle is configured.
+/// Once an oracle is set, the owner address is no longer accepted as the signer.
+#[test]
+fn owner_can_update_when_no_oracle_set_but_not_after() {
+    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+    let (env, admin, _, client) = setup();
+    let creator = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    client.set_whitelist(&creator, &true, &0);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://oracle-944-b"),
+        &0,
+        &test_metadata_hash(&env),
+    );
+
+    // No oracle set: owner succeeds.
+    env.mock_all_auths();
+    client.update_impact_score(&id, &60, &40);
+    assert_eq!(
+        env.auths()[0].0, admin,
+        "without an oracle the owner must be the signer"
+    );
+
+    // Oracle set: owner is now rejected — the role is exclusive, not additive.
+    client.set_oracle(&Some(oracle.clone()));
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "update_impact_score",
+            args: (id, 65u32, 45u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(
+        client.try_update_impact_score(&id, &65, &45).is_err(),
+        "owner must not bypass the oracle once one is set"
+    );
+}
+
+/// set_oracle emits an OracleSet event for both set and clear.
+#[test]
+fn set_oracle_emits_oracle_set_event() {
+    let (env, _admin, _, client) = setup();
+    let oracle = Address::generate(&env);
+
+    client.set_oracle(&Some(oracle.clone()));
+    let events = env.events().all().filter_by_contract(&client.address);
+    assert!(
+        events.events().len() >= 1,
+        "set_oracle must emit at least one event"
+    );
+
+    // Clear the oracle and confirm an event fires for the None case too.
+    client.set_oracle(&None);
+    let clear_events = env.events().all().filter_by_contract(&client.address);
+    assert!(
+        clear_events.events().len() >= 1,
+        "clearing the oracle must also emit an event"
+    );
+}
+
+/// Oracle is NOT inside multisig scope: update_impact_score_approved requires
+/// multisig signers, not the oracle, so the oracle cannot use the _approved path.
+#[test]
+fn oracle_is_not_in_multisig_scope() {
+    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+    let (env, admin, _, client) = setup();
+    let creator = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let signer = Address::generate(&env);
+    client.set_whitelist(&creator, &true, &0);
+    let id = client.create_project(
+        &creator,
+        &String::from_str(&env, "ipfs://oracle-944-d"),
+        &0,
+        &test_metadata_hash(&env),
+    );
+    client.set_oracle(&Some(oracle.clone()));
+
+    // Enable multisig: threshold=1, signer set.
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(signer.clone());
+    client.set_multisig_config(&signers, &1u32);
+
+    // Oracle presenting itself as the approval signer is rejected by
+    // require_admin_approval because it is not in the multisig signer list.
+    let mut approvals = soroban_sdk::Vec::new(&env);
+    approvals.push_back(oracle.clone());
+    env.mock_auths(&[MockAuth {
+        address: &oracle,
+        invoke: &MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "update_impact_score_approved",
+            args: (approvals.clone(), id, 55u32, 35u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(
+        client.try_update_impact_score_approved(&approvals, &id, &55, &35).is_err(),
+        "oracle must not be accepted as a multisig signer"
+    );
+
+    // Actual multisig signer succeeds.
+    env.mock_all_auths();
+    let mut valid_approvals = soroban_sdk::Vec::new(&env);
+    valid_approvals.push_back(signer.clone());
+    client.update_impact_score_approved(&valid_approvals, &id, &55, &35);
+    // The first auth in the chain is the multisig signer, not the oracle or admin.
+    assert!(
+        env.auths().iter().any(|(addr, _)| *addr == signer),
+        "multisig signer must be in the auth chain"
+    );
+    // admin is owner required for set_multisig_config above, not relevant here — the
+    // point is that oracle is NOT in the auth chain for the _approved path.
+    assert!(
+        !env.auths().iter().any(|(addr, _)| *addr == oracle),
+        "oracle must not appear in the _approved auth chain"
+    );
+}
