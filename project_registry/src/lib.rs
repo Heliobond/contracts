@@ -1707,6 +1707,9 @@ impl Ownable for ProjectRegistry {
 }
 
 #[cfg(test)]
+mod constructor_test;
+
+#[cfg(test)]
 mod test;
 
 #[cfg(test)]
