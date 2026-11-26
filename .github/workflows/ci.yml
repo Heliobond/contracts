@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Test the Wave scanner
         run: python3 -I scripts/test_check_wave.py
@@ -93,7 +93,7 @@ jobs:
 
       - name: Upload gas report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gas-report-${{ github.sha }}
           path: |
@@ -127,7 +127,7 @@ jobs:
 
       - name: Upload validated WASM for post-CI network tests
         if: github.event_name == 'push' && github.repository == 'Heliobond/contracts' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: verified-contract-wasm-${{ github.sha }}
           path: |
@@ -146,10 +146,10 @@ jobs:
       run:
         working-directory: notification-service
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           # Single source of truth for the supported Node version (#685).
           node-version-file: notification-service/.nvmrc
@@ -176,7 +176,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -222,10 +222,10 @@ jobs:
     timeout-minutes: 5
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Dependency Review
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
 
   abi-check:
     needs: wave-security
@@ -233,7 +233,7 @@ jobs:
     timeout-minutes: 30
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -292,7 +292,7 @@ jobs:
 
       - name: Upload ABI artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: contract-abi-${{ github.sha }}
           path: .abi/
@@ -306,7 +306,7 @@ jobs:
       pages: write
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -347,7 +347,7 @@ jobs:
           EOF
 
       - name: Upload Documentation Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: contracts-documentation-${{ github.sha }}
           path: target/doc/
@@ -355,16 +355,16 @@ jobs:
 
       - name: Setup Pages
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Upload Pages Artifact
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: target/doc
 
       - name: Deploy to GitHub Pages
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
